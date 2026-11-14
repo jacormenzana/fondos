@@ -2967,8 +2967,12 @@ def run_block(
                     if _fee_full_pass and _fee_text:
                         _fp_neg = {"entry": bool(_priips_ext_mod.ENTRY_FEE_NEGATION_ANY.search(_fee_text)),      # FND-0420: the wider negation (Pictet wording, "do not charge")
                                    "exit": bool(_priips_ext_mod.EXIT_FEE_NEGATION_ANY.search(_fee_text))}
+                    _fp_cells: dict = {}
+                    if _fee_full_pass and _fee_text:
+                        import core.cost_table_parser as _ctp_cells   # FND-0421: what the printed entry / exit cell says
+                        _fp_cells = {"entry": _ctp_cells.fee_cell_reading(_fee_text, "entry"), "exit": _ctp_cells.fee_cell_reading(_fee_text, "exit")}
                     _dq_issues.extend(_fee_state.reconcile_fee_pairs(
-                        fund_master_record, parsed, _fp_stored, full_cost_pass=_fee_full_pass, negation=_fp_neg, same_document=_fp_same))
+                        fund_master_record, parsed, _fp_stored, full_cost_pass=_fee_full_pass, negation=_fp_neg, same_document=_fp_same, cells=_fp_cells))
                 except Exception as _fee_exc:  # noqa: BLE001 -- guarda: el fondo nunca se pierde por esta resolucion
                     for _fc in ("Entry_Fee_Pct", "Entry_Fee_Pct_Max", "Exit_Fee_Pct", "Exit_Fee_Pct_Max", "_fee_pairs_resolved"):
                         fund_master_record.pop(_fc, None)

@@ -108,6 +108,9 @@ class PairEvidence:
     negation: bool = False
     parser_conditional: Optional[float] = None
     extractor_ceiling_pct: Optional[float] = None
+    # FND-0421: what the printed fee cell says (cost_table_parser.fee_cell_reading): 'zero' | 'applied' | 'explicit_ceiling' | None, and the percent it prints (PERCENT units).
+    cell_kind: Optional[str] = None
+    cell_pct: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -144,16 +147,30 @@ def resolve_pair(evidence: PairEvidence, stored_point: Optional[float], stored_c
     extractor = clean(evidence.extractor_ceiling_pct, "extractor ceiling")
     s_point = clean(stored_point, "stored point")
     s_ceiling = clean(stored_ceiling_pct, "stored ceiling")
-    ceiling = extractor if extractor is not None else (None if conditional is None else conditional * RATIO_TO_PCT)
+    cell_kind = evidence.cell_kind if evidence.cell_kind in CELL_KINDS else None
+    cell_pct = clean(evidence.cell_pct, "cell percent") if cell_kind in ("applied", "explicit_ceiling") else None
+    if extractor is not None:
+        ceiling = extractor
+    elif conditional is not None:
+        ceiling = conditional * RATIO_TO_PCT
+    else:
+        ceiling = cell_pct                       # the cell's own printed percent, the last resort (an English exit row neither reader binds)
 
-    if parser_point is None and not evidence.negation and ceiling is None:
+    if parser_point is None and not evidence.negation and ceiling is None and cell_kind != "zero":
         return PairResult(s_point, s_ceiling, "stored", tuple(warnings))
 
-    if parser_point is not None:
+    # A cell that prints "up to X %" (the percent tied to the ceiling wording) is a conditional fee even when the parser's regexes read that same percent as a point: the point is an
+    # artifact of the parser, the document says "up to" (owner definition 2026-11-14).
+    explicit_pct_ceiling = cell_kind == "explicit_ceiling" and cell_pct is not None
+    if parser_point is not None and not explicit_pct_ceiling:
         point = parser_point
-    elif evidence.negation:
+    elif evidence.negation or cell_kind == "zero":
         point = 0.0
-    elif s_point is not None and ceiling is not None and abs(s_point * RATIO_TO_PCT - ceiling) <= tol_pp:
+    elif cell_kind == "applied" and ceiling is not None:
+        # Owner definition 2026-11-14: a percent or amount printed in the cell (also beside "this is the most you will be charged") is the applied fee, not a conditional one
+        point = round(ceiling / RATIO_TO_PCT, 6)
+    elif cell_kind != "explicit_ceiling" and s_point is not None and ceiling is not None and abs(s_point * RATIO_TO_PCT - ceiling) <= tol_pp:
+        # (an explicit "up to X %" cell never keeps a stored point: that point is an old parser's reading of the ceiling)
         point = s_point
     else:
         point = None
@@ -167,6 +184,7 @@ def resolve_pair(evidence: PairEvidence, stored_point: Optional[float], stored_c
 
 # ── the pipeline's one call: reconcile both sides of a record (plan R6.4) ─────────────────────────────────────────
 
+CELL_KINDS = ("zero", "applied", "explicit_ceiling")   # what cost_table_parser.fee_cell_reading may return
 PAIR_COLUMNS = {"entry": ("Entry_Fee_Pct", "Entry_Fee_Pct_Max"), "exit": ("Exit_Fee_Pct", "Exit_Fee_Pct_Max")}
 CONDITIONAL_KEYS = {"entry": "Entry_Fee_Conditional", "exit": "Exit_Fee_Conditional"}
 MAX_CEILING_PCT = 25.0                      # the schema CHECK of entry_fee_pct_max / exit_fee_pct_max (db/pg/20_silver.sql): above it the whole UPSERT would abort
@@ -178,7 +196,7 @@ DQ_LEVEL = {WARN_STORED_POINT_CLEARED: "INFO", WARN_CONFLICT: "WARN", WARN_NEGAT
 
 
 def reconcile_fee_pairs(record: dict, parsed: dict, stored: Optional[dict], *, full_cost_pass: bool, negation: Optional[dict] = None,
-                        same_document: Optional[bool] = None) -> list:
+                        same_document: Optional[bool] = None, cells: Optional[dict] = None) -> list:
     """Resolve the entry and the exit pair of `record` IN PLACE and return the DQ tuples (check_code, dq_level, log_status, message). Pure: no database.
 
     `parsed`: the parser's output (Entry_Fee_Pct, Exit_Fee_Pct, Entry_Fee_Conditional, Exit_Fee_Conditional). `record`: carries the extractor's ceilings when the
@@ -188,6 +206,7 @@ def reconcile_fee_pairs(record: dict, parsed: dict, stored: Optional[dict], *, f
     the extractor only with a PDF or --recompute-costs: a point without its extractor would erase stored ceilings). A new fund always gets its pair derived. On a
     side with no evidence at all the stored pair also stays whole. Every side that is resolved is marked in record[RESOLVED_KEY] so the writer overwrites it as a unit."""
     negation = negation or {}
+    cells = cells or {}                         # {"entry": (kind, pct), "exit": (kind, pct)} from cost_table_parser.fee_cell_reading (FND-0421)
     resolved: dict = {}
     issues: list = []
     for side, (point_col, ceiling_col) in PAIR_COLUMNS.items():
@@ -196,7 +215,8 @@ def reconcile_fee_pairs(record: dict, parsed: dict, stored: Optional[dict], *, f
             record.pop(ceiling_col, None)
             continue
         evidence = PairEvidence(parser_point=parsed.get(point_col), negation=bool(negation.get(side)),
-                                parser_conditional=parsed.get(CONDITIONAL_KEYS[side]), extractor_ceiling_pct=record.get(ceiling_col))
+                                parser_conditional=parsed.get(CONDITIONAL_KEYS[side]), extractor_ceiling_pct=record.get(ceiling_col),
+                                cell_kind=(cells.get(side) or (None, None))[0], cell_pct=(cells.get(side) or (None, None))[1])
         result = resolve_pair(evidence, None if stored is None else stored.get(point_col), None if stored is None else stored.get(ceiling_col), same_document)
         if result.source == "stored" and stored is not None:
             record.pop(point_col, None)

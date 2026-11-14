@@ -1691,6 +1691,95 @@ def entry_cost_ratio_from_description(text: str) -> Optional[float]:
     return round(ratio, 6) if 0 < ratio <= _ENTRY_MAX_RATIO else None
 
 
+# FND-0421 (Package H, 2026-11-14): the printed ENTRY / EXIT cell read as evidence of what the KID says about the fee, independent of the parser's own wordings. The owner's definition
+# (2026-11-14): a PRIIPs percent or amount printed in the cell is the APPLIED fee (EXTRACTED), also beside the standard "this is the most you will be charged" sentence; it is a CEILING only
+# when the cell says "up to X %" / "hasta X %" with the percent; an explicit zero (0 %, 0 EUR, "Nil") is ZERO. shared/fee_state.resolve_pair turns the reading into the pair.
+_FEE_CELL_EVIDENCE_ENABLED = True        # kill switch of this reading (module constant, as _ENTRY_FROM_DESCRIPTION_ENABLED)
+_FEE_CELL_MAX_CHARS = 420
+_FEE_CELL_END = re.compile(
+    r"costes?\s+corrientes|comisiones?\s+de\s+gesti|costes?\s+de\s+operaci|costes?\s+de\s+transacci|costes?\s+recurrentes|ongoing\s+costs?|transaction\s+costs?"
+    r"|management\s+fees?|comisi(?:[oó]n|ones)\s+de\s+rendimiento|performance\s+fees?|incentive\s+fees?|\bportfolio\b"
+    r"|en\s+caso\s+de\s+salida|if\s+you\s+exit|escenarios?|scenarios?|per[ií]odo\s+de\s+mantenimiento|recommended\s+holding",
+    re.IGNORECASE,
+)
+_FEE_CELL_OTHER_SIDE = {
+    "entry": re.compile(r"(?<!cobra\s)(?<!cobramos\s)costes?\s+de\s+salida|exit\s+costs?", re.IGNORECASE),
+    "exit": re.compile(r"(?<!cobra\s)(?<!cobramos\s)costes?\s+de\s+entrada|entry\s+costs?", re.IGNORECASE),
+}
+_FEE_CELL_LABEL = {"entry": _ENTRY_COST_LABEL, "exit": _EXIT_COST_LABEL}
+_FEE_CELL_PCT = re.compile(r"(\d{1,3}(?:[.,]\d{1,3})?)\s*%")
+_FEE_CELL_BOILERPLATE = re.compile(
+    r"se\s+trata\s+de\w*\s+(?:\w+\s+){0,4}?m[aá]xim[oa][^.]*\.?"
+    r"|\b(?:es|son)\s+(?:lo|el|la)\s+(?:\w+\s+)?m[aá]xim[oa][^.]*\.?"
+    r"|estas\s+cifras\s+son\s+m[aá]ximas[^.]*\.?"
+    r"|porcentaje\s+m[aá]ximo\s+que[^.]*\.?"
+    r"|(?:this|it)\s+is\s+the\s+(?:maximum|most)[^.]*\.?"
+    r"|(?:is|are)\s+the\s+(?:maximum|most)\b[^.]*\.?"
+    r"|\(\s*m[aá]x\.?\s*\)",
+    re.IGNORECASE,
+)
+_FEE_CELL_UP_TO_AMOUNT = re.compile(
+    r"(?:\bhasta\b|up\s+to)\s+(?:[$€£]\s?\d[\d.,]*|(?:EUR|USD|GBP|CHF|JPY|SEK|NOK|DKK)\s?\d[\d.,]*|\d[\d.,]*\s*(?:(?:EUR|USD|GBP|CHF|JPY|SEK|NOK|DKK)\b|[€$£]))", re.IGNORECASE)
+_FEE_CELL_CEILING_MARK = re.compile(r"\bhasta\b|m[aá]xim[oa]|up\s+to|as\s+much\s+as|no\s+more\s+than", re.IGNORECASE)
+
+
+# A header that names both sides ("Costes unicos de entrada o salida") is not the row of either side.
+_FEE_CELL_BOTH_SIDES = re.compile(r"\s*(?:o|y|and|or|/)\s+(?:de\s+)?(?:salida|entrada|exit|entry)\b", re.IGNORECASE)
+# A percent followed by "per year" / "al ano" is an ANNUAL cost (the next row's wording), never an entry or exit fee.
+_FEE_CELL_ANNUAL = re.compile(r"[^.]{0,70}?(?:per\s+year|a\s+year|annual|al\s+a[ñn]o|por\s+a[ñn]o|anual|par\s+an\b|pro\s+jahr|per\s+anno)", re.IGNORECASE)
+
+
+def _fee_cells(text: str, side: str):
+    """Every candidate cell of one side, in document order: from the side's label to the next cost label or the other side's label (bounded). Whitespace and table bars collapsed."""
+    for label in _FEE_CELL_LABEL[side].finditer(text or ""):
+        if _FEE_CELL_BOTH_SIDES.match(text, label.end()):
+            continue
+        cell = text[label.end(): label.end() + _FEE_CELL_MAX_CHARS]
+        end = _FEE_CELL_END.search(cell)
+        other = _FEE_CELL_OTHER_SIDE[side].search(cell)
+        cuts = [m.start() for m in (end, other) if m]
+        if cuts:
+            cell = cell[:min(cuts)]
+        cell = re.sub(r"[|\s]+", " ", cell).strip()
+        if cell:
+            yield cell
+
+
+def fee_cell_reading(text: str, side: str):
+    """What the printed fee cell of `side` ('entry' | 'exit') says: (kind, percent) with kind 'zero' (an explicit zero), 'applied' (a positive percent or amount, also beside the standard
+    maximum sentence) or 'explicit_ceiling' ("up to X %" with the percent, or "up to N EUR" when no percent is printed); percent is the first positive percent of the cell in PERCENT units, else
+    None. (None, None) when no cell carries a value. The FIRST cell that carries a percent or an amount counts (a label can recur in explanatory text). Pure, bounded."""
+    if not _FEE_CELL_EVIDENCE_ENABLED:
+        return None, None
+    for cell in _fee_cells(text, side):
+        pcts, first_pct_at = [], None
+        for pm in _FEE_CELL_PCT.finditer(cell):
+            if _FEE_CELL_ANNUAL.match(cell, pm.end()):
+                continue
+            try:
+                pcts.append(float(pm.group(1).replace(",", ".")))
+            except ValueError:
+                continue
+            if first_pct_at is None:
+                first_pct_at = pm.start()
+        amounts = _extract_eur_list_from_cell(cell)
+        if not pcts and not amounts:
+            continue
+        # an explicit zero printed FIRST wins ("0 EUR ... a fee of up to 5 % may apply later", "0,00 % ... puede aplicar hasta el 5 %")
+        am = _EUR_TOKEN.search(cell)
+        first_amount_at = am.start() if am else len(cell)
+        first_pct_pos = len(cell) if first_pct_at is None else first_pct_at
+        if (pcts and pcts[0] == 0 and first_pct_pos < first_amount_at) or (amounts and amounts[0] == 0 and (not pcts or first_amount_at < first_pct_pos)):
+            return "zero", None
+        positive_pcts = [p for p in pcts if p > 0]
+        body = _FEE_CELL_BOILERPLATE.sub(" ", cell)
+        if pcts:
+            body = _FEE_CELL_UP_TO_AMOUNT.sub(" ", body)       # "Hasta N EUR" after a printed percent is the amount line, not a ceiling
+        pct = positive_pcts[0] if positive_pcts else None
+        return ("explicit_ceiling" if _FEE_CELL_CEILING_MARK.search(body) else "applied"), pct
+    return None, None
+
+
 def _parse_composition_dla2(text: str) -> dict:
     """
     Parser para formato DLA2 de la tabla "Composición de los costes".

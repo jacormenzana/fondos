@@ -99,6 +99,19 @@ def test_fnd0421_reader_artifacts_are_not_disagreements():
     assert fa.read_row(fa.fee_row("Costes de salida No aplicamos ninguna comisión de salida. 0 EUR", "exit")) == "zero"
 
 
+def test_fnd0421_boilerplate_variants_trailing_symbols_and_extra_negations():
+    ent = lambda s: fa.read_row(fa.fee_row(s, "entry"))      # noqa: E731
+    ext = lambda s: fa.read_row(fa.fee_row(s, "exit"))       # noqa: E731
+    assert ent("Costes de entrada 4,00% del valor de su inversión. Se trata del importe máximo que se le cobrará. Hasta 400 €  Costes de salida") == "positive"
+    assert ent("Costes de entrada 5.00 % del importe. Esto es lo máximo que pagará y podría pagar menos. Hasta USD 500 Costes de salida") == "positive"
+    assert ent("Costes de entrada 2,00% del importe. Porcentaje máximo que podría tener que pagar el inversor. 200 € Costes de salida") == "positive"
+    assert ent("Costes de entrada 5.00% del importe. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 500 EUR Costes de salida") == "positive"
+    assert ext("Costes de salida No hay Costes corrientes") == "zero"
+    assert ext("Costes de salida Nosotros no facturamos el coste de salida. 0 € Costes corrientes") == "zero"
+    assert ext("Costes de salida We will not charge any exit costs for this product. EUR 0 Costes corrientes") == "zero"
+    assert ext("Costes de salida Se trata de la comisión de salida máxima que cobrará M&G. €0,00 Costes corrientes") == "zero"
+
+
 def test_the_reader_knows_that_a_manager_who_charges_none_means_zero_even_if_a_distributor_may_charge():
     """Pictet / Carmignac / 'The Fund does not charge an entry fee': zero applied, whatever maximum another party may charge (FND-0420)."""
     pictet = "Costes de salida Pictet Asset Management (Europe) S.A. no cobra gastos de salida por este producto, si bien la persona que se lo venda podría cobrarle hasta un máximo del 1.00%. Hasta 100 USD COSTES CORRIENTES"

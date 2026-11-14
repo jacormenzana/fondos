@@ -34,10 +34,10 @@ from shared.fee_state import accuracy_decision, derive_fee_state  # noqa: E402
 
 RC_OK, RC_STOP, RC_NO_DB = 0, 1, 3
 SAMPLE = 30
-ROW_START = {"entry": re.compile(r"costes?\s+de\s+entrada|entry\s+costs?", re.I), "exit": re.compile(r"costes?\s+de\s+salida|exit\s+costs?", re.I)}
+ROW_START = {"entry": re.compile(r"(?<!any\s)costes?\s+de\s+entrada|(?<!any\s)entry\s+costs?", re.I), "exit": re.compile(r"(?<!any\s)costes?\s+de\s+salida|(?<!any\s)exit\s+costs?", re.I)}
 _ROW_END_COMMON = (r"(?<!cobra\s)(?<!cobramos\s)costes?\s+de\s+(?:entrada|salida)|costes?\s+corrientes|comisiones?\s+de\s+gesti|costes?\s+de\s+operaci|costes?\s+de\s+transacci"
                    r"|costes?\s+recurrentes|ongoing\s+costs?|entry\s+costs?|exit\s+costs?|transaction\s+costs?"
-                   r"|comisi(?:[oó]n|ones)\s+de\s+rendimiento|performance\s+fees?|incentive\s+fees?")
+                   r"|comisi(?:[oó]n|ones)\s+de\s+rendimiento|performance\s+fees?|incentive\s+fees?|\bportfolio\b")
 # FND-0421: a row also ends where the OTHER side's wording starts ("No aplicamos ninguna comision de salida" belongs to the exit row, not to the entry row it follows).
 # The cut includes the negation that introduces the other side's sentence, otherwise "No aplicamos ninguna comision de salida" would still leak a zero into the entry row.
 _LEAD_ES = r"(?:no\s+(?:aplicamos|cobramos|se\s+aplica|se\s+cobra)\s+(?:ninguna\s+|una\s+)?)?"
@@ -45,23 +45,29 @@ _LEAD_EN = r"(?:(?:we\s+)?(?:do|does)\s+not\s+charge\s+an?\s+)?"
 ROW_END = {"entry": re.compile(_ROW_END_COMMON + r"|" + _LEAD_ES + r"comisi(?:[oó]n|ones)\s+de\s+salida|" + _LEAD_EN + r"exit\s+(?:fee|charge)s?", re.I),
            "exit": re.compile(_ROW_END_COMMON + r"|" + _LEAD_ES + r"comisi(?:[oó]n|ones)\s+de\s+entrada|" + _LEAD_EN + r"entry\s+(?:fee|charge)s?", re.I)}
 # FND-0421: "Hasta N EUR" is the amount line that follows a printed percent in a PRIIPs KID (the standard maximum line, owner definition: EXTRACTED); only "Hasta N %" is a conditional marker.
-HASTA_AMOUNT = re.compile(r"(?:\bhasta\b|up\s+to)\s+(?:[$€£]\s?\d[\d.,]*|\d[\d.,]*\s*(?:EUR|USD|GBP|CHF|JPY|SEK|NOK|DKK)\b)", re.I)
+HASTA_AMOUNT = re.compile(r"(?:\bhasta\b|up\s+to)\s+(?:[$€£]\s?\d[\d.,]*|(?:EUR|USD|GBP|CHF|JPY|SEK|NOK|DKK)\s?\d[\d.,]*|\d[\d.,]*\s*(?:(?:EUR|USD|GBP|CHF|JPY|SEK|NOK|DKK)\b|[€$£]))", re.I)
 NEGATION = re.compile(r"no\s+cobramos|no\s+se\s+cobra|no\s+aplica|no\s+se\s+aplica|nocobramos|we\s+do\s+not\s+charge|no\s+(?:entry|exit)\s+(?:fee|charge)"
-                      r"|no\s+cobra\s+(?:gastos?|costes?|comisi[oó]n(?:es)?|cargos?)\s+de\s+(?:entrada|salida)|(?:do|does)\s+not\s+charge\s+an?\s+(?:entry|exit)", re.I)
+                      r"|no\s+cobra\s+(?:gastos?|costes?|comisi[oó]n(?:es)?|cargos?)\s+de\s+(?:entrada|salida)|(?:do|does)\s+not\s+charge\s+an?\s+(?:entry|exit)"
+                      r"|no\s+facturamos|no\s+hay\b|este\s+producto\s+no\s+tiene|\bnil\b|\bnone\b|(?:we\s+)?(?:will|do|does)\s+not\s+charge\s+(?:any|an?)\b", re.I)
 MAX_MARK = re.compile(r"\bhasta\b|m[aá]xim[oa]|up\s+to|as\s+much\s+as", re.I)
 # Owner definition 2026-11-14 (FND-0420): a PRIIPs percent printed beside the standard sentence "Se trata de la cantidad maxima que se le cobrara" / "This is the most you will be charged" is an
 # applied-and-listed fee (EXTRACTED), not a conditional one. Those sentences are in every PRIIPs KID, so they are removed before the maximum marker is looked for; an explicit "Hasta X %" / "up to"
 # stays a marker.
 BOILERPLATE = re.compile(
-    r"se\s+trata\s+de\s+la\s+cantidad\s+m[aá]xima[^.]*\.?"
+    r"se\s+trata\s+de\w*\s+(?:\w+\s+){0,4}?m[aá]xim[oa][^.]*\.?"
     r"|(?:este|esta)\s+es\s+(?:el|la)\s+(?:importe\s+|cantidad\s+)?m[aá]xim[oa][^.]*\.?"
     r"|(?:it\s+)?(?:is|es)\s+the\s+(?:maximum|most)[^.]*\.?"
     r"|this\s+is\s+the\s+(?:maximum|most)[^.]*\.?"
+    r"|\b(?:es|son)\s+(?:lo|el|la)\s+(?:\w+\s+)?m[aá]xim[oa][^.]*\.?"
+    r"|estas\s+cifras\s+son\s+m[aá]ximas[^.]*\.?"
+    r"|porcentaje\s+m[aá]ximo\s+que[^.]*\.?"
     r"|\(\s*m[aá]x\.?\s*\)",
     re.I,
 )
 PERCENT = re.compile(r"(\d{1,3}(?:[.,]\d{1,3})?)\s*%")
-AMOUNT = re.compile(r"(?:[$€£]\s?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)|(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)\s*(?:EUR|USD|GBP|CHF|JPY|SEK|NOK|DKK)\b)", re.I)
+_NUM = r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?|\d+)"
+_CUR = r"(?:EUR|USD|GBP|CHF|JPY|SEK|NOK|DKK)"
+AMOUNT = re.compile(rf"(?:[$€£]\s?{_NUM}|{_NUM}\s*(?:{_CUR}\b|[€$£])|\b{_CUR}\s?{_NUM})", re.I)
 WINDOW_MAX = 420
 
 
@@ -92,7 +98,7 @@ def read_row(row: str) -> str:
     if not row:
         return "none"
     percents = [_num(x) for x in PERCENT.findall(row)]
-    amounts = [_num(a or b) for a, b in AMOUNT.findall(row)]
+    amounts = [_num(next(g for g in m.groups() if g)) for m in AMOUNT.finditer(row)]
     if NEGATION.search(row) or (percents and percents[0] == 0) or (not percents and amounts and amounts[0] == 0):
         return "zero"
     positive = [v for v in percents + amounts if v > 0]
