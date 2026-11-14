@@ -127,13 +127,16 @@ import pandas as pd
 
 from shared.cost_rounding import aci_components_band, aci_rounding_explained   # FND-0034 (2026-11-08): one definition with P1
 from shared.config import (
-    AUDIT_CANARIES_ENABLED, AUDIT_COMPLETENESS_CONTRACT_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS,
+    AUDIT_APPLICABILITY_DROP_MODE, AUDIT_CANARIES_ENABLED, AUDIT_COMPLETENESS_CONTRACT_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS,
     P3_MIN_UNIFORM_METRICS_SHARE, ROLLING_WINDOWS,
 )
 from shared.db import get_connection
 from shared.eur_nav import apply_eur_view_frame   # FND-0243: audit the NAV P2 computed on
 from shared.nav_month_end import align_nav_long   # FND-0300: ... on the dates P2 computed on
-from shared.statistical_audit.applicability import APPLICABILITY_POPULATION, applicability_entry   # D1 (FND-0392)
+from shared.statistical_audit.applicability import (   # D1 (FND-0392); the drop rule: FND-0393
+    APPLICABILITY_DROP_PCT, APPLICABILITY_DROP_RUNS, APPLICABILITY_POPULATION, applicability_drop_finding, applicability_drops, applicability_entry,
+    current_applicability, load_applicability_history,
+)
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS
@@ -1569,6 +1572,7 @@ class AuditRun:
         self.persisted_header: bool = False       # FND-0261: control.audit_run row written by _persist
         self.scope_isins: tuple | None = None     # FND-0264: the ISINs of an --isin run, recorded in the manifest so it can certify them
         self.canaries: dict = {}                  # FND-0393: the liveness canaries of a FULL run (canaries.summarize), recorded in the manifest
+        self.applicability_drops: "list | None" = None   # FND-0393: rules that tested far fewer rows than their usual level; None = not computed (OFF, a SAMPLE run, no history table)
 
     def skip(self, check: str, kind: str, message: str) -> None:
         """Record a check that did not run: `check` is a key of completeness.CHECKS, `kind` MISSING / EMPTY / NOT_APPLICABLE
@@ -1846,6 +1850,9 @@ _PROCEDURAL_RULES: tuple[dict, ...] = (
     {"rule_id": "COVERAGE_CLIFF", "block": "BLOCK1", "domain": "both",
      "description": f"n_valid drop > {COVERAGE_CLIFF_PCT:.0%} vs the prior persisted run "
                      f"(--compare-to only)"},
+    {"rule_id": "APPLICABILITY_DROP", "block": "BLOCK1", "domain": "both",
+     "description": f"a rule tested > {APPLICABILITY_DROP_PCT:.0%} fewer rows than the median of its last {APPLICABILITY_DROP_RUNS} FULL runs "
+                    f"(AUDIT_APPLICABILITY_DROP_MODE: SHADOW prints and records it in the manifest, ON adds this WARN finding; FND-0393)"},
     {"rule_id": "REAL_EQUALS_NOMINAL_<metric>", "block": "BLOCK2", "domain": "p2",
      "description": "generalized per-metric from the REAL_EQUALS_NOMINAL PairRule -- one per "
                      "metric with both real_flag values present and _deflation_meaningful()"},
@@ -1950,6 +1957,8 @@ def _run_manifest(conn: "psycopg.Connection", run: "AuditRun") -> dict:
         manifest["scope_isins"] = sorted(run.scope_isins)
     if run.canaries:                                          # FND-0393: which hard detectors proved themselves alive in this run
         manifest["canaries"] = run.canaries
+    if run.applicability_drops is not None:                   # FND-0393: [] = checked and none dropped (SHADOW is judged on these manifests)
+        manifest["applicability_drops"] = run.applicability_drops
     try:
         from proyecto3.src.data_freshness import load_freshness_inputs
         nav_dates, harvest, versions = load_freshness_inputs(conn)
@@ -2128,6 +2137,28 @@ def _compute_drift(conn: "psycopg.Connection", run: "AuditRun", compare_to: str)
     return compare_runs(previous, current)
 
 
+def _apply_applicability_drops(conn, run: "AuditRun", run_id: str) -> None:
+    """FND-0393 (plan D1): compare what each rule tested in this FULL run with the median of its last APPLICABILITY_DROP_RUNS stored FULL runs (shared.statistical_audit.applicability).
+    AUDIT_APPLICABILITY_DROP_MODE: OFF = nothing; SHADOW = the drops go to `run.applicability_drops` (printed, in the manifest), no finding; ON = also one BLOCK1 WARN finding per drop.
+    Information only: a history that cannot be read is recorded as a note, never fails the run (rolled back first: nothing is written yet)."""
+    mode = str(AUDIT_APPLICABILITY_DROP_MODE).upper()
+    if mode not in ("SHADOW", "ON"):
+        return
+    try:
+        history = load_applicability_history(conn, run.domain, runs=APPLICABILITY_DROP_RUNS + 1)
+    except Exception as exc:                                     # noqa: BLE001 -- information only
+        conn.rollback()
+        run.applicability_drops = None
+        print(f"[applicability-drop] history not readable ({type(exc).__name__}): not judged", file=sys.stderr)
+        return
+    if len(history):                                             # a run that is stored already (a re-run with the same id) is not its own history
+        keep = history[history["run_id"] != run_id]["run_id"].drop_duplicates().head(APPLICABILITY_DROP_RUNS)
+        history = history[history["run_id"].isin(keep)]
+    run.applicability_drops = applicability_drops(current_applicability(run.statistics), history, exclude_run_id=run_id)
+    if mode == "ON":
+        run.findings.extend(applicability_drop_finding(d) for d in run.applicability_drops)
+
+
 def _apply_coverage_cliff_findings(run: "AuditRun", result) -> None:
     """A4 (FND-0122, 2026-09-28): both skills mandate flagging a coverage (n_valid) drop of more
     than COVERAGE_CLIFF_PCT vs. the prior persisted run as an automatic Block 1 finding -- not
@@ -2299,6 +2330,8 @@ def main() -> int:
         _apply_rca_e(conn, run)
         if scope == cpl.SCOPE_FULL and AUDIT_CANARIES_ENABLED:          # FND-0393: a FULL run proves its hard detectors alive before it can certify anything
             run_canaries(run)
+        if scope == cpl.SCOPE_FULL:                                     # FND-0393: a rule that tested far fewer rows than its usual level has probably lost its input (SHADOW first)
+            _apply_applicability_drops(conn, run, run_id)
     finally:
         if not keep_open:
             conn.close()
@@ -2310,6 +2343,10 @@ def main() -> int:
     _print_report(run, run_id)
     status = cpl.run_status(run.skips, run.findings, scope, run.domain)
     _print_completeness(run, scope, status)
+    if run.applicability_drops:                                         # FND-0393: printed in SHADOW and ON alike (ON also made a finding of each)
+        print(f"Applicability drops [{str(AUDIT_APPLICABILITY_DROP_MODE).upper()}] (> {APPLICABILITY_DROP_PCT:.0%} below the median of the last {APPLICABILITY_DROP_RUNS} FULL runs):")
+        for d in run.applicability_drops:
+            print(f"  {d['rule_id']}: tested {d['current']:,} rows, usual {d['median']:,.0f} ({d['change']:+.0%}, {d['runs']} runs)")
 
     if args.compare_to:
         print()

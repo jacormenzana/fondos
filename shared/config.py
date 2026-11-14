@@ -521,6 +521,11 @@ AUDIT_EXCEPTION_EVENTS_ENABLED: bool = True
 # ON from the start: the 26 hard row invariants, the group rules and the duplicate-series detector fire on the live catalogs (tests/test_audit_canaries_fnd0393.py).
 # Rollback = False (a FULL run then certifies without proving its detectors alive, as before).
 AUDIT_CANARIES_ENABLED: bool = True
+# FND-0393 (plan D1, second half): applicability-drop rule (shared/statistical_audit/applicability.py). A FULL run compares what each rule tested with the median of its last 5 stored FULL runs;
+# a rule that tested more than 50 % fewer rows has probably lost its input, and a clean result from it is no longer evidence. "OFF" = not computed; "SHADOW" (ships so) = printed in the run output and
+# recorded in the manifest (`applicability_drops`), no finding, no status change; "ON" = one BLOCK1 WARN finding per drop (APPLICABILITY_DROP). SHADOW -> ON is judged on the manifests of real FULL runs
+# (a drop with a known cause, e.g. a universe cut, is expected to appear once). Rollback = "OFF" (nothing was written for it).
+AUDIT_APPLICABILITY_DROP_MODE: str = "SHADOW"
 # FND-0265 (GOV-06), two-pillar orchestrator (shared/governance/orchestrator.py). The promotion always computes and prints its verdict (each
 # pillar PASS / PASS_WITH_WARNINGS / FAIL / INCOMPLETE and the decision); these switches decide what it may refuse:
 #   GOVERNANCE_ORCHESTRATOR_ENABLED  the verdict DECIDES the promotion (OFF: shadow, the legacy gate decides): weights tolerance 5e-5 (D2) and

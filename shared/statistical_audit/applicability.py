@@ -29,6 +29,51 @@ def applicability_entry(rule_id: str, n_applicable: int, n_violating: int) -> tu
     return (APPLICABILITY_POPULATION, str(rule_id), {STAT_APPLICABLE: n_app, STAT_VIOLATING: n_viol}, n_app)
 
 
+APPLICABILITY_DROP_RULE_ID = "APPLICABILITY_DROP"
+APPLICABILITY_DROP_PCT = 0.50          # a rule that tested more than this share fewer rows than its usual median has probably lost its input (plan D1, FND-0393)
+APPLICABILITY_DROP_RUNS = 5            # the history window: the last 5 FULL runs
+APPLICABILITY_DROP_MIN_RUNS = 3        # fewer runs of history than this and there is no usual level to compare with: nothing is judged
+
+
+def current_applicability(statistics) -> dict:
+    """{rule_id: n_applicable} of the run in memory, read from the same (population, group_key, stats, n) entries `applicability_entry` builds. Pure."""
+    return {str(group): int(stats[STAT_APPLICABLE]) for population, group, stats, _n in statistics
+            if population == APPLICABILITY_POPULATION and STAT_APPLICABLE in stats}
+
+
+def applicability_drops(current: dict, history: "pd.DataFrame", drop_pct: float = APPLICABILITY_DROP_PCT, min_runs: int = APPLICABILITY_DROP_MIN_RUNS,
+                        exclude_run_id: Optional[str] = None) -> list:
+    """The rules whose tested-row count fell by MORE than `drop_pct` against the median of their stored FULL-run history (plan D1, FND-0393: the coverage-gap rule that completes the canaries).
+
+    `current` = {rule_id: n_applicable} of this run; `history` = load_applicability_history() rows (newest first); `exclude_run_id` leaves this run's own stored row out when it was persisted already.
+    A rule with fewer than `min_runs` historical values, or whose median is 0, has no usual level and is never judged (a rule new to the catalogue must not alarm). A rule absent from `current` did not
+    run: that is a skip of the run header, not a drop. One dict per drop: rule_id, current, median, runs (how many history values), change (current / median - 1). Pure."""
+    if history is None or len(history) == 0:
+        return []
+    hist = history if exclude_run_id is None else history[history["run_id"] != exclude_run_id]
+    out = []
+    for rule_id, now in sorted(current.items()):
+        values = pd.to_numeric(hist.loc[hist["rule_id"] == rule_id, "n_applicable"], errors="coerce").dropna()
+        if len(values) < int(min_runs):
+            continue
+        median = float(values.median())
+        if median <= 0:
+            continue
+        if float(now) < median * (1.0 - float(drop_pct)):
+            out.append({"rule_id": str(rule_id), "current": int(now), "median": median, "runs": int(len(values)), "change": float(now) / median - 1.0})
+    return out
+
+
+def applicability_drop_finding(drop: dict, drop_pct: float = APPLICABILITY_DROP_PCT) -> dict:
+    """The audit finding for one drop (BLOCK1, WARN, like COVERAGE_CLIFF): the same dict shape the runner's other Block 1 escalations append. Pure."""
+    return {
+        "block": "BLOCK1", "rule_id": APPLICABILITY_DROP_RULE_ID, "rule_class": "STATISTICAL_ANOMALY", "severity": "WARN", "group_key": drop["rule_id"],
+        "value": drop["current"], "reference_value": drop["median"], "threshold": -float(drop_pct), "distance": drop["change"],
+        "evidence": f"{drop['rule_id']} tested {drop['current']:,} rows; the median of its last {drop['runs']} FULL runs is {drop['median']:,.0f} ({drop['change']:+.0%})",
+        "root_cause_candidate": "The detector lost its input (a table, a join or a filter changed): a clean result is no longer evidence. Read the rule's inputs before trusting its silence",
+    }
+
+
 def load_applicability_history(conn: "psycopg.Connection", domain: str, rule_id: Optional[str] = None, runs: int = 5) -> pd.DataFrame:
     """The stored applicability of the last `runs` FULL runs of `domain` (newest first), one row per (run, rule): run_id, finished_at, rule_id, n_applicable, n_violating.
     SAMPLE runs are left out (their counts describe a few funds). Runs from before D1 have no rows. Read-only."""

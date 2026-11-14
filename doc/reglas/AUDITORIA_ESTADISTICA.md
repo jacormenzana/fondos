@@ -627,6 +627,11 @@ perfil (`DRIFT_STATS`), así que estas filas no entran en el informe de deriva. 
 existía en la evidencia de un hallazgo que violaba; al salir del universo los 6 fondos de FND-0250 no había forma de saber si el detector seguía evaluando filas reales (medido a
 posteriori en la evidencia: `WINDOW_FISHER_IDENTITY` evaluó 2.466.681 filas el 2026-11-04 y 2.465.360 el 2026-11-08, es decir −1.321 filas netas, −0,05 %; las 40 filas que violaban eran de esos 6 fondos y ya no violan).
 
+**Caída de aplicabilidad (FND-0393, D1, segunda mitad).** Una ejecución FULL compara las filas que cada regla juzgó con la mediana de sus últimas 5 ejecuciones FULL almacenadas (`applicability.applicability_drops`); una regla que juzgó
+más de un 50 % menos probablemente perdió su entrada, y su silencio ya no es evidencia. Sin al menos 3 valores históricos, o con mediana 0, la regla no se juzga (una regla nueva no alarma); una regla ausente de la ejecución es un `skip`
+de la cabecera, no una caída. Interruptor `AUDIT_APPLICABILITY_DROP_MODE` (`shared/config.py`): `OFF` no calcula; `SHADOW` (así sale) imprime las caídas y las guarda en el manifiesto (`applicability_drops`; `[]` = comprobado, sin caídas),
+sin hallazgo ni cambio de estado; `ON` añade un hallazgo `APPLICABILITY_DROP` (BLOCK1, WARN) por caída. El paso de SHADOW a ON se decide con los manifiestos de ejecuciones FULL reales. Los canarios (`AUDIT_CANARIES_ENABLED`) son la otra mitad.
+
 Ambas tablas llevan `catalog_version` (2026-09-25): hash de contenido (SHA-1, 12 hex) de
 `catalog_*.py` + `tolerances.py`, calculado por `catalog_version.compute_catalog_version()` en cada
 `--persist`. Permite atribuir un hallazgo al conjunto exacto de reglas/umbrales que lo produjo.
