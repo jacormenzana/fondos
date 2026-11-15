@@ -57,8 +57,25 @@ SPEC = {
     "FND-0241": [("pushed", "929ceed"), ("flag", "DEFLATION_MONTH_ALIGN_ENABLED", True), ("manual", "risk + rolling recompute done and the audit clean afterwards")],
     "FND-0242": [("pushed", "d304ba6"), ("flag", "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", True), ("manual", "risk + rolling recompute done and the audit clean afterwards")],
 }
-PROBE_KINDS = {"pushed", "flag", "calc_share", "metric_absent", "absent_in", "absent_re_in", "ols_ran", "ticket_closed", "task_ok", "tests_pass", "audit_isins_clear", "manual"}
+PROBE_KINDS = {"pushed", "flag", "calc_share", "metric_absent", "absent_in", "absent_re_in", "ols_ran", "ticket_closed", "task_ok", "tests_pass", "audit_isins_clear", "db_check", "manual"}
 AUDIT_FINISHED = ("PASS", "PASS_WITH_WARNINGS", "FAIL")                   # the verdicts of a finished run of the statistical audit (an INCOMPLETE run proves nothing)
+
+# audit_isins_clear: the rows that mark a fund as held out of the audit's cross-sectional snapshot (a stale or frozen fund: its NAV is too far from the others) are not violations, but they mean the
+# audit did NOT evaluate that fund, so it cannot be called clear either (FND-0423: the six frozen funds of FND-0250 carry one such row in every run, so the probe failed for them for ever).
+STRUCTURAL_MARKER_RULES = ("SNAPSHOT_HELD_OUT",)
+
+# db_check (FND-0423): positive log and table probes and a rule-scoped audit probe, as a CLOSED registry of named checks. The condition names a check and its parameters; the SQL of each check is a
+# fixed literal here (never text from the condition), and a comparison is done in Python against a whitelisted operator, so a condition cannot carry a statement. args = [check, *params].
+DB_CHECK_COMPARATORS = (">=", "<=", "==", ">", "<")
+AUDIT_DOMAINS = ("p2_metrics", "cost_attributes")
+TABLE_ROWS_SQL = {                                                         # table_rows(table, op, n): a row count of a table that tickets talk about
+    "series_benchmark": "SELECT COUNT(*) FROM bronze.series_benchmark",
+    "nav_sources": "SELECT COUNT(*) FROM control.nav_sources",
+    "nav_sources_older_180d": "SELECT COUNT(*) FROM control.nav_sources WHERE last_nav_date < CURRENT_DATE - 180",
+}
+_RULE_ID = re.compile(r"[A-Za-z0-9_]{3,80}")
+_STEP_OR_STATUS = re.compile(r"[A-Za-z0-9_]{1,60}")
+_ISIN = re.compile(r"[A-Z0-9]{12}")
 
 
 # ── pure ──────────────────────────────────────────────────────────────────────────────────────────
@@ -80,8 +97,46 @@ def render_markdown(rows: list) -> str:
     return "\n".join(out)
 
 
+def _is_int(v, minimum: int = 0) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= minimum
+
+
+def validate_db_check(args) -> list:
+    """The problems of a `db_check` condition's args ([check, *params]); empty when it is well formed. Pure, and the only gate on the text of a condition before it is evaluated (the registry is closed)."""
+    args = list(args)
+    if not args or not isinstance(args[0], str):
+        return ["db_check needs the name of a check as its first argument"]
+    name, p = args[0], args[1:]
+    if name == "table_rows":
+        if len(p) != 3 or p[0] not in TABLE_ROWS_SQL or p[1] not in DB_CHECK_COMPARATORS or not _is_int(p[2]):
+            return [f"table_rows needs [table in {sorted(TABLE_ROWS_SQL)}, operator in {list(DB_CHECK_COMPARATORS)}, a non-negative integer]"]
+    elif name == "ingestion_events":
+        if len(p) != 5 or not (isinstance(p[0], str) and _STEP_OR_STATUS.fullmatch(p[0])) or not (isinstance(p[1], str) and _STEP_OR_STATUS.fullmatch(p[1])) \
+                or p[2] not in DB_CHECK_COMPARATORS or not _is_int(p[3]) or not _is_int(p[4], 1):
+            return ["ingestion_events needs [step, status, operator, a non-negative count, a number of days >= 1]"]
+    elif name == "p2_run_summary":
+        if len(p) != 2 or not _is_int(p[0]) or not _is_int(p[1], 1):
+            return ["p2_run_summary needs [minimum processed funds >= 0, a number of days >= 1]"]
+    elif name == "audit_rule_clear":
+        if len(p) < 3 or p[0] not in AUDIT_DOMAINS or not (isinstance(p[1], str) and _RULE_ID.fullmatch(p[1])) \
+                or not all(isinstance(i, str) and _ISIN.fullmatch(i) for i in p[2:]):
+            return [f"audit_rule_clear needs [domain in {list(AUDIT_DOMAINS)}, a rule id, at least one ISIN]"]
+    else:
+        return [f"unknown db_check {name!r} (known: audit_rule_clear, ingestion_events, p2_run_summary, table_rows)"]
+    return []
+
+
+def compare(value, op: str, n) -> bool:
+    """`value op n` for a whitelisted operator spelling; anything else is a ValueError, never evaluated. Pure."""
+    if op not in DB_CHECK_COMPARATORS:
+        raise ValueError(f"operator {op!r} is not one of {DB_CHECK_COMPARATORS}")
+    return {">=": value >= n, "<=": value <= n, "==": value == n, ">": value > n, "<": value < n}[op]
+
+
 def spec_problems(spec: dict = SPEC) -> list:
-    return [f"{t}: unknown probe {p[0]!r}" for t, probes in spec.items() for p in probes if p[0] not in PROBE_KINDS]
+    out = [f"{t}: unknown probe {p[0]!r}" for t, probes in spec.items() for p in probes if p[0] not in PROBE_KINDS]
+    out += [f"{t}: {why}" for t, probes in spec.items() for p in probes if p[0] == "db_check" for why in validate_db_check(p[1:])]
+    return out
 
 
 def choose_spec(stored) -> tuple:
@@ -196,9 +251,17 @@ def probe_db(conn, kind: str, *args) -> tuple:
         run = conn.execute("SELECT run_id FROM audit_run WHERE domain = %s AND finished_at IS NOT NULL AND status = ANY(%s) ORDER BY started_at DESC LIMIT 1", (domain, list(AUDIT_FINISHED))).fetchone()
         if not run:
             return None, f"no finished audit run of domain {domain}: cannot tell"
-        hit = [r[0] for r in conn.execute("SELECT DISTINCT isin FROM audit_finding_isin WHERE run_id = %s AND domain = %s AND isin = ANY(%s) ORDER BY 1", (run[0], domain, isins)).fetchall()]
+        hit = [r[0] for r in conn.execute("SELECT DISTINCT isin FROM audit_finding_isin WHERE run_id = %s AND domain = %s AND isin = ANY(%s) AND rule_id <> ALL(%s) ORDER BY 1",
+                                          (run[0], domain, isins, list(STRUCTURAL_MARKER_RULES))).fetchall()]
         if hit:
             return False, f"run {run[0]}: {len(hit)} of {len(isins)} fund(s) still have a persisted violation ({', '.join(hit[:8])})"
+        # A fund held out of the audit snapshot carries only a structural marker row: it has no violation, but the audit did not evaluate it, so "clear" cannot be said (FND-0423). That is MANUAL, never
+        # a pass and never the permanent FAIL it used to be; a claim about ONE rule is db_check audit_rule_clear.
+        held_out = [r[0] for r in conn.execute("SELECT DISTINCT isin FROM audit_finding_isin WHERE run_id = %s AND domain = %s AND isin = ANY(%s) AND rule_id = ANY(%s) ORDER BY 1",
+                                               (run[0], domain, isins, list(STRUCTURAL_MARKER_RULES))).fetchall()]
+        if held_out:
+            return None, (f"run {run[0]}: cannot tell, {len(held_out)} of {len(isins)} fund(s) are held out of the audit snapshot ({', '.join(held_out[:8])}) and were not evaluated; "
+                          "state the claim for one rule with db_check audit_rule_clear")
         # Absence is not evidence when an acceptance can hide the fund: a rule that is only PARTLY accepted keeps just the unaccepted funds in its finding (accepted_residuals.apply_accepted), so
         # the accepted ones vanish from audit_finding_isin although they still violate (seen 2026-11-07: OC_NOT_CONTAMINATED, 1 new fund and 69 accepted). A rule that holds an active acceptance for
         # one of these funds and carries a non-INFO finding in the run therefore cannot say anything about them: unverifiable, never a pass.
@@ -208,7 +271,45 @@ def probe_db(conn, kind: str, *args) -> tuple:
         if hidden:
             return None, f"run {run[0]}: cannot tell, rule(s) {', '.join(hidden)} hold an acceptance for these funds and have unaccepted violators, which hides the accepted ones"
         return True, f"run {run[0]}: all {len(isins)} fund(s) are clear"
+    if kind == "db_check":
+        return probe_db_check(conn, *args)
     raise ValueError(kind)
+
+
+def probe_db_check(conn, *args) -> tuple:
+    """`db_check` (FND-0423): one named check of the closed registry (validate_db_check). (True | False | None, text); a malformed condition is a ValueError, which evaluate() turns into a failed probe."""
+    problems = validate_db_check(args)
+    if problems:
+        raise ValueError("; ".join(problems))
+    name, p = args[0], list(args[1:])
+    if name == "table_rows":
+        table, op, n = p
+        value = conn.execute(TABLE_ROWS_SQL[table]).fetchone()[0]
+        return compare(value, op, n), f"table {table}: {value} row(s) (needs {op} {n})"
+    if name == "ingestion_events":
+        step, status, op, n, days = p
+        value = conn.execute("SELECT COUNT(*) FROM ingestion_log WHERE step = %s AND status = %s AND created_at >= now() - make_interval(days => %s)", (step, status, days)).fetchone()[0]
+        return compare(value, op, n), f"{value} ingestion_log row(s) of step {step} status {status} in the last {days} d (needs {op} {n})"
+    if name == "p2_run_summary":
+        minimum, days = p
+        value = conn.execute("SELECT COUNT(*) FROM p2_pipeline_log WHERE step = 'RUN_SUMMARY' AND created_at >= now() - make_interval(days => %s) "
+                             "AND COALESCE(substring(message from 'processed=([0-9]+)')::int, -1) >= %s", (days, minimum)).fetchone()[0]
+        return value > 0, f"{value} P2 RUN_SUMMARY row(s) in the last {days} d with processed >= {minimum}"
+    # audit_rule_clear: the latest FINISHED run of the domain persists no violation of THIS rule for any of the funds. A held-out fund is not an obstacle here: the claim is about one rule, and the persisted
+    # rows are per rule. An acceptance that hides a partly accepted rule makes it unverifiable (as in audit_isins_clear).
+    domain, rule_id, isins = p[0], p[1], p[2:]
+    run = conn.execute("SELECT run_id FROM audit_run WHERE domain = %s AND finished_at IS NOT NULL AND status = ANY(%s) ORDER BY started_at DESC LIMIT 1", (domain, list(AUDIT_FINISHED))).fetchone()
+    if not run:
+        return None, f"no finished audit run of domain {domain}: cannot tell"
+    hit = [r[0] for r in conn.execute("SELECT DISTINCT isin FROM audit_finding_isin WHERE run_id = %s AND domain = %s AND rule_id = %s AND isin = ANY(%s) ORDER BY 1", (run[0], domain, rule_id, isins)).fetchall()]
+    if hit:
+        return False, f"run {run[0]}: {len(hit)} of {len(isins)} fund(s) still have a persisted violation of {rule_id} ({', '.join(hit[:8])})"
+    hidden = conn.execute(
+        "SELECT 1 FROM audit_accepted_finding a JOIN audit_finding f ON f.run_id = %s AND f.domain = a.domain AND f.rule_id = a.rule_id AND f.severity <> 'INFO' "
+        "WHERE a.domain = %s AND a.rule_id = %s AND a.isin = ANY(%s) AND a.expires_at >= CURRENT_DATE LIMIT 1", (run[0], domain, rule_id, isins)).fetchone()
+    if hidden:
+        return None, f"run {run[0]}: cannot tell, {rule_id} holds an acceptance for these funds and has unaccepted violators, which hides the accepted ones"
+    return True, f"run {run[0]}: none of the {len(isins)} fund(s) has a persisted violation of {rule_id}"
 
 
 def probe_ticket_closed(tid: str, lookup=None) -> tuple:

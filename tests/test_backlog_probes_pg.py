@@ -116,6 +116,18 @@ def test_the_phase_accepts_the_kind_audit_isins_clear_with_a_domain_and_funds(db
     assert active(db, a) == [("audit_isins_clear", '["cost_attributes", "LU0000000001", "LU0000000002"]', ME)]
 
 
+def test_the_phase_accepts_the_kind_db_check_and_a_reapply_keeps_it(db):
+    """FND-0423: the positive log / table probes are one kind, `db_check`, whose first argument names a check of a closed registry (rfd_matrix_probe). The check list is widened a third time,
+    idempotently: a database that already has the earlier widenings gets this one, and a re-apply changes nothing."""
+    a = _mk(db, "IN_PROGRESS")
+    args = json.dumps(["table_rows", "series_benchmark", "==", 0])
+    db.execute("SELECT backlog.sp_add_close_condition(%s, 'db_check', %s::jsonb, 'the empty table stays empty: checked by a named, read-only count', %s)", (a, args, ME))
+    mig.migrate(db, "probes")
+    mig.migrate(db, "probes")
+    assert active(db, a) == [("db_check", '["table_rows", "series_benchmark", "==", 0]', ME)]
+    refused(db, "check constraint", lambda c: c.execute("SELECT backlog.sp_add_close_condition(%s, 'db_checks', '[]'::jsonb, 'a kind that does not exist', %s)", (a, ME)))
+
+
 def test_the_work_in_flight_gets_the_default_condition_in_the_same_transaction_as_the_gate(pre):
     ip, ready_, opened, todo = _mk(pre, "IN_PROGRESS"), _mk(pre, "READY_FOR_DEPLOY"), _mk(pre, "OPEN"), _mk(pre, "TODO")
     own, retired = _mk(pre, "IN_PROGRESS"), _mk(pre, "IN_PROGRESS")

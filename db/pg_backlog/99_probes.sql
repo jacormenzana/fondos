@@ -121,6 +121,21 @@ BEGIN
     END LOOP;
 END $$;
 
+-- A third kind, db_check (FND-0423, owner ruling 2026-11-15): args = [check, *params] of a CLOSED registry of named positive and negative checks of logs and tables and of one audit rule
+-- (scripts/gov/backlog/rfd_matrix_probe.py: table_rows, ingestion_events, p2_run_summary, audit_rule_clear). The SQL of each check lives in that module; a condition carries only the name and the parameters.
+-- The same widening once more, and it runs again on a database that has the earlier ones; the list is the LAST CHECK (probe_kind IN (...)) of this file (tests/test_backlog_sync.py).
+DO $$
+DECLARE c record;
+BEGIN
+    FOR c IN SELECT conname FROM pg_constraint
+              WHERE conrelid = 'backlog.close_condition'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%probe_kind%' AND pg_get_constraintdef(oid) NOT LIKE '%db_check%'
+    LOOP
+        EXECUTE format('ALTER TABLE backlog.close_condition DROP CONSTRAINT %I', c.conname);
+        ALTER TABLE backlog.close_condition ADD CONSTRAINT close_condition_probe_kind_check
+            CHECK (probe_kind IN ('pushed', 'flag', 'calc_share', 'metric_absent', 'absent_in', 'absent_re_in', 'ols_ran', 'ticket_closed', 'task_ok', 'manual', 'tests_pass', 'audit_isins_clear', 'db_check'));
+    END LOOP;
+END $$;
+
 -- The migration of the work in flight (owner directive 2026-11-01): the gate above blocks a delivery with no closing condition, and no ticket had one, so the same transaction that deploys the gate gives
 -- every ticket that is IN_PROGRESS or READY_FOR_DEPLOY the default condition tests_pass. A ticket that has ever had a condition of its own, active or retired, is left alone; and it runs ONCE: after the first
 -- seeding (the rows of actor system:migration are the mark) a re-apply seeds nothing, so a ticket that starts later defines its own probe. The default is replaced by a more specific probe by retiring it

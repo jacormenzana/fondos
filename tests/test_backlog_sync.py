@@ -85,8 +85,8 @@ def test_store_probe_kinds_match_the_probe():
     block = ddl.split("probe_kind       TEXT NOT NULL CHECK (probe_kind IN (", 1)[1].split("))", 1)[0]
     original = set(re.findall(r"'([a-z_]+)'", block))
     later = (ROOT / "db" / "pg_backlog" / "99_probes.sql").read_text(encoding="utf-8")
-    widened = set(re.findall(r"'([a-z_]+)'", later.split("CHECK (probe_kind IN (", 1)[1].split("))", 1)[0]))
-    assert widened == rfd.PROBE_KINDS and original < widened and widened - original == {"tests_pass", "audit_isins_clear"}
+    widened = set(re.findall(r"'([a-z_]+)'", later.rsplit("CHECK (probe_kind IN (", 1)[1].split("))", 1)[0]))      # the LAST widening of the file is the list the table ends up with
+    assert widened == rfd.PROBE_KINDS and original < widened and widened - original == {"tests_pass", "audit_isins_clear", "db_check"}
 
 
 # ---------------------------------------------------------------- REVERT adjudications verified by the sync (FND-0334 slice 3)

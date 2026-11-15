@@ -72,13 +72,15 @@ def test_the_module_holds_no_sql_on_the_backlog_database():
 class _FakeAuditConn:
     """Just enough of a connection for the three queries of the probe: the latest finished run, the funds with a persisted violation in it, and the rules that hold an acceptance for the funds
     and carry a non-INFO finding in the run (the ones that can hide an accepted fund)."""
-    def __init__(self, run=("post_run",), violating=(), hiding_rules=()):
-        self.run, self.violating, self.hiding, self.sql = run, list(violating), list(hiding_rules), []
+    def __init__(self, run=("post_run",), violating=(), hiding_rules=(), held_out=()):
+        self.run, self.violating, self.hiding, self.held_out, self.sql = run, list(violating), list(hiding_rules), list(held_out), []
 
     def execute(self, sql, params=()):
         self.sql.append((sql, params))
         if "FROM audit_run" in sql:
             rows = [self.run] if self.run else []
+        elif "FROM audit_finding_isin" in sql and "rule_id = ANY" in sql:                # the structural-marker query (FND-0423): the funds held out of the snapshot
+            rows = [(i,) for i in self.held_out if i in params[2]]
         elif "FROM audit_finding_isin" in sql:
             rows = [(i,) for i in self.violating if i in params[2]]
         elif "FROM audit_accepted_finding" in sql:
@@ -116,3 +118,106 @@ def test_a_partly_accepted_rule_hides_the_accepted_funds_so_the_probe_cannot_pas
     assert ok is None and "cannot tell" in text and "ANNUAL_LE_ACCUMULATED" in text
     assert "severity <> 'INFO'" in conn.sql[-1][0] and "expires_at >= CURRENT_DATE" in conn.sql[-1][0]       # only an active acceptance next to a non-INFO finding hides anything
     assert m.probe_db(_FakeAuditConn(violating=["LU1665237613"], hiding_rules=["X"]), "audit_isins_clear", "cost_attributes", "LU1665237613")[0] is False       # a persisted violation stays a definite False
+
+
+# ---------------------------------------------------------------- held-out funds (FND-0423): not a violation, but not evaluated either
+
+def test_the_structural_marker_is_excluded_from_the_violation_query_and_asked_for_on_its_own():
+    conn = _FakeAuditConn(held_out=[])
+    m.probe_db(conn, "audit_isins_clear", "p2_metrics", "LU0011850392")
+    violations, markers = [(s, p) for s, p in conn.sql if "FROM audit_finding_isin" in s]
+    assert "rule_id <> ALL(%s)" in violations[0] and violations[1][3] == list(m.STRUCTURAL_MARKER_RULES) == ["SNAPSHOT_HELD_OUT"]
+    assert "rule_id = ANY(%s)" in markers[0] and markers[1][3] == ["SNAPSHOT_HELD_OUT"]
+
+
+def test_a_held_out_fund_is_cannot_tell_not_the_permanent_fail_it_used_to_be_and_never_a_pass():
+    frozen = ["LU0011850392", "LU0062756647"]
+    ok, text = m.probe_db(_FakeAuditConn(held_out=frozen), "audit_isins_clear", "p2_metrics", *frozen)
+    assert ok is None and "held out of the audit snapshot" in text and "2 of 2" in text and "audit_rule_clear" in text
+    ok, text = m.probe_db(_FakeAuditConn(held_out=["LU0011850392"]), "audit_isins_clear", "p2_metrics", "LU0011850392", "LU0062756647")
+    assert ok is None and "1 of 2" in text, "one held-out fund among clear ones still cannot be called clear"
+    assert m.verdict([(ok, text)]) == "MANUAL"
+
+
+def test_a_real_violation_beats_the_held_out_marker():
+    ok, text = m.probe_db(_FakeAuditConn(violating=["LU0062756647"], held_out=["LU0011850392"]), "audit_isins_clear", "p2_metrics", "LU0011850392", "LU0062756647")
+    assert ok is False and "LU0062756647" in text
+
+
+# ---------------------------------------------------------------- db_check (FND-0423): a closed registry of named checks
+
+class _FakeCheckConn:
+    """Answers each db_check query with a canned value and records the SQL and parameters it was given."""
+    def __init__(self, count=0, run=("post_run",), violating=(), hidden=False):
+        self.count, self.run, self.violating, self.hidden, self.sql = count, run, list(violating), hidden, []
+
+    def execute(self, sql, params=()):
+        self.sql.append((sql, params))
+        if "FROM audit_run" in sql:
+            rows = [self.run] if self.run else []
+        elif "FROM audit_finding_isin" in sql:
+            rows = [(i,) for i in self.violating if i in params[3]]
+        elif "FROM audit_accepted_finding" in sql:
+            rows = [(1,)] if self.hidden else []
+        else:
+            rows = [(self.count,)]
+        return type("R", (), {"fetchone": lambda s: rows[0] if rows else None, "fetchall": lambda s: rows})()
+
+
+def test_db_check_is_a_known_kind_and_its_arguments_are_validated_before_anything_runs():
+    assert "db_check" in m.PROBE_KINDS
+    good = [["table_rows", "series_benchmark", "==", 0], ["ingestion_events", "BENCH_MS", "ERROR", "==", 0, 30], ["p2_run_summary", 1, 7],
+            ["audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY", "LU0011850392", "LU0062756647"]]
+    for args in good:
+        assert m.validate_db_check(args) == [], args
+        assert m.spec_problems({"FND-1": [("db_check", *args)]}) == []
+    bad = [[], [5], ["nope"], ["table_rows", "fund_master; DROP TABLE x", "==", 0], ["table_rows", "series_benchmark", "=~", 0], ["table_rows", "series_benchmark", "==", -1],
+           ["table_rows", "series_benchmark", "==", True], ["ingestion_events", "BENCH_MS", "OK", "==", 0, 0], ["ingestion_events", "BENCH MS", "OK", "==", 0, 5],
+           ["p2_run_summary", 1], ["p2_run_summary", 1, 0], ["audit_rule_clear", "other_domain", "R", "LU0011850392"], ["audit_rule_clear", "p2_metrics", "R", "LU0011850392"],
+           ["audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY"], ["audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY", "short"]]
+    for args in bad:
+        assert m.validate_db_check(args), args
+    assert m.spec_problems({"FND-1": [("db_check", "table_rows", "x", "==", 0)]})[0].startswith("FND-1: table_rows needs")
+
+
+def test_the_registry_holds_only_static_count_queries_and_the_operators_are_a_whitelist():
+    for name, sql in m.TABLE_ROWS_SQL.items():
+        assert sql.startswith("SELECT COUNT(*) FROM ") and not re.search(r"[%{;]", sql), name
+    assert [m.compare(3, op, 3) for op in m.DB_CHECK_COMPARATORS] == [True, True, True, False, False]
+    import pytest
+    with pytest.raises(ValueError):
+        m.compare(1, "; DROP", 1)
+
+
+def test_table_rows_compares_the_count_of_a_named_table_and_a_bad_condition_is_a_value_error():
+    ok, text = m.probe_db(_FakeCheckConn(count=0), "db_check", "table_rows", "series_benchmark", "==", 0)
+    assert ok is True and "series_benchmark: 0 row" in text
+    assert m.probe_db(_FakeCheckConn(count=4), "db_check", "table_rows", "series_benchmark", "==", 0)[0] is False
+    assert m.probe_db(_FakeCheckConn(count=27), "db_check", "table_rows", "nav_sources_older_180d", "<=", 10)[0] is False
+    import pytest
+    with pytest.raises(ValueError):
+        m.probe_db(_FakeCheckConn(), "db_check", "table_rows", "fund_master", "==", 0)
+
+
+def test_the_log_checks_are_positive_and_bound_their_parameters():
+    conn = _FakeCheckConn(count=0)
+    ok, text = m.probe_db(conn, "db_check", "ingestion_events", "BENCH_MS", "ERROR", "==", 0, 30)
+    assert ok is True and "step BENCH_MS status ERROR in the last 30 d" in text and conn.sql[0][1] == ("BENCH_MS", "ERROR", 30)
+    ok, text = m.probe_db(_FakeCheckConn(count=0), "db_check", "p2_run_summary", 1, 7)
+    assert ok is False and "processed >= 1" in text, "a positive probe: no RUN_SUMMARY with processed funds is not a pass"
+    conn = _FakeCheckConn(count=2)
+    assert m.probe_db(conn, "db_check", "p2_run_summary", 100, 7)[0] is True and conn.sql[0][1] == (7, 100)
+
+
+def test_audit_rule_clear_is_about_one_rule_so_a_held_out_fund_is_not_an_obstacle():
+    funds = ["LU0011850392", "LU0062756647"]
+    ok, text = m.probe_db(_FakeCheckConn(violating=[]), "db_check", "audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY", *funds)
+    assert ok is True and "post_run" in text and "WINDOW_FISHER_IDENTITY" in text
+    ok, text = m.probe_db(_FakeCheckConn(violating=["LU0062756647"]), "db_check", "audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY", *funds)
+    assert ok is False and "1 of 2" in text and "LU0062756647" in text
+    assert m.probe_db(_FakeCheckConn(run=None), "db_check", "audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY", *funds)[0] is None
+    ok, text = m.probe_db(_FakeCheckConn(hidden=True), "db_check", "audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY", *funds)
+    assert ok is None and "hides the accepted ones" in text, "a partly accepted rule cannot be cleared by absence"
+    conn = _FakeCheckConn()
+    m.probe_db(conn, "db_check", "audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY", *funds)
+    assert conn.sql[1][1] == ("post_run", "p2_metrics", "WINDOW_FISHER_IDENTITY", funds), "the rule id and the ISINs are bound, never interpolated"
