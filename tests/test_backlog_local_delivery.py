@@ -213,6 +213,7 @@ def test_one_invocation_moves_a_delivery_to_ready_for_deploy_and_closes_it(monke
     monkeypatch.setattr(shared, "backlog_client", world, raising=False)
     monkeypatch.setattr(cfg, "BACKLOG_AUTOPILOT_MODE", "ON")
     monkeypatch.setattr(run, "scan_merges", lambda *a, **k: (delivered, {}))
+    monkeypatch.setattr(run, "_receipt_blockers", lambda *a, **k: {})                   # FND-0388: the receipt-scope control is covered by tests/test_receipt_scope_control_fnd0388.py; here the receipts are not the subject
     monkeypatch.setattr(run, "_gather_gates", lambda candidates, *a, **k: ({t: [(True, "tests_pass: local receipt: 2 passed at dddddddddddd")] for t in candidates}, {}, {t: [] for t in candidates}, {t: [] for t in candidates}))
     for name, mod in (("backlog_modules", SimpleNamespace(run=lambda *a, **k: {"recorded": 0})), ("backlog_impact", SimpleNamespace(run=lambda *a, **k: {})),
                       ("backlog_digest", SimpleNamespace(write_if_due=lambda *a, **k: None, build_text=lambda *a, **k: ""))):
@@ -222,6 +223,27 @@ def test_one_invocation_moves_a_delivery_to_ready_for_deploy_and_closes_it(monke
     assert any("closing evidence: tests_pass: local receipt: 2 passed" in n for n in world.notes)
     lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("autopilot ON: moved")]
     assert len(lines) == 2 and "moved 1" in lines[0] and "closed 1" in lines[1]
+
+
+@needs_git
+def test_a_receipt_scope_blocker_stops_the_closure_end_to_end_at_ready_for_deploy(monkeypatch, capsys, tmp_path):
+    import shared
+    meta = {"sha": "d" * 40, "parents": ["e" * 40], "author_ts": datetime(2026, 11, 2, 21, 0, tzinfo=timezone.utc), "subject": "feat: x"}
+    delivered = {"FND-0001": [(meta, run.merge_object(meta, None, ["shared/a.py"]))]}
+    world = WorldBc()
+    monkeypatch.setenv("FONDOS_ACTOR", run.ACTOR)
+    monkeypatch.setattr(shared, "backlog_client", world, raising=False)
+    monkeypatch.setattr(cfg, "BACKLOG_AUTOPILOT_MODE", "ON")
+    monkeypatch.setattr(run, "scan_merges", lambda *a, **k: (delivered, {}))
+    monkeypatch.setattr(run, "_receipt_blockers", lambda cands, *a, **k: {t: ["the receipt ran no test (scope docs_only)"] for t in cands})
+    monkeypatch.setattr(run, "_gather_gates", lambda candidates, *a, **k: ({t: [(True, "tests_pass: local receipt: 2 passed at dddddddddddd")] for t in candidates}, {}, {t: [] for t in candidates}, {t: [] for t in candidates}))
+    for name, mod in (("backlog_modules", SimpleNamespace(run=lambda *a, **k: {"recorded": 0})), ("backlog_impact", SimpleNamespace(run=lambda *a, **k: {})),
+                      ("backlog_digest", SimpleNamespace(write_if_due=lambda *a, **k: None, build_text=lambda *a, **k: ""))):
+        monkeypatch.setitem(sys.modules, name, mod)
+    assert run.main(["--apply", "--rev", "master"]) == 0
+    assert world.moves == [("IN_PROGRESS", "READY_FOR_DEPLOY")] and world.status == "READY_FOR_DEPLOY"                 # the closure WAITs: the control named in the note
+    assert any("T-RECEIPT-SCOPE" in n for n in world.notes)
+
 
 
 @needs_git
