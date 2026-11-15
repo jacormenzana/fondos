@@ -113,7 +113,7 @@ _UNVERIFIED_BASELINE: dict[str, str] = {
     # of unresolved statement.
     "proyecto2/src/reports/rolling_dashboard.py::_load_snapshot::2486c866":
         R_FRAGMENT,
-    "proyecto3/src/monthly_report.py::_build_cartera::f0c000d9":
+    "proyecto3/src/monthly_report.py::_build_cartera::eb7d2781":
         R_FRAGMENT,
     "scripts/audit/stat/run_statistical_audit.py::_periodic_return_variance::63f46a57":
         R_FRAGMENT,
