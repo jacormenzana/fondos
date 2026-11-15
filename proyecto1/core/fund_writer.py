@@ -981,7 +981,7 @@ def global_post_pipeline_normalize_db(conn: "psycopg.Connection") -> Dict[str, i
             "type_en":         <count>,
             "subtype_en":      <count>,
             "family_en":       <count>,
-            "rows_affected":   <count>
+            "rows_affected":   <count>   # FND-0245: rows really changed by the sweep (0 when nothing is stale)
           }
     """
     metrics: Dict[str, int] = {}
@@ -1010,9 +1010,13 @@ def global_post_pipeline_normalize_db(conn: "psycopg.Connection") -> Dict[str, i
     # 2. UPDATE global (mismo catálogo que _post_upsert_normalize_db pero
     #    SIN WHERE ISIN). TRIM + comparación case-sensitive (suficiente
     #    porque los valores los emite el propio pipeline en casing canónico).
+    # FND-0245 (S1, 2026-11-15): the same CASE expressions are computed ONCE in a CTE and the UPDATE only touches the rows where the result differs
+    # from the stored value (IS DISTINCT FROM: NULL-safe), so `rows_affected` is the number of rows really changed (0 in steady state) instead of
+    # every row of the table rewritten on each pass. The CASE text is not repeated in the WHERE: SET and filter cannot drift apart.
     sql = """
-    UPDATE fund_master
-    SET Sector_Focus = CASE
+    WITH n AS (
+        SELECT isin,
+        CASE
             -- BL-SF-EN: idioma objetivo EN; etiquetas alineadas a canónico v20 (§2A.1 #6).
             WHEN TRIM(Sector_Focus) = 'Tecnología e Innovación'     THEN 'Technology & Innovation'
             WHEN TRIM(Sector_Focus) = 'Energía y Recursos'          THEN 'Energy & Resources'
@@ -1023,8 +1027,8 @@ def global_post_pipeline_normalize_db(conn: "psycopg.Connection") -> Dict[str, i
             WHEN TRIM(Sector_Focus) = 'Activos Reales'              THEN 'Real Assets'
             -- 'Servicios Financieros': resuelto por UPDATE dedicado abajo usando Theme.
             ELSE TRIM(Sector_Focus)
-        END,
-        Family = CASE
+        END AS sf,
+        CASE
             -- BL-LANG-EN (2026-05-09): idioma objetivo EN. Corrección inversa ES→EN.
             WHEN TRIM(Family) = 'RV Core'                THEN 'Equity Core'
             WHEN TRIM(Family) = 'RV Temática'            THEN 'Thematic Equity'
@@ -1041,7 +1045,15 @@ def global_post_pipeline_normalize_db(conn: "psycopg.Connection") -> Dict[str, i
             WHEN TRIM(Family) = 'Estructurado'           THEN 'Structured'
             WHEN TRIM(Family) = 'Orientado a Renta'      THEN 'Income Oriented'
             ELSE TRIM(Family)
-        END
+        END AS fam
+        FROM fund_master
+    )
+    UPDATE fund_master AS f
+    SET Sector_Focus = n.sf,
+        Family = n.fam
+    FROM n
+    WHERE f.isin = n.isin
+      AND (f.Sector_Focus IS DISTINCT FROM n.sf OR f.Family IS DISTINCT FROM n.fam)
     ;
     """
     cursor = conn.execute(sql)

@@ -563,6 +563,45 @@ def test_global_post_pipeline_normalize_db_es_to_en(pg_session_conn, pg_conn_mod
     assert metrics["sf_financials_resolved"] == 1
 
 
+def test_global_normalize_touches_only_the_rows_it_changes_fnd0245(pg_session_conn, pg_conn_module_schema):
+    """FND-0245: the global sweep used to rewrite every row of fund_master on every pass (`rows_affected` = the table size, 3,770 live, twice per pass).
+    Now `rows_affected` is the number of rows whose Sector_Focus / Family really change, NULLs and canonical values are left alone (IS DISTINCT FROM is
+    NULL-safe), a padded value is trimmed (the old statement trimmed it too) and a second call changes nothing. Same isolated-schema pattern as the test
+    above (the function commits internally). The expected final values are the old statement's: the CASE text is the same, only the row filter is new."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    conn.execute("DROP TABLE IF EXISTS fund_master")
+    conn.execute("CREATE TABLE fund_master (isin TEXT PRIMARY KEY, sector_focus TEXT, family TEXT)")
+    conn.execute("""
+        INSERT INTO fund_master (isin, sector_focus, family) VALUES
+        ('A1', 'Tecnología e Innovación', 'RV Core'),            -- both stale
+        ('A2', '  Consumo ', 'Monetario'),                        -- padded + stale
+        ('A3', 'Technology & Innovation', 'Equity Core'),        -- canonical: untouched
+        ('A4', NULL, NULL),                                       -- NULL stays NULL, not counted
+        ('A5', '  Real Estate ', 'Equity Core'),                  -- unmapped but padded: trimmed, as the old statement did
+        ('A6', 'Servicios Financieros', 'Equity Core')            -- resolved by the dedicated second UPDATE, not by the sweep
+    """)
+
+    first = global_post_pipeline_normalize_db(conn)
+
+    rows = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT isin, sector_focus, family FROM fund_master").fetchall()}
+    assert rows == {
+        "A1": ("Technology & Innovation", "Equity Core"),
+        "A2": ("Consumer", "Money Market"),
+        "A3": ("Technology & Innovation", "Equity Core"),
+        "A4": (None, None),
+        "A5": ("Real Estate", "Equity Core"),
+        "A6": ("Financial Services", "Equity Core"),
+    }
+    assert first["rows_affected"] == 3, "A1, A2 and A5 change in the sweep; A3, A4 and A6 do not (A6 is the second UPDATE's)"
+    assert first["sf_financials_resolved"] == 1
+
+    second = global_post_pipeline_normalize_db(conn)
+    assert second["rows_affected"] == 0, "a second sweep over already-normalised data must change nothing"
+    assert second["sector_focus_es_stale"] == 0 and second["family_es_stale"] == 0
+    assert {r[0]: (r[1], r[2]) for r in conn.execute("SELECT isin, sector_focus, family FROM fund_master").fetchall()} == rows
+
+
 def test_log_ingestion_failure_does_not_poison_enclosing_transaction(pg_conn):
     """Regression guard for a real bug found live 2026-09-20: Postgres aborts the WHOLE enclosing
     transaction on any failed statement — a plain caught-and-swallowed exception in log_ingestion
