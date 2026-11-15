@@ -4,7 +4,7 @@ Owner ruling 2026-11-15, after S1 (`PKG_S1_run_evidence_sweep.md`): start now, F
 
 ## 1. Result (read first)
 - **FND-0232 delivered** (`ddbf366`): five stale texts of `macro_discovery.py` (two docstrings, the runtime message, the `fred_api_key` parameter doc, the `--fred-api-key` help) and the provenance note said a FRED key gives the full ICE BofA history; FRED serves ~37 months of `BAMLH0A0HYM2` with or without a key (verified 2026-10-05). Closing conditions: one `absent_in` per stale phrase, all passing, plus `tests_pass`.
-- **FND-0423 delivered in code** (`023adb4`, `bcec012`, `7960108`): the probe vocabulary is widened and the sweep is in the cycle report. **It closes by itself only after the DEPLOY fact**: the delivery changes `db/**` (a third widening of the `probe_kind` CHECK in `db/pg_backlog/99_probes.sql`), so the autopilot prints WAIT until the owner's watcher applies the `probes` phase and records DEPLOY, then closes it. Nothing for the owner to type.
+- **FND-0423 delivered in code** (`023adb4`, `bcec012`, `7960108`, `e9bd725`): the probe vocabulary is widened and the sweep is in the cycle report. **It closes by itself only after the DEPLOY fact**: the delivery changes `db/**` (a third widening of the `probe_kind` CHECK in `db/pg_backlog/99_probes.sql`), so the autopilot prints WAIT until the owner's watcher applies the `probes` phase and records DEPLOY, then closes it. Nothing for the owner to type.
 - **FND-0236 closure** is the owner's (section 5): the closing commit carries its `Closes:` only as the delivery fact that clears its `STALE_PROBES` blocker; the autopilot then waits for DEPLOY and you close it with `close_release.py`.
 
 ## 2. FND-0239 checked first: not merged
@@ -33,7 +33,14 @@ C:\Users\jacor\.conda\envs\des\python.exe scripts\gov\backlog\close_release.py -
 ```
 That last command is the DRY RUN (everything is checked and rolled back; exit 0). If it prints no refusal, run the same command again with ` --apply` at the end and type `I CONFIRM THIS IS NOT A SYNTHETIC TEST` when asked. Check afterwards: `C:\Users\jacor\.conda\envs\des\python.exe scripts\gov\backlog\backlog_autopilot.py --since-days 1` prints no decision for FND-0236 and its status is CLOSED. The label `R2026.11-FND0236` is unused today (0 tickets carry it); if the tool says it is taken, change the tag.
 
-## 6. What was not done
+## 6. The first full receipt failed, and why (a finding about the impact selector)
+The first closing commit (`376c8cd`) had a FAILED full receipt: 7,267 passed, 1 real failure (counted three times by the confirmation re-run), 652 s. The failing test was `tests/test_test_impact_real_tree.py::test_with_the_narrowing_a_new_constant_no_longer_selects_the_cycle_end_to_end_tests_but_a_changed_switch_still_selects_its_readers`: a new constant in `shared/config.py` must not select the cycle end-to-end tests, and it did.
+- **Cause (found by reproducing it in 33 s, after a first wrong hypothesis: the bare `import shared.config` I had added to the collector was innocent).** `probe_flag` read a switch with `getattr(cfg, name, None)` where `name` is a parameter. The selector (`shared/test_impact.py::_hazard`) treats a read by a computed name as a dependency on ANY change of the hub, per module; the cycle report now imports `rfd_matrix_probe`, so every test that runs a launcher (the cycle end-to-end tests) reached that module.
+- **Fix (`e9bd725`):** `probe_flag` draws each switch from an inline literal list (the 8 of SPEC and the 1 live condition), which the selector can follow by name, and raises on an unlisted switch instead of returning `None`; a test keeps the list equal to SPEC. The selector itself was not touched (the handoff warns against it).
+- **Consequence to remember:** a `flag` closing condition on a switch not in that list is now an error until the switch is added with its test. Only 1 of about 150 stored conditions is a `flag`; the cost is small and the alternative (a module that makes every config change select the launcher tests) is worse.
+- **Process:** a receipt is per sha and the `tests_pass` probe reads the receipt of the delivering commit, so the failed `376c8cd` could never close the three tickets. The closing commit is this one (real content: this account), with its own full receipt; the earlier `Closes:` in `376c8cd` is superseded by the latest delivery fact.
+
+## 7. What was not done
 - The opening rule is documentation, not a check in `open_ticket`. A rule that refuses a data ticket without a condition would need the owner's decision (it changes the single door).
 - `test_historia.py` (proyecto2 discovery) fails at collection without network, with or without these changes; not touched.
 - FND-0422 (four funds whose `Fund_Nature` contradicts both benchmark sources) is next, as ruled, and needs the old-vs-new universe replay and your order for a P1 pass before any change.
