@@ -46,7 +46,9 @@ MIN_ROWS = 48                      # a series shorter than this is not corrupted
 DETECTORS = {
     "validate_nav": lambda nav, isin, peers: validate_nav(nav),
     "validate_nav_stale_flat": lambda nav, isin, peers: validate_nav_stale_flat(nav, enabled=True),
-    "validate_nav_unshared_jump": lambda nav, isin, peers: validate_nav_unshared_jump(nav, peers, isin),
+    # recent_months=0: the harness measures the DETECTOR (recall, false positives over the whole history); the corruption is injected in the middle of the series, which the live recency window
+    # (FND-0393, NAV_UNSHARED_JUMP_RECENT_MONTHS) deliberately does not look at.
+    "validate_nav_unshared_jump": lambda nav, isin, peers: validate_nav_unshared_jump(nav, peers, isin, recent_months=0),
 }
 
 

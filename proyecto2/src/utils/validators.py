@@ -56,19 +56,28 @@ def validate_nav_stale_flat(nav_df, min_run=None, min_jump=None, enabled=None):
     return True, None
 
 
-def find_unshared_jumps(nav_df, peers, isin, min_abs_ret=None, min_peers=None, max_peer_share=None):
+def find_unshared_jumps(nav_df, peers, isin, min_abs_ret=None, min_peers=None, max_peer_share=None, recent_months=None):
     """FND-0392: the one-month moves of a MONTHLY NAV that its Fund_Nature peers did not make, largest first. Each item: {month, ret, peer_median, n_peers, peer_share}.
 
     A move qualifies when (1) it spans exactly one calendar month (a step over a NAV gap is not a one-month move), (2) |ret| >= min_abs_ret, (3) at least min_peers OTHER funds of the
-    same Fund_Nature report that month (fewer = not decidable, never a finding), (4) the fund differs from the peer median by min_abs_ret or more, and (5) at most max_peer_share of the peers
-    moved the same way by at least half as much. Pure: `peers` is a proyecto2/src/utils/peer_returns.PeerReturns, the defaults come from shared.config (NAV_UNSHARED_JUMP_*)."""
+    same Fund_Nature report that month (fewer = not decidable, never a finding), (4) the fund differs from the peer median by min_abs_ret or more, (5) at most max_peer_share of the peers
+    moved the same way by at least half as much, and (6) FND-0393: the month is among the last `recent_months` months of the fund's OWN series (counted back from its newest NAV month, never from
+    the clock, so the answer is reproducible; 0 = the whole history). The window exists because the rule quarantines: an old re-pricing of a single-region fund (2000 - 2022 in the census of
+    2026-11-08) must not remove a fund for good. Pure: `peers` is a proyecto2/src/utils/peer_returns.PeerReturns, the defaults come from shared.config (NAV_UNSHARED_JUMP_*)."""
     import numpy as np
+    import pandas as pd
     from shared import config as _cfg
+    from shared.period_key import period_ordinals, to_period_key
     from src.utils.peer_returns import one_month_returns
     min_abs_ret = _cfg.NAV_UNSHARED_JUMP_MIN_ABS_RET if min_abs_ret is None else min_abs_ret
     min_peers = _cfg.NAV_UNSHARED_JUMP_MIN_PEERS if min_peers is None else min_peers
     max_peer_share = _cfg.NAV_UNSHARED_JUMP_MAX_PEER_SHARE if max_peer_share is None else max_peer_share
+    recent_months = _cfg.NAV_UNSHARED_JUMP_RECENT_MONTHS if recent_months is None else recent_months
     rets = one_month_returns(nav_df)
+    if recent_months and len(rets):
+        last = int(np.max(period_ordinals(pd.DatetimeIndex(to_period_key(nav_df["date"])))))     # P#11: the one month-ordinal definition
+        age = last - np.asarray(period_ordinals(rets.index))
+        rets = rets[age < int(recent_months)]
     out = []
     for month, r in rets[rets.abs() >= min_abs_ret].items():
         arr = peers.peers_at(isin, month)
@@ -83,10 +92,10 @@ def find_unshared_jumps(nav_df, peers, isin, min_abs_ret=None, min_peers=None, m
     return sorted(out, key=lambda j: -abs(j["ret"]))
 
 
-def validate_nav_unshared_jump(nav_df, peers, isin, min_abs_ret=None, min_peers=None, max_peer_share=None):
+def validate_nav_unshared_jump(nav_df, peers, isin, min_abs_ret=None, min_peers=None, max_peer_share=None, recent_months=None):
     """FND-0392: (ok, message) over find_unshared_jumps. The message names the largest move, the peer median and how many peers moved the same way. It does NOT read the mode
     (OFF / SHADOW / ON): the caller decides what a False means (quarantine only in ON). Call it on the monthly series only."""
-    jumps = find_unshared_jumps(nav_df, peers, isin, min_abs_ret, min_peers, max_peer_share)
+    jumps = find_unshared_jumps(nav_df, peers, isin, min_abs_ret, min_peers, max_peer_share, recent_months)
     if not jumps:
         return True, None
     j = jumps[0]

@@ -682,10 +682,15 @@ NAV_STALE_FLAT_MIN_JUMP: float = 0.40
 # Before "ON": a recency window, the verified-genuine exemption (FND-0394) and a labelled precision (FND-0395).
 # MODE: "OFF" = not evaluated; "SHADOW" = evaluated, a NAV_JUMP_SHADOW row in p2_pipeline_log names the month and nothing is quarantined; "ON" = quarantined like any validate_nav failure
 # (metrics cleared, nav_sources INVALID_NAV, re-opens by itself when the series is repaired). Rollback = "OFF": validate_nav and the stale-flat rule decide alone.
-NAV_UNSHARED_JUMP_MODE: str = "SHADOW"
+# FND-0393 (owner order 2026-11-15): the RECENCY WINDOW now exists (NAV_UNSHARED_JUMP_RECENT_MONTHS: a jump counts only when its month is among the last N months of the fund's own series, counted from its newest NAV
+# month; 0 = the whole history) and the mode is "ON". Census of 2026-11-15 over three full P2 passes (11-12, 11-14, 11-15): the rule names the same 11 funds, 10 with jumps of 2000 - 2022 (outside the window) and ONE recent,
+# DE000DWS3LN1 (565.41 -> 1,090.70 in 2026-08, peers +1.8 %, 0 of 1,586 the same way; eligible in P3 and caught by nothing else), so ON quarantines exactly that fund. The precision is NOT labelled (n = 1; FND-0395 stays deferred):
+# the rollback is "SHADOW" (the same rows, nothing quarantined) or "OFF". A fund the owner verifies as genuine would need a NAV-level exemption, which does not exist yet (data_exemption exempts quantities, never a NAV flag).
+NAV_UNSHARED_JUMP_MODE: str = "ON"
 NAV_UNSHARED_JUMP_MIN_ABS_RET: float = 0.35
 NAV_UNSHARED_JUMP_MIN_PEERS: int = 10
 NAV_UNSHARED_JUMP_MAX_PEER_SHARE: float = 0.05
+NAV_UNSHARED_JUMP_RECENT_MONTHS: int = 12
 # FND-0394 (WS2 of FND-0391): shared.data_suspect, the one predicate for "this fund's published numbers cannot be trusted as they stand". DATA_SUSPECT_ENABLED is the kill switch of its SELECTION effect (build
 # eligibility, promotion gate, PIT): it ships OFF and nothing reads it yet; the predicate itself is pure and used by the forensics and, later, the audit's incident rules. Defaults from the forensics of the 22 funds
 # with |MAD-Z| >= 50 on 2026-11-08 (FND-0393): MIN_DEV 50 is the extreme set's own cut; a fund needs MIN_FLAGGED_METRICS distinct ADEQUATE-sample metrics at that deviation to be an INTEGRITY suspect; a metric's sample is

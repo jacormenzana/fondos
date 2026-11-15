@@ -129,8 +129,52 @@ def test_one_month_returns_skip_gaps_and_keep_the_last_row_of_a_month():
 
 def test_the_kill_switch_defaults_and_the_pipeline_wiring():
     from shared import config
-    assert config.NAV_UNSHARED_JUMP_MODE == "SHADOW"                  # SHADOW since 2026-11-08 (FND-0393: universe census, 16 funds flagged in the whole history); "ON" needs a recency window, the exemption and a labelled precision
+    assert config.NAV_UNSHARED_JUMP_MODE == "ON" and config.NAV_UNSHARED_JUMP_RECENT_MONTHS == 12    # ON since 2026-11-15 (owner order, FND-0393): the recency window exists; before it was SHADOW (16 funds flagged in the whole history); (older note follows) the exemption and a labelled precision
     assert (config.NAV_UNSHARED_JUMP_MIN_ABS_RET, config.NAV_UNSHARED_JUMP_MIN_PEERS, config.NAV_UNSHARED_JUMP_MAX_PEER_SHARE) == (0.35, 10, 0.05)
     src = (_ROOT / "proyecto2" / "src" / "pipeline" / "run_pipeline.py").read_text(encoding="utf-8")
     assert src.count("validate_nav_unshared_jump(") == 1 and "NAV_JUMP_SHADOW" in src             # one call, on the monthly series only
     assert src.index("validate_nav_stale_flat(nav_df)") < src.index("validate_nav_unshared_jump(nav_df")   # the cheap rules decide first
+
+
+# ---- FND-0393: the recency window (a jump counts only among the last N months of the fund's own series) -----------------------------------------------------
+
+def test_a_recent_jump_is_flagged_and_an_old_one_of_the_same_fund_is_not():
+    old, recent = _target(jump_at=10, months=60), _target(jump_at=52, months=60)       # 60 months: the jump is 49 / 7 months before the series end
+    assert validate_nav_unshared_jump(recent, _panel(months=60, own=("TARGET", recent)), "TARGET", recent_months=12)[0] is False
+    assert validate_nav_unshared_jump(old, _panel(months=60, own=("TARGET", old)), "TARGET", recent_months=12) == (True, None)
+
+
+def test_the_window_counts_from_the_newest_month_of_the_series_never_from_the_clock():
+    nav = _target(jump_at=30, months=40)                                               # series 2022-01 .. 2025-04: no "today" involved
+    peers = _panel(own=("TARGET", nav))
+    assert find_unshared_jumps(nav, peers, "TARGET", recent_months=10)                 # age 39 - 30 = 9 < 10: inside
+    assert not find_unshared_jumps(nav, peers, "TARGET", recent_months=9)              # age 9 is not < 9: outside
+
+
+def test_zero_means_the_whole_history_and_the_default_is_the_config_value():
+    from shared import config
+    old = _target(jump_at=10, months=60)
+    peers = _panel(months=60, own=("TARGET", old))
+    assert find_unshared_jumps(old, peers, "TARGET", recent_months=0)                  # the whole history: found
+    assert find_unshared_jumps(old, peers, "TARGET") == find_unshared_jumps(old, peers, "TARGET", recent_months=config.NAV_UNSHARED_JUMP_RECENT_MONTHS) == []
+
+
+def test_a_series_shorter_than_the_window_is_judged_whole():
+    nav = _target(jump_at=5, months=14)
+    assert find_unshared_jumps(nav, _panel(months=14, own=("TARGET", nav)), "TARGET", recent_months=12)
+
+
+def test_the_flag_holds_while_the_jump_is_still_inside_the_window():
+    nav = _target(jump_at=30, months=40)
+    steady = [float(nav["nav"].iloc[-1]) * (1.003 ** k) for k in range(1, 3)]
+    longer = pd.concat([nav, _nav(steady, start=(nav["date"].iloc[-1] + pd.offsets.MonthEnd(1)).strftime("%Y-%m-%d"))], ignore_index=True)
+    # 42 months: the jump (month 30) is 11 months before the newest one: inside a 12-month window
+    assert validate_nav_unshared_jump(longer, _panel(months=42, own=("TARGET", longer)), "TARGET", recent_months=12)[0] is False
+
+
+def test_the_flag_lapses_by_itself_when_the_jump_leaves_the_window():
+    nav = _target(jump_at=30, months=40)
+    steady = [float(nav["nav"].iloc[-1]) * (1.003 ** k) for k in range(1, 5)]
+    longer = pd.concat([nav, _nav(steady, start=(nav["date"].iloc[-1] + pd.offsets.MonthEnd(1)).strftime("%Y-%m-%d"))], ignore_index=True)
+    # 44 months: the jump (month 30) is 13 months before the newest one: outside a 12-month window, so the quarantine re-opens by itself
+    assert validate_nav_unshared_jump(longer, _panel(months=44, own=("TARGET", longer)), "TARGET", recent_months=12) == (True, None)
