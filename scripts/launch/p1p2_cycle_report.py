@@ -40,6 +40,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
 log = logging.getLogger("p1p2_cycle_report")
@@ -200,6 +201,22 @@ Q_OLS_ZERO_BACKFILL = """
     ORDER BY s.created_at
 """
 
+# FND-0327: what the P2 steps of THIS cycle did. The window is a real instant (the launcher's stamp, made timezone-aware), not a date: a cycle that starts
+# at 23:57 and runs P2 at 00:17 would otherwise be confused with an earlier cycle of the same date. Latest RUN_SUMMARY since the cycle started.
+Q_P2_RUN_SUMMARY = """
+    SELECT s.status, s.message, s.created_at
+    FROM p2_pipeline_log s
+    WHERE s.step = 'RUN_SUMMARY'
+      AND s.created_at >= %s
+    ORDER BY s.created_at DESC, s.id DESC
+    LIMIT 1
+"""
+
+# Any P2 log row since the cycle started: tells a P1-only cycle (P2 never ran: nothing to report) from a P2 that started and left no RUN_SUMMARY (aborted).
+Q_P2_ACTIVITY = """
+    SELECT EXISTS (SELECT 1 FROM p2_pipeline_log WHERE created_at >= %s)
+"""
+
 Q_ALERTS = """
     SELECT a.level, COUNT(*) AS n
     FROM fund_metric_alerts a
@@ -276,6 +293,97 @@ def collect(conn, since: date, today: date) -> dict:
         "class_ccy_unknown": [r[0] for r in conn.execute(Q_CLASS_CCY_UNKNOWN).fetchall()],
         "eur_view_on": _eur_view_on(),
     }
+
+
+# ── P2 outcome of the cycle (FND-0327) ────────────────────────────────────────────────────────────
+
+CYCLE_TZ = "Europe/Madrid"       # the zone of the launcher's stamp (local wall-clock time of the machine that runs the cycle)
+
+
+def _cycle_tz():
+    """The stamp's zone. Falls back to the machine's own zone when the tz database is missing (Windows without `tzdata`): never a naive datetime."""
+    try:
+        return ZoneInfo(CYCLE_TZ)
+    except Exception:                                    # noqa: BLE001 -- ZoneInfoNotFoundError / OSError: only the zone lookup is guarded
+        return datetime.now().astimezone().tzinfo
+
+
+def cycle_start_from_stamp(stamp, since: date) -> tuple:
+    """(aware start of the cycle, True when it came from the stamp). `stamp` is the launcher's %Y%m%d_%H%M%S in local time. With no stamp (a manual run) or one that
+    cannot be parsed the start is midnight of `since`, in the same zone, and the flag is False. The datetime is always timezone-aware, so PostgreSQL compares real
+    instants whatever the session TimeZone is. Pure."""
+    tz = _cycle_tz()
+    if stamp:
+        try:
+            return datetime.strptime(stamp, "%Y%m%d_%H%M%S").replace(tzinfo=tz), True
+        except ValueError:
+            pass
+    return datetime.combine(since, datetime.min.time()).replace(tzinfo=tz), False
+
+
+def classify_p2_outcome(row, started: bool) -> dict:
+    """The P2 outcome from the cycle's latest RUN_SUMMARY row `(status, message, created_at)` (None when there is none) and whether any P2 log row exists since the
+    cycle started. States: `recomputed` (processed > 0), `cache_only` (processed == 0: every fund was served from the fingerprint cache), `unparsed` (a RUN_SUMMARY that
+    shared.cycle_telemetry_ingest cannot read: visible, never skipped) and `not_run` (no RUN_SUMMARY; `started` says whether P2 left any trace, i.e. aborted, or never
+    ran in this cycle, e.g. a P1-only cycle). Pure."""
+    if row is None:
+        return {"state": "not_run", "started": bool(started)}
+    status, message, at = row
+    sys.path.insert(0, str(ROOT))
+    from shared.cycle_telemetry_ingest import parse_run_summary
+    values, problems = parse_run_summary(message)
+    out = {"status": status, "at": at.isoformat() if hasattr(at, "isoformat") else str(at)}
+    if values is None:
+        return {**out, "state": "unparsed", "problems": problems}
+    return {**out, "state": "cache_only" if values["processed"] == 0 else "recomputed",
+            "processed": int(values["processed"]), "skipped": int(values["skipped"]), "written": int(values["written"]),
+            "errors": int(values["errors"]), "warnings": int(values["warnings"])}
+
+
+def collect_p2_outcome(conn, cycle_start: datetime, from_stamp: bool) -> dict:
+    """Fail-soft like the other diagnostics: a problem becomes an `error` entry in the report. Read-only."""
+    try:
+        row = conn.execute(Q_P2_RUN_SUMMARY, (cycle_start,)).fetchone()
+        started = bool(conn.execute(Q_P2_ACTIVITY, (cycle_start,)).fetchone()[0]) if row is None else True
+        return {**classify_p2_outcome(tuple(row) if row is not None else None, started),
+                "cycle_start": cycle_start.isoformat(), "window_from_stamp": bool(from_stamp)}
+    except Exception as exc:                             # noqa: BLE001 -- the diagnostics never change the cycle
+        try:
+            conn.rollback()
+        except Exception:                                # noqa: BLE001
+            pass
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def p2_outcome_line(p2: dict) -> str:
+    """The one line of the report. Pure."""
+    state = p2.get("state")
+    if p2.get("error"):
+        return f"P2 del ciclo: no disponible ({p2['error']})"
+    if state == "recomputed":
+        return (f"P2 del ciclo: {p2['processed']} fondos recalculados, {p2['skipped']} servidos de cache, {p2['written']} filas escritas, "
+                f"{p2['errors']} errores, {p2['warnings']} avisos")
+    if state == "cache_only":
+        return f"P2 del ciclo: ningun fondo recalculado (todo en cache: {p2['skipped']} omitidos, {p2['written']} filas escritas)"
+    if state == "unparsed":
+        return f"P2 del ciclo: RUN_SUMMARY ilegible ({'; '.join(p2.get('problems') or [])})"
+    note = "" if p2.get("window_from_stamp", True) else " (ventana = medianoche de --since: no hay --stamp del ciclo)"
+    if p2.get("started"):
+        return f"P2 del ciclo: empezo pero no dejo RUN_SUMMARY desde {p2.get('cycle_start', '?')}{note}"
+    return f"P2 del ciclo: no corrio (sin actividad en p2_pipeline_log desde {p2.get('cycle_start', '?')}){note}"
+
+
+def p2_outcome_attention(p2) -> list:
+    """[ATENCION] sentences: P2 started and left no RUN_SUMMARY (aborted), an unreadable RUN_SUMMARY, or errors. A cycle in which P2 never ran (P1 only) is not one. Pure."""
+    if not p2 or p2.get("error"):
+        return []
+    if p2.get("state") == "not_run" and p2.get("started"):
+        return ["P2 empezo en este ciclo pero no escribio RUN_SUMMARY: la ejecucion se interrumpio (revisar el log de P2_calculateIndicators)"]
+    if p2.get("state") == "unparsed":
+        return [f"RUN_SUMMARY de P2 ilegible ({'; '.join(p2.get('problems') or [])}): el resultado de P2 no se puede resumir"]
+    if p2.get("state") in ("recomputed", "cache_only") and p2.get("errors"):
+        return [f"P2 termino con {p2['errors']} errores (RUN_SUMMARY errors=)"]
+    return []
 
 
 # ── hedging drift (FND-0244) ──────────────────────────────────────────────────────────────────────
@@ -585,6 +693,7 @@ def attention_items(report: dict, previous: dict | None) -> list:
     if orphans:
         items.append(f"{orphans} metricas nominales sin su par real (hueco silencioso de deflacion): "
                      + ", ".join(f"{m}={n}" for m, n in report["real_orphans"].items()))
+    items += p2_outcome_attention(report.get("p2_outcome"))  # absent in reports written before FND-0327
     zero_ols = report.get("ols_zero_backfills", [])          # absent in reports written before this check
     if zero_ols:
         items.append(f"{len(zero_ols)} ejecucion(es) P2 con backfill por CALC_VERSION terminaron con ols_funds=0 "
@@ -717,6 +826,8 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
     if unk is not None:
         L += [f"Divisa de clase desconocida (activos con NAV): {len(unk)}"] + ([f"    {', '.join(unk[:TOP_N])}"] if unk else [])
     L += ["Alertas rolling (activos): " + (", ".join(f"{k}={v}" for k, v in report["alerts"].items()) or "ninguna")]
+    if report.get("p2_outcome"):                                # absent in reports written before FND-0327
+        L += [p2_outcome_line(report["p2_outcome"])]
     hd = report.get("hedging_drift")
     if hd:
         if hd.get("skipped"):
@@ -806,8 +917,9 @@ def main(argv: list | None = None) -> int:
     if not logging.getLogger().handlers:             # make the INFO diagnostics and the overrun WARNING visible in the launcher's log
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--stamp", default=datetime.now().strftime("%Y%m%d_%H%M%S"),
-                    help="id of this report (names the JSON file); default: now")
+    ap.add_argument("--stamp", default=None,
+                    help="id of this report (names the JSON file) and, from the launcher, the start of the cycle (local %%Y%%m%%d_%%H%%M%%S): the P2 outcome "
+                         "is read from the runs since that instant; default: now (a manual run then reads P2 since midnight of --since)")
     ap.add_argument("--since", default=None,
                     help="YYYY-MM-DD, start of the cycle (DQ issues and low-confidence rows are counted from "
                          "it); default: today")
@@ -822,6 +934,8 @@ def main(argv: list | None = None) -> int:
     except ValueError:
         print(f"[ERROR] --since expects YYYY-MM-DD, got {args.since!r}")
         return 4
+    cycle_start, window_from_stamp = cycle_start_from_stamp(args.stamp, since)     # FND-0327: only an explicit stamp is a cycle start
+    args.stamp = args.stamp or datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.out_dir)
     json_name = f"P1_P2_cycle_report_{args.stamp}.json"
 
@@ -831,6 +945,7 @@ def main(argv: list | None = None) -> int:
         conn = get_connection()
         try:
             report = collect(conn, since, today)
+            report["p2_outcome"] = collect_p2_outcome(conn, cycle_start, window_from_stamp)
             report["hedging_drift"] = collect_hedging_drift(conn) if args.hedging_drift else {"skipped": True}
             report["backlog_links"] = collect_backlog_links()
             report["backlog_violations"] = collect_backlog_violations()
