@@ -2954,7 +2954,8 @@ def run_block(
             if _attribute_group_write_enabled():
                 try:
                     from shared import fee_state as _fee_state
-                    from shared.db import fail_soft_block
+                    # `fail_soft_block` is the module-level import (top of file): a local import here made it a local of the whole run_block and broke
+                    # the two batch loads above (fund_benchmarks, srri_nav) with UnboundLocalError (FND-0422).
                     with fail_soft_block(conn):      # SAVEPOINT: un SELECT fallido no deja la transaccion de Postgres abortada para el resto del fondo
                         _fp_row = conn.execute(
                             "SELECT Entry_Fee_Pct, Entry_Fee_Pct_Max, Exit_Fee_Pct, Exit_Fee_Pct_Max FROM fund_master WHERE ISIN=%s", (isin,)).fetchone()
