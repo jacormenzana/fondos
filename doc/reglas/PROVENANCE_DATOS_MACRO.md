@@ -85,8 +85,8 @@ Series definidas en `_FRED_SERIES` en `macro_discovery.py` (~25 series). Selecci
 - `doc/api_key/fred_santLouis_apikey.txt`
 - `doc/memoria/fred_santLouis_apikey.txt`
 
-**Impacto sin clave:**
-- `spread_hy` (ICE BofA `BAMLH0A0HYM2`) queda limitada a ~3 años. La restricción de licencia aplica incluso con clave API.
+**Impacto de la clave (y de su ausencia):**
+- `spread_hy` (ICE BofA `BAMLH0A0HYM2`) queda limitada a ~3 años **con o sin clave**: la licencia de ICE restringe la serie también en la API oficial (verificado el 2026-10-05 con `FRED_API_KEY` puesta: `macro_discovery --source fred --dry-run` devuelve 37 filas mensuales; FND-0232). La clave no da historial completo. El historial de `series_macro` (2000-01..hoy, 322 meses) viene de cargas anteriores y se conserva porque el cargador solo hace upsert (`ON CONFLICT DO UPDATE`): **no recargar ni reemplazar `spread_hy` desde FRED solamente.**
 - `spread_ig` usa `BAA10YM` (Moody's) — público, historial completo desde 1953, no afectado.
 - El resto de series FRED son públicas y no se ven afectadas.
 

@@ -854,9 +854,11 @@ def _fred_fetch(series_id: str, desde: str, api_key: str | None) -> pd.DataFrame
     """
     Descarga una serie FRED como DataFrame con columnas [date, value].
 
-    Si hay api_key usa la API oficial (historial completo para todas las series,
-    incluidas las ICE BofA con licencia restringida en el endpoint publico).
-    Sin api_key usa fredgraph.csv, que para algunas series solo devuelve ~3 años.
+    Si hay api_key usa la API oficial; sin api_key usa fredgraph.csv.
+    La clave NO amplia el historial de las series ICE BofA (p. ej. BAMLH0A0HYM2 -> spread_hy): FRED las sirve
+    limitadas a ~3 años (37 meses verificados el 2026-10-05, FND-0232) con o sin clave, por la licencia de ICE.
+    El historial de series_macro (2000-01..hoy) viene de cargas anteriores y se conserva porque el cargador solo
+    hace upsert: no recargar ni reemplazar spread_hy desde FRED solamente.
     """
     from io import StringIO
     if api_key:
@@ -1079,8 +1081,9 @@ def load_fred_series(
     Descarga series de la Fed FRED.
 
     api_key: clave FRED (gratis en https://fred.stlouisfed.org/docs/api/api_key.html).
-             Sin clave usa el endpoint publico, que restringe series ICE BofA a ~3 años.
-             Con clave usa la API oficial con historial completo.
+             Sin clave usa el endpoint publico; con clave, la API oficial. Las series ICE BofA (spread_hy,
+             BAMLH0A0HYM2) quedan limitadas a ~3 años en AMBOS casos (licencia ICE, FND-0232): la clave no da
+             historial completo. El historial previo de series_macro se conserva (el cargador solo hace upsert).
 
     Devuelve: (inflation_rows, macro_rows)
     """
@@ -1092,7 +1095,7 @@ def load_fred_series(
         # FND-0238: no part of a credential belongs in a log -- only the fact that one is set.
         print("  [FRED] Descargando series (API key: configurada)...")
     else:
-        print("  [FRED] Descargando series (sin API key -- series ICE BofA limitadas a ~3 años)...")
+        print("  [FRED] Descargando series (sin API key; las series ICE BofA quedan limitadas a ~3 años con o sin clave)...")
 
     inflation_rows: list[dict] = []
     macro_rows:     list[dict] = []
@@ -1325,7 +1328,7 @@ def run(
     Descarga y persiste todos los indicadores macro.
 
     sources:      lista de fuentes ['ine','bce','fred','eurostat'] o None (todas)
-    fred_api_key: clave FRED para historial completo de series ICE BofA.
+    fred_api_key: clave FRED (la API oficial; NO amplia el historial de las series ICE BofA, limitadas a ~3 años con o sin clave).
                   Si None, se lee de la variable de entorno FRED_API_KEY.
     """
     if sources is None:
@@ -1428,7 +1431,8 @@ if __name__ == "__main__":
         "--fred-api-key",
         default=None,
         help="Clave API de FRED (gratis en https://fred.stlouisfed.org/docs/api/api_key.html). "
-             "Sin clave, la serie ICE BofA spread_hy (BAMLH0A0HYM2) queda limitada a ~3 años. "
+             "La serie ICE BofA spread_hy (BAMLH0A0HYM2) queda limitada a ~3 años CON O SIN clave (licencia ICE): "
+             "la clave no da historial completo y el historial ya cargado se conserva. "
              "spread_ig usa BAA10YM (Moody's, publica) y no requiere clave. "
              "Alternativa: exportar variable de entorno FRED_API_KEY antes de ejecutar.",
     )
