@@ -59,6 +59,57 @@ HEADERS = {
 # §5.1 / §5.3: workbook's 7 classes (floor, not ceiling)
 WORKBOOK_CODSUS = {"LIIC", "KIID", "MECO", "FGES", "LFII", "CCA", "ISSF"}
 
+# FND-0328 (S1, 2026-11-15): AIMA / CARA / FMDB are document classes of the Deutsche Bank catalogue that the workbook never listed. They have been in every
+# harvest since 2026-10 (AIMA 2,957, CARA 74, FMDB 5,904 documents on 2026-11-15), carry no KIID and nothing reads them, so they are KNOWN, not anomalies: they stop
+# raising NORM-001/002/003 on every run. A genuinely new codSus (not in either set) still does. To keep a known class from disappearing unseen (a scraper or catalogue
+# failure) NORM-004 compares its row count with the previous harvest.
+KNOWN_NON_KIID_CODSUS = frozenset({"AIMA", "CARA", "FMDB"})
+KNOWN_CLASS_DROP_RATIO = 0.5     # NORM-004: a known class below this share of its previous harvest's rows is a WARNING
+
+
+def is_unknown_codsus(cod_sus) -> bool:
+    """True for a codSus that is neither one of the workbook's classes nor a known non-KIID class (the only ones NORM-001/002/003 are about). Pure."""
+    return bool(cod_sus) and cod_sus not in WORKBOOK_CODSUS and cod_sus not in KNOWN_NON_KIID_CODSUS
+
+
+def known_class_findings(current: dict, previous) -> list:
+    """NORM-004. `current` / `previous` = {codSus: document rows} of the current and the immediately previous harvest (DEDUPLICATED DB rows, not raw rows).
+    `previous` is None when there is no earlier harvest (first run or an empty table): then only the zero-rows check applies and no percentage is computed, so a
+    missing baseline never raises a WARNING by itself. Returns [(level, message)], empty when every known class is present and stable. Pure."""
+    findings = []
+    for code in sorted(KNOWN_NON_KIID_CODSUS):
+        cur = int(current.get(code, 0))
+        if cur == 0:
+            before = "" if previous is None else f" (previous harvest: {int(previous.get(code, 0))})"
+            findings.append(("WARNING", f"[NORM-004] known codSus {code} has 0 rows in this harvest{before}"))
+        elif previous is not None:
+            prev = int(previous.get(code, 0))
+            if prev > 0 and cur < prev * KNOWN_CLASS_DROP_RATIO:
+                findings.append(("WARNING", f"[NORM-004] known codSus {code} fell from {prev} to {cur} rows against the previous harvest "
+                                            f"(below {KNOWN_CLASS_DROP_RATIO:.0%})"))
+    return findings
+
+
+def known_class_summary(current: dict) -> str:
+    """The one INFO line that replaces the per-run NORM warnings about the known classes. Pure."""
+    return "known non-KIID codSus (not anomalies): " + " ".join(f"{c}={int(current.get(c, 0))}" for c in sorted(KNOWN_NON_KIID_CODSUS))
+
+
+def _known_class_counts(conn, harvest_ts: str) -> dict:
+    """{codSus: rows} of the known non-KIID classes in one harvest (deduplicated rows, as stored)."""
+    rows = conn.execute(
+        "SELECT cod_sus, COUNT(*) FROM db_document_catalogue WHERE harvest_ts = %s AND cod_sus = ANY(%s) GROUP BY cod_sus",
+        (harvest_ts, sorted(KNOWN_NON_KIID_CODSUS)),
+    ).fetchall()
+    return {r[0]: int(r[1]) for r in rows}
+
+
+def _previous_known_class_counts(conn, current_ts: str):
+    """Counts of the known classes at the immediately previous harvest (chosen by harvest_ts, never by insertion order), or None when there is none."""
+    row = conn.execute("SELECT MAX(harvest_ts) FROM db_document_catalogue WHERE harvest_ts < %s", (current_ts,)).fetchone()
+    previous_ts = row[0] if row else None
+    return _known_class_counts(conn, previous_ts) if previous_ts else None
+
 # DB schema (§8)
 DDL_CATALOGUE = """
 CREATE TABLE IF NOT EXISTS db_document_catalogue (
@@ -295,7 +346,7 @@ def cmd_harvest(args, conn=None) -> None:
         cod_sus = parsed["cod_sus"]
 
         # §6.2: log WARNING for any class outside the known set, but NEVER drop it
-        if cod_sus and cod_sus not in WORKBOOK_CODSUS:
+        if is_unknown_codsus(cod_sus):
             n_unknown_codsus += 1
             if n_unknown_codsus <= 20:  # cap log spam
                 log.warning(
@@ -324,13 +375,20 @@ def cmd_harvest(args, conn=None) -> None:
     inserted = conn.execute(
         f"SELECT COUNT(*) FROM db_document_catalogue WHERE harvest_ts={ph}", (harvest_ts,)
     ).fetchone()[0]
+    # FND-0328 / NORM-004: deduplicated counts of the known classes at this harvest and at the immediately previous one (None when there is none).
+    known_now = _known_class_counts(conn, harvest_ts)
+    known_before = _previous_known_class_counts(conn, harvest_ts)
     if own_conn:
         conn.close()
 
     log.info("DB rows inserted: %d  (harvest_ts=%s)", inserted, harvest_ts)
+    log.info("%s", known_class_summary(known_now))
+    for level, message in known_class_findings(known_now, known_before):
+        log.log(logging.WARNING if level == "WARNING" else logging.INFO, "%s", message)
     if n_unknown_codsus > 0:
+        # raw rows (before the ON CONFLICT dedup), so this can exceed the DB count of the same codes: it is a "something new appeared" signal, not a volume
         log.warning(
-            "[NORM-002] %d rows with codSus outside workbook's 7 classes — check --report-codsus",
+            "[NORM-002] %d rows with codSus outside the known classes (workbook's 7 + known non-KIID) — check --report-codsus",
             n_unknown_codsus,
         )
     log.info(
@@ -433,8 +491,9 @@ def cmd_report_codsus(args, conn=None) -> None:
 
     # §11 diff vs workbook classes
     present_classes   = set(k for k in codsus_counts if k)
-    new_classes       = present_classes - WORKBOOK_CODSUS
+    new_classes       = present_classes - WORKBOOK_CODSUS - KNOWN_NON_KIID_CODSUS      # FND-0328: only a codSus nobody has classified is "new"
     missing_classes   = WORKBOOK_CODSUS - present_classes
+    missing_known     = KNOWN_NON_KIID_CODSUS - present_classes
 
     # ── Print report ──────────────────────────────────────────────────────────
     sep = "=" * 70
@@ -451,7 +510,8 @@ def cmd_report_codsus(args, conn=None) -> None:
     for cod_sus, sem in sorted(codsus_semantics.items(), key=lambda x: -x[1]["count"]):
         fund_cov = codsus_fund_coverage.get(cod_sus, 0)
         gap      = n_funds - fund_cov
-        flag     = " *** NEW CLASS ***" if cod_sus in new_classes else ""
+        flag     = (" *** NEW CLASS ***" if cod_sus in new_classes
+                    else " (known non-KIID class)" if cod_sus in KNOWN_NON_KIID_CODSUS else "")
         print(
             f"{str(cod_sus):8}  {sem['count']:>7,}  {sem['pct_isin']:>13.1f}%"
             f"  {sem['max_funds_per_codDoc']:>16}  {fund_cov:>5} / {n_funds} (gap {gap})"
@@ -466,7 +526,12 @@ def cmd_report_codsus(args, conn=None) -> None:
             log.warning("[NORM-003] New codSus not in workbook: %r  count=%d", c, cnt)
             print(f"  *** NEW:     {c:8}  count={cnt:,}")
     else:
-        print("  No new classes vs workbook.")
+        print("  No new classes vs workbook (beyond the known non-KIID ones).")
+    for c in sorted(KNOWN_NON_KIID_CODSUS & present_classes):
+        print(f"  known non-KIID: {c:8}  count={codsus_counts.get(c, 0):,}")
+    for c in sorted(missing_known):
+        log.warning("[NORM-004] known codSus %s is absent from this harvest", c)
+        print(f"  DISAPPEARED: {c:8}  (known non-KIID class, not in this harvest)")
     if missing_classes:
         for c in sorted(missing_classes):
             print(f"  DISAPPEARED: {c:8}  (was in workbook, not in this harvest)")

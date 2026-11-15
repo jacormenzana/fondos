@@ -232,6 +232,16 @@ veredicto registrado (`out/reports/pit_backtest`, `out/reports/pit_variants`). L
 editando `RETENTION` (la prueba `tests/test_artifact_retention.py` fija el comportamiento, no los números). Un artefacto nuevo fuera del registro de logs
 declara aquí su regla y su entrada en `RETENTION`.
 
+### §4.11 Códigos de la cosecha del catálogo (`p1_db_harvest.py`, FND-0328)
+
+| Código | Nivel | Cuándo |
+|---|---|---|
+| `NORM-001` / `NORM-002` / `NORM-003` | WARNING | Un `codSus` que no es de las 7 clases del libro ni una clase **conocida no KIID** (`KNOWN_NON_KIID_CODSUS` = AIMA, CARA, FMDB, desde 2026-11-15). `NORM-002` cuenta filas **crudas** (antes de `ON CONFLICT DO NOTHING`, así que puede superar al recuento en BD: es una señal de «apareció algo nuevo», no un volumen) |
+| (línea INFO) | INFO | Una línea por cosecha con las filas de BD de las clases conocidas (`known non-KIID codSus (not anomalies): AIMA=… CARA=… FMDB=…`) |
+| `NORM-004` | WARNING | Una clase conocida con 0 filas en esta cosecha, o por debajo del 50 % (`KNOWN_CLASS_DROP_RATIO`) de la cosecha **inmediatamente anterior** (`MAX(harvest_ts) < la actual`, nunca por orden de inserción). Sin cosecha anterior (primera corrida o tabla vacía) solo se aplica la comprobación de 0 filas: no se calcula ningún porcentaje y la falta de base no genera aviso |
+
+Una clase nueva se clasifica añadiéndola a `KNOWN_NON_KIID_CODSUS` (decisión de quien revisa `--report-codsus`), nunca silenciando el aviso. Pruebas: `proyecto1/tests/test_p1_db_harvest_known_classes.py`.
+
 ## §5. Convenciones de codificación DQ (`check_code`)
 
 Los códigos en `fund_data_quality_issues.check_code` siguen estas convenciones.
