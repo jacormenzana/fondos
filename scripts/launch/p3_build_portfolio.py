@@ -127,8 +127,27 @@ def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: boo
           + (" -- el escenario NO sera promovible" if cash > MAX_PORTFOLIO_CASH_WEIGHT else ""))
     if not dry_run:
         print(f"Escenario '{scenario_id}' creado como DRAFT. No se promueve solo: p3_promote_scenario.py {scenario_id}")
+        _hysteresis_shadow(conn, builder, reg, scenario_id, portfolio)
 
     return 0
+
+
+def _hysteresis_shadow(conn, builder, reg, scenario_id, portfolio) -> None:
+    """FND-0158: the monthly hysteresis SHADOW, after the DRAFT is persisted. Fail-soft by construction: nothing here can change the DRAFT or the RC."""
+    try:
+        from shared.config import P3_HYSTERESIS_SHADOW_ENABLED, ROTATION_COST_GATE_ENABLED
+        from proyecto3.src import hysteresis_shadow as shadow
+        from proyecto3.src.portfolio_builder import HYSTERESIS_BAND, estimate_rotation_cost
+        ident = portfolio.macro_context.get("build_identity") or {}
+        line = shadow.shadow_after_build(
+            conn, builder, reg, scenario_id, portfolio, enabled=P3_HYSTERESIS_SHADOW_ENABLED, band=HYSTERESIS_BAND,
+            cost_fn=lambda out, into: estimate_rotation_cost(conn, out, into), identity=dict(ident),
+            rotation_gate_enabled=ROTATION_COST_GATE_ENABLED)
+        if line:
+            print()
+            print(line)
+    except Exception as exc:                                  # noqa: BLE001 -- the shadow measures; it never refuses a build
+        print(f"AVISO: hysteresis shadow not run ({type(exc).__name__}: {str(exc)[:160]})")
 
 
 if __name__ == "__main__":

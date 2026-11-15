@@ -256,6 +256,10 @@ PORTFOLIO_HYSTERESIS_ENABLED: bool = False
 # further without a better Sharpe (out/reports/pit_backtest/20261004_*). Single source: portfolio_builder.HYSTERESIS_BAND
 # reads it. Enabling the switch waits for the P2 recompute (portfolios on one CALC_VERSION) and the first uniform P3 build.
 PORTFOLIO_HYSTERESIS_BAND: float = 0.10
+# FND-0158 (owner ruling 2026-11-15, doc/decisiones/DESIGN_FND-0158_hysteresis_shadow.md): after a real P3 build persisted its DRAFT, run the same selection a second time IN MEMORY with
+# incumbents (band above; one-step from PRODUCTION and a chain from the previous ON portfolio) and append ONE `P3_HYSTERESIS_SHADOW` row to ingestion_log. It never changes the DRAFT or the build's
+# return code and never reads PORTFOLIO_HYSTERESIS_ENABLED (which stays OFF until the owner rules on the evidence). Ships ON: it only appends a log row and cannot refuse anything. Rollback = False.
+P3_HYSTERESIS_SHADOW_ENABLED: bool = True
 # FND-0193 SIMPLIFY (verdict of record 2026-10-19, doc/decisiones/SIMPLIFY_RUNBOOK_FND-0193.md): weights inside a sub-portfolio are EQUAL among
 # the selected funds; score-proportional weighting did not earn its place out of sample (Sharpe -0.023 without it, 90% CI -0.005..+0.053, max DD
 # not worse). The score still ranks and selects (hysteresis included). ONE source for the live builder (portfolio_builder.WEIGHT_METHOD) and the
