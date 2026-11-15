@@ -22,6 +22,6 @@ One page, rewritten in place (never amended). Last rewrite: 2026-11-15, after th
 |---|---|---|
 | FND-0393 (HIGH), FND-0391 (epic, HIGH) | close by the `Closes:` of the delivering commit | the autopilot, after the receipt |
 | FND-0424 (child) | DEFERRED, review 2026-12-15 | build only on evidence of need |
-| FND-0404 (HIGH) | OPEN, parked (owner) | the operations team's written answer; the `P3_DATA_HOLDS` entry for IE00B3L10570 runs to 2027-02-07 |
+| FND-0404 (HIGH) | released by the owner 2026-11-15, closes by its delivery | the `P3_DATA_HOLDS` entry for IE00B3L10570 is deleted (verdict GENUINE on the Morningstar chart + the BlackRock page, verified against the database) |
 | FND-0395, 0396, 0397, 0398, 0402 | DEFERRED | their review dates |
 | FND-0392, 0394, 0401, 0403, 0405, 0406 | CLOSED | - |

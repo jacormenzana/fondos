@@ -37,11 +37,21 @@ def test_the_shipped_registry_is_well_formed():
     assert "ES0116848013" not in hold_reasons(cfg.P3_DATA_HOLDS, date(2026, 11, 9))
 
 
-def test_the_second_hold_names_its_ticket_and_acts_from_the_day_it_was_ordered():
-    h = cfg.P3_DATA_HOLDS["IE00B3L10570"]
+SECOND = {"IE00B3L10570": {"ap": "FND-0404", "since": "2026-11-09", "until": "2027-02-07",
+                            "reason": "anomalous Sharpe ratio on a flat-NAV money-market class: held until the manual audit explains it"}}      # the second hold, as it shipped (lifted 2026-11-15)
+
+
+def test_the_second_hold_was_lifted_once_the_manager_confirmed_the_flat_nav():
+    # FND-0404 (2026-11-15, owner): the flat NAV before 2019-03-18 is the constant EUR 1 price of a Distributing class (Reverse Distribution Mechanism) rebased x100: verdict GENUINE, the entry was deleted.
+    assert "IE00B3L10570" not in cfg.P3_DATA_HOLDS and cfg.P3_DATA_HOLDS == {}
+    assert validate_holds(SECOND) == []                                          # the entry as it shipped is still a well-formed hold
+
+
+def test_a_hold_names_its_ticket_and_acts_from_the_day_it_was_ordered():
+    h = SECOND["IE00B3L10570"]
     assert h["ap"] == "FND-0404" and h["since"] == "2026-11-09"
-    assert "IE00B3L10570" not in hold_reasons(cfg.P3_DATA_HOLDS, date(2026, 11, 8))
-    assert hold_reasons(cfg.P3_DATA_HOLDS, date(2026, 11, 9))["IE00B3L10570"].startswith("data_hold: FND-0404 until 2027-02-07 (")
+    assert "IE00B3L10570" not in hold_reasons(SECOND, date(2026, 11, 8))
+    assert hold_reasons(SECOND, date(2026, 11, 9))["IE00B3L10570"].startswith("data_hold: FND-0404 until 2027-02-07 (")
 
 
 def test_a_hold_is_active_between_since_and_until_inclusive_and_lapses_by_itself():
