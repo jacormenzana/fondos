@@ -492,6 +492,70 @@ def collision_alerta_line(cq: dict) -> str:
     return f"[ALERTA] {len(old)} pareja(s) de colision sin decidir desde hace 96 h o mas (la mas antigua {old[0]['a']} / {old[0]['b']}, {old[0]['age_hours']:.0f} h): gate_adjudicate.py --list"
 
 
+# ── closing conditions that hold (FND-0423) ───────────────────────────────────────────────────────
+
+DEFAULT_CONDITION_KIND = "tests_pass"      # the condition every ticket in flight gets by default: the autopilot closes such a ticket on its own delivery, so it is not a finding of this sweep
+
+
+def select_closable(rows: list, spec: dict, statuses: dict) -> dict:
+    """The tickets that are not closed and whose every closing condition holds, from `rows` = [(ticket, verdict, results)] of rfd_matrix_probe.evaluate over the conditions `spec` = {ticket: [(kind, *args)]}.
+    A ticket whose only conditions are the default `tests_pass` is left out (the autopilot's); one with a manual condition waits for its person (`manual`); one that fails or cannot be read is not listed.
+    Returns {'closable': [{ticket, status, kinds, evidence}], 'manual': [tickets], 'blocked': n, 'evaluated': n}. Pure."""
+    closable, manual, blocked = [], [], 0
+    for tid, v, results in rows:
+        kinds = sorted({p[0] for p in spec.get(tid, [])})
+        status = statuses.get(tid)
+        if status is None or status == "CLOSED":
+            continue
+        if v == "BLOCKED":
+            blocked += 1
+        elif v == "MANUAL":
+            manual.append(tid)
+        elif v == "READY" and set(kinds) - {DEFAULT_CONDITION_KIND}:
+            closable.append({"ticket": tid, "status": status, "kinds": kinds, "evidence": [d for ok, d in results if ok][:4]})
+    return {"closable": sorted(closable, key=lambda c: c["ticket"]), "manual": sorted(manual), "blocked": blocked, "evaluated": len(rows)}
+
+
+def collect_closable_on_evidence() -> dict:
+    """Runs the closing conditions of the open tickets that carry one beyond the default and lists the ones that all hold ("closable on evidence"). Read-only: it moves nothing, closing stays an event (a `Closes:`
+    delivery, the owner's close_release.py, or an agent's REJECTED / DUPLICATED). {'applied': False} until the owner applies the sync phase; {'error': ...} on any failure (the backlog is another database and a
+    probe may need the fondos one: neither may cost the report)."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        sys.path.insert(0, str(ROOT / "scripts" / "gov" / "backlog"))
+        import shared.config  # noqa: F401  (loads .env)
+        from shared import backlog_client
+        import rfd_matrix_probe
+        stored = backlog_client.close_conditions()
+        if stored is None:
+            return {"applied": False}
+        statuses = {t["action_point_id"]: t["status"] for t in backlog_client.list_tickets(open_only=True)}
+        spec = {tid: probes for tid, probes in stored.items() if tid in statuses and any(p[0] != DEFAULT_CONDITION_KIND for p in probes)}
+        out = select_closable(rfd_matrix_probe.evaluate(spec), spec, statuses) if spec else {"closable": [], "manual": [], "blocked": 0, "evaluated": 0}
+        return {"applied": True, **out}
+    except Exception as exc:                                      # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def closable_line(c: dict) -> str:
+    """The one line of the report. Pure."""
+    if c.get("error"):
+        return f"Tickets cerrables por evidencia: no disponible ({c['error']})"
+    if not c.get("applied"):
+        return "Tickets cerrables por evidencia: condiciones de cierre sin aplicar (migrate_backlog_v2.py --phase sync)"
+    ids = ", ".join(f"{x['ticket']} ({x['status']})" for x in c["closable"][:TOP_N]) or "ninguno"
+    return (f"Tickets cerrables por evidencia: {len(c['closable'])} de {c['evaluated']} evaluados ({ids}); {len(c['manual'])} esperan una condicion manual, "
+            f"{c['blocked']} con alguna condicion sin cumplir")
+
+
+def closable_attention(c) -> list:
+    """[ATENCION] sentence when open tickets have every closing condition satisfied. Informational: closing is still an event. Pure."""
+    if not c or c.get("error") or not c.get("applied") or not c.get("closable"):
+        return []
+    ids = ", ".join(x["ticket"] for x in c["closable"][:TOP_N])
+    return [f"{len(c['closable'])} ticket(s) abiertos con TODAS sus condiciones de cierre cumplidas ({ids}): cerrarlos es un evento (entrega con `Closes:`, close_release.py del propietario, o REJECTED / DUPLICATED)"]
+
+
 def collect_stale_reads(conn) -> dict:
     """V-STALE-READ (FND-0332): the ticket statuses stored with the flags of the latest telemetry cycle that were read before the ticket last
     moved. {'applied': False} until the owner adds control.cycle_flag.ap_status_read_ts. Read-only; never raises."""
@@ -694,6 +758,7 @@ def attention_items(report: dict, previous: dict | None) -> list:
         items.append(f"{orphans} metricas nominales sin su par real (hueco silencioso de deflacion): "
                      + ", ".join(f"{m}={n}" for m, n in report["real_orphans"].items()))
     items += p2_outcome_attention(report.get("p2_outcome"))  # absent in reports written before FND-0327
+    items += closable_attention(report.get("closable_on_evidence"))   # absent in reports written before FND-0423
     zero_ols = report.get("ols_zero_backfills", [])          # absent in reports written before this check
     if zero_ols:
         items.append(f"{len(zero_ols)} ejecucion(es) P2 con backfill por CALC_VERSION terminaron con ols_funds=0 "
@@ -828,6 +893,8 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
     L += ["Alertas rolling (activos): " + (", ".join(f"{k}={v}" for k, v in report["alerts"].items()) or "ninguna")]
     if report.get("p2_outcome"):                                # absent in reports written before FND-0327
         L += [p2_outcome_line(report["p2_outcome"])]
+    if report.get("closable_on_evidence"):                      # absent in reports written before FND-0423
+        L += [closable_line(report["closable_on_evidence"])]
     hd = report.get("hedging_drift")
     if hd:
         if hd.get("skipped"):
@@ -951,6 +1018,7 @@ def main(argv: list | None = None) -> int:
             report["backlog_violations"] = collect_backlog_violations()
             report["stale_reads"] = collect_stale_reads(conn)
             report["collision_queue"] = collect_collision_queue()
+            report["closable_on_evidence"] = collect_closable_on_evidence()
             report["governance"] = collect_governance(conn, today)
             report["macro_freshness"] = collect_macro_freshness(conn, today)
             report["sovereign_stress"] = collect_sovereign_stress(conn)
