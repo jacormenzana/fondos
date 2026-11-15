@@ -264,6 +264,7 @@ PROCEDURAL_CASES = {
     "SCHEDULE_RHP_ACI_MISMATCH": ("test_rhp_aci_mismatch_flagged", "test_rhp_aci_agreement_within_tolerance_not_flagged"),
     "SCHEDULE_ACI_RHP_ORPHAN": ("test_aci_rhp_orphan_flagged_when_no_rhp_row_exists", "test_aci_rhp_orphan_not_flagged_when_aci_rhp_is_null"),
     "BETA_ORPHAN_BATCH": ("test_beta_orphan_flagged_on_internal_batch_split", "test_beta_orphan_not_flagged_when_batches_consistent"),
+    "ROLLING_COVERAGE": ("test_rolling_coverage_flagged_when_the_history_is_shorter_than_the_window", "test_rolling_coverage_not_flagged_when_the_history_covers_the_window"),
 }
 COVERED_HERE = {"TIMESERIES_DUPLICATE"}
 

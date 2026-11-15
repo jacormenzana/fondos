@@ -80,6 +80,12 @@ def duplicate_series_rows() -> list:
     return [(CANARY_ISIN, False, "2020-01", "2020-12", 12, 13, 0, 0)]
 
 
+def rolling_coverage_fixture() -> tuple:
+    """(nav_dates, stored, windows): a fund with 24 monthly NAVs and a stored `rolling_5y` row, the signature ROLLING_COVERAGE flags (a 5-year window on a 2-year history). Pure."""
+    dates = pd.date_range("2024-01-31", periods=24, freq="ME")
+    return (pd.DataFrame({"isin": CANARY_ISIN, "date": dates}), pd.DataFrame({"isin": [CANARY_ISIN], "horizon": ["rolling_5y"]}), {"rolling_5y": 60})
+
+
 def fired(findings: Iterable, rule_id: str) -> bool:
     """True when the scratch run's findings contain one for `rule_id`. Pure."""
     return any(f.get("rule_id") == rule_id for f in findings)

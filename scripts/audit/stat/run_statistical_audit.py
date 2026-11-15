@@ -154,6 +154,7 @@ from shared.statistical_audit.distributions import (
 )
 from shared.statistical_audit.group_checks import check_group_constancy
 from shared.statistical_audit import canaries as cn
+from shared.statistical_audit import window_coverage as wcov   # FND-0427 ROLLING_COVERAGE
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS as _CANARY_GROUP_RULES
 from shared.statistical_audit.invariants import (
     BoundRule,
@@ -826,6 +827,41 @@ def _timeseries_duplicate_finding(rows, group_key: str) -> "dict | None":
     }
 
 
+def _rolling_coverage_finding(violations: pd.DataFrame, n_checked: int) -> "dict | None":
+    """The ROLLING_COVERAGE finding (FND-0427) from `window_coverage.rolling_coverage_violations`, None when every stored rolling window is covered. One definition for the run and for its
+    liveness canary."""
+    if violations is None or violations.empty:
+        return None
+    n_rows, n_funds = len(violations), violations["isin"].nunique()
+    by_horizon = violations.groupby("horizon").size().to_dict()
+    return {
+        "block": "BLOCK5", "rule_id": "ROLLING_COVERAGE", "rule_class": "HARD_INVARIANT", "severity": "ALARM",
+        "group_key": "ROLLING_COVERAGE", "value": None, "reference_value": None, "threshold": None,
+        "distance": float(n_rows),
+        "evidence": f"{n_rows}/{n_checked} stored rolling windows ({n_funds} funds) are not covered by the fund's NAV history: {by_horizon}",
+        "violating_isins": tuple(sorted(violations["isin"].unique())),
+        "root_cause_candidate": "A rolling window written without the FND-0427 coverage check (span or continuity), or rows left from before it",
+    }
+
+
+def _run_rolling_coverage(run: AuditRun, long_df: pd.DataFrame, nav_dates: pd.DataFrame) -> None:
+    """ROLLING_COVERAGE on the stored scalar `return_ann` rolling windows. Applied only while ROLLING_WINDOW_COVERAGE_ENABLED is ON: with it OFF the stored rows legitimately carry the old
+    behaviour, and a hard finding would block promotions for a state the owner has not recomputed yet."""
+    import shared.config as _cfg
+    if not getattr(_cfg, "ROLLING_WINDOW_COVERAGE_ENABLED", False):
+        run.skip("ROLLING_COVERAGE", KIND_NOT_APPLICABLE, "ROLLING_COVERAGE: ROLLING_WINDOW_COVERAGE_ENABLED is OFF (stored windows follow the old rule)")
+        return
+    stored = long_df[(long_df["metric"] == "return_ann") & (long_df["real_flag"] == 0) & long_df["horizon"].isin(list(ROLLING_WINDOWS))][["isin", "horizon"]].drop_duplicates()
+    if stored.empty:
+        run.skip("ROLLING_COVERAGE", KIND_NOT_APPLICABLE, "ROLLING_COVERAGE: no stored rolling return_ann rows")
+        return
+    violations = wcov.rolling_coverage_violations(nav_dates, stored, ROLLING_WINDOWS, _cfg.ROLLING_WINDOW_COVERAGE_TOLERANCE_DAYS,
+                                                  _cfg.P3_FUND_NAV_MIN_COVERAGE, _cfg.P3_FUND_NAV_MAX_GAP_RUN_MONTHS)
+    finding = _rolling_coverage_finding(violations, len(stored))
+    if finding:
+        run.findings.append(finding)
+
+
 def _run_timeseries_integrity(
     run: "AuditRun", conn: "psycopg.Connection", isins: Sequence[str] | None = None,
 ) -> None:
@@ -1387,7 +1423,8 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
     # row's OWN window (window_cpi_ann), not today's YoY: a fund whose window sits in a deflationary stretch
     # legitimately has real > nominal (21 funds launched in spring 2008 were an ALARM for that).
     deflation_inputs = _load_deflation_inputs(conn, isins)
-    scalar_cpi = _scalar_window_cpi_table(long_df, *deflation_inputs)
+    _run_rolling_coverage(run, long_df, deflation_inputs[0])     # FND-0427 (a no-op skip while ROLLING_WINDOW_COVERAGE_ENABLED is OFF)
+    scalar_cpi =_scalar_window_cpi_table(long_df, *deflation_inputs)
     cpi_keys = ["isin", "horizon", "metric_version"]
     deflation_frame = _pivot_by_real_flag(long_df, "return_ann")
     if deflation_frame.empty:
@@ -1733,6 +1770,7 @@ def run_canaries(run: AuditRun) -> dict:
     if run.domain == "p2_metrics":
         families.append(("row", [r for r in P2_INVARIANTS if r.bound_type == "HARD_INVARIANT"]))
         families.append(("dup", [None]))
+        families.append(("cov", [None]))                 # FND-0427 ROLLING_COVERAGE
     else:
         families.append(("row", [r for r in COST_INVARIANTS if r.bound_type == "HARD_INVARIANT"]))
         families.append(("group", list(_CANARY_GROUP_RULES)))
@@ -1741,6 +1779,11 @@ def run_canaries(run: AuditRun) -> dict:
             if family == "dup":
                 rule_id = "TIMESERIES_DUPLICATE"
                 fired = _timeseries_duplicate_finding(cn.duplicate_series_rows(), "canary|canary") is not None
+            elif family == "cov":
+                rule_id = "ROLLING_COVERAGE"
+                _nav, _stored, _windows = cn.rolling_coverage_fixture()
+                _v = wcov.rolling_coverage_violations(_nav, _stored, _windows, 35, 0.80, 6)
+                fired = _rolling_coverage_finding(_v, len(_stored)) is not None
             else:
                 rule_id = rule.rule_id
                 scratch = AuditRun(domain=run.domain)

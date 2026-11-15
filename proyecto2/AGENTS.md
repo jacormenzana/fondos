@@ -73,6 +73,7 @@ proyecto2/
       test_period_key_invariance_pg.py
       test_ratio_vol_floor_fnd0405.py
       test_regime_returns.py
+      test_report_reconciliation_matches_p2_fnd0428.py
       test_returns.py
       test_risk_metrics.py
       test_rolling_stats.py
@@ -80,6 +81,7 @@ proyecto2/
       test_sortino_downside_bound.py
       test_sortino_min_downside_count_fnd0242.py
       test_srri.py
+      test_window_coverage_ytd_fnd0426_0427.py
     discovery/
       test_ecb_fx_series_fnd0243.py
       test_eurostat.py

@@ -62,7 +62,8 @@ def test_bundle_flags_are_listed_and_are_booleans():
                                       "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
                                       "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED",
                                       "EUR_NAV_CONVERSION_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED",
-                                      "NAV_MONTH_END_ALIGN_ENABLED")                 # FND-0300
+                                      "NAV_MONTH_END_ALIGN_ENABLED",                 # FND-0300
+                                      "ROLLING_WINDOW_COVERAGE_ENABLED", "YTD_METRIC_ENABLED")   # FND-0427, FND-0426
     assert all(isinstance(getattr(config, name), bool) for name in config.P2_BUNDLE_FLAGS)
 
 

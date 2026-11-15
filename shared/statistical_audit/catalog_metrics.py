@@ -58,6 +58,8 @@ METRIC_OVERRIDES: dict[str, MetricSpec] = {
     "upside_capture": MetricSpec("upside_capture", "continuous_signed", True, False, True, 30, 1e-6, ("GLOBAL", "PEER")),
     "downside_capture": MetricSpec("downside_capture", "continuous_signed", True, False, True, 30, 1e-6, ("GLOBAL", "PEER")),
     "capture_ratio": MetricSpec("capture_ratio", "continuous_signed", True, False, True, 30, 1e-6, ("GLOBAL", "PEER")),
+    # FND-0426: the calendar-year cumulative return (horizon ytd, nominal and real); cumulative, so it is a share of the NAV, not an annualized rate.
+    "return_cum": MetricSpec("return_cum", "continuous_signed", True, False, True, 30, 1e-6, ("GLOBAL", "PEER")),
     "momentum_1y": MetricSpec("momentum_1y", "continuous_signed", True, False, True, 30, 1e-6, ("GLOBAL",)),
     "momentum_3y": MetricSpec("momentum_3y", "continuous_signed", True, False, True, 30, 1e-6, ("GLOBAL",)),
     "momentum_rank": MetricSpec("momentum_rank", "bounded_unit", True, False, True, 30, 1e-6, ("GLOBAL",)),

@@ -22,8 +22,9 @@ import math
 import numpy as np
 import pandas as pd
 
+from shared import config as _config                  # FND-0427: ROLLING_WINDOW_COVERAGE_ENABLED, read at call time
 from shared.config import MIN_NAV_ROWS, MIN_PEERS   # minimo de filas de una ventana / de fondos en la categoria para calcular percentil
-from .returns import annualized_return, trailing_window   # FND-0302: la misma ventana y unidades que el rolling_Ny de los pares
+from .returns import annualized_return, rolling_window_admissible, trailing_window   # FND-0302: la misma ventana y unidades que el rolling_Ny de los pares
 
 
 def _mean(values: "pd.Series") -> float:
@@ -123,9 +124,13 @@ def compute_momentum(
     # Ahora el fondo usa returns.trailing_window + annualized_return, exactamente lo que run_pipeline guarda como su propio rolling_Ny.
     for label, months in [("momentum_1y", 12), ("momentum_3y", 36)]:
         window = trailing_window(nav_sorted, months)
-        covers = nav_sorted["date"].min() <= nav_sorted["date"].max() - pd.DateOffset(months=months)   # the history really spans N years
-        if not covers or len(window) < MIN_NAV_ROWS:
-            continue
+        if getattr(_config, "ROLLING_WINDOW_COVERAGE_ENABLED", False):
+            if not rolling_window_admissible(nav_sorted, months, MIN_NAV_ROWS):     # FND-0427: the one window rule (span with tolerance + continuity)
+                continue
+        else:
+            covers = nav_sorted["date"].min() <= nav_sorted["date"].max() - pd.DateOffset(months=months)   # the history really spans N years
+            if not covers or len(window) < MIN_NAV_ROWS:
+                continue
 
         ret_fondo = annualized_return(window["nav"], 12, dates=window["date"])
         if not np.isfinite(ret_fondo):

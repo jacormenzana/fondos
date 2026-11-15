@@ -749,6 +749,29 @@ ROLLING_WINDOWS: dict = {
     "rolling_10y": 120,
 }
 
+# FND-0427 (selection-quality package I, owner rule A, 2026-11-15): a rolling_Ny value is written only when the fund's history really covers N years.
+# Before it, the rolling loop and the rolling timeseries gated a window on MIN_NAV_ROWS alone, so a 3-year-old fund stored a rolling_10y equal to its
+# since-inception value (1,149 rolling_5y / rolling_10y rows under 90% of their window on 2026-11-15). `returns.window_coverage_ok` has two conditions:
+# (a) span: the first NAV is at most `end - horizon + ROLLING_WINDOW_COVERAGE_TOLERANCE_DAYS` (35 days absorb the last monthly close; the 21 / 35 / 60 day
+# choices purge 1,555 / 1,553 / 1,510 rows, so the value is not a sensitive one); (b) continuity: `shared.nav_continuity` with the existing
+# P3_FUND_NAV_MIN_COVERAGE / P3_FUND_NAV_MAX_GAP_RUN_MONTHS over the window's own span. A P2 bundle flag on the risk, rolling and momentum families: turning it ON
+# recomputes them for EVERY fund, so it is flipped together with the CALC_VERSION bump in the owner-ordered recompute (never on its own). OFF = the legacy gate.
+# Rollback = switch OFF and another recompute; the stale rows of a failing window are DELETED by the run (not left behind).
+# FND-0428: the monthly report recomputes its headline returns (YTD, 1 year, since inception nominal) from the NAV with an independent
+# implementation (shared/report_reconciliation.py) and refuses to build when one differs by more than the tolerance on IDENTICAL definitions.
+# Measured 2026-11-15: 544 claims on 272 funds, 0 mismatches. Read-only on the data; OFF skips the gate, never the columns.
+REPORT_RECONCILIATION_ENABLED: bool = True
+REPORT_RECONCILIATION_TOLERANCE_BP: float = 5.0
+ROLLING_WINDOW_COVERAGE_ENABLED: bool = False
+ROLLING_WINDOW_COVERAGE_TOLERANCE_DAYS: int = 35
+
+# FND-0426 (selection-quality package I): the `ytd` horizon documented in SCHEMA_REFERENCE had no producer. `returns.ytd_return` is the cumulative (never annualized)
+# nominal and real return since the last NAV on or before the prior Dec 31, which must lie within YTD_BASE_MAX_STALENESS_BDAYS business days of it (else no row); a fund
+# whose first NAV is in the current year gets the return since its first NAV under metric_version 'ytd_partial'. Written as metric `return_cum`, horizon `ytd` by the risk
+# family. A P2 bundle flag on that family (new rows for every fund on the next recompute); OFF = nothing is written.
+YTD_METRIC_ENABLED: bool = False
+YTD_BASE_MAX_STALENESS_BDAYS: int = 5
+
 # ============================================================
 # Parámetros horizonte corto (P2 daily-NAV) — v24
 # ============================================================
@@ -840,7 +863,7 @@ P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENA
                           "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
                           "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED",
                           "EUR_NAV_CONVERSION_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED",
-                          "NAV_MONTH_END_ALIGN_ENABLED")
+                          "NAV_MONTH_END_ALIGN_ENABLED", "ROLLING_WINDOW_COVERAGE_ENABLED", "YTD_METRIC_ENABLED")
 # FND-0240: annualise a NAV window over its INTERVALS (N points span N - 1 periods) instead of its points. OFF = the stored
 # convention (years = N / 12), bit-for-bit. ON changes the stored return_ann / sharpe / sortino of the risk family and the
 # rolling timeseries: about +0.5 pp on rolling_1y, -1.2 pp on the crisis windows, +0.04 pp since inception -- and nothing in the

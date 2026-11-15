@@ -52,6 +52,23 @@ def gap_reason(n_rows, first_month, last_month, longest_gap, n_gaps, min_coverag
     return None
 
 
+def reason_for_months(months, min_coverage: float, max_gap_run: int) -> "str | None":
+    """`gap_reason` of ONE series given its calendar-month ordinals (any order; repeated months count once).
+
+    The third caller of the rule (FND-0427): P2's rolling windows ask whether the NAV rows INSIDE a window are continuous enough over the window's own first..last month,
+    with the same thresholds and the same reason text as the build-time eligibility and the PIT. Pure: the thresholds are arguments."""
+    m = np.unique(np.asarray(months, dtype="int64"))
+    if len(m) < 2:
+        return None
+    gap_before = np.diff(m) - 1                                  # missing months right before each distinct month
+    return gap_reason(len(m), m[0], m[-1], int(gap_before.max()), int((gap_before > 0).sum()), min_coverage, max_gap_run)
+
+
+def reason_for_dates(dates, min_coverage: float, max_gap_run: int) -> "str | None":
+    """`reason_for_months` over raw dates (month-end alignment is implicit, as everywhere in P2)."""
+    return reason_for_months(month_ordinals(dates), min_coverage, max_gap_run)
+
+
 def reasons_by_date(nav: pd.DataFrame, at, min_coverage: float, max_gap_run: int) -> pd.DataFrame:
     """Point-in-time continuity: DataFrame indexed by `at`, columns = the funds of `nav` (raw-date DatetimeIndex x isin), object
     dtype -- the `gap_reason` text where the fund is too sparse AS OF that date, NaN otherwise.

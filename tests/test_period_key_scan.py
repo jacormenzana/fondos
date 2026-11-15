@@ -92,6 +92,15 @@ _PERIOD_KEY_EXEMPT: dict[str, str] = {
     "proyecto2/src/calculations/returns.py::trailing_window":
         "DESIGN: FND-0302. THE definition of a trailing rolling window, shared by the rolling horizons and by momentum; it runs "
         "on month-end labelled NAV, so a 12-month window is 12 returns whatever the stamp. (review 2027-04-21)",
+    "proyecto2/src/calculations/returns.py::window_span_ok":
+        "DESIGN: FND-0427. The span test of a rolling window compares the fund's FIRST NAV with `end - N months` plus a one-monthly-close tolerance, over the same month-end "
+        "labelled NAV as trailing_window (the one window definition); it cuts no series and aligns none. (review 2027-04-21)",
+    "shared/report_reconciliation.py::recompute_headline":
+        "DESIGN: FND-0428. The deliberate second implementation of the report's headline returns: its 1-year cut is the same `date > end - DateOffset(months=12)` as "
+        "returns.trailing_window, pinned to it by proyecto2/tests/calculations/test_report_reconciliation_matches_p2_fnd0428.py on every convention. (review 2027-04-21)",
+    "shared/statistical_audit/window_coverage.py::rolling_coverage_violations":
+        "DESIGN: FND-0427. The audit judges a stored rolling_Ny window against the NAV with the writer's own definition (first NAV <= end - N months + tolerance; rows inside "
+        "`date > end - N months`) on the month-end labelled NAV of the audit's input; it cuts no series and aligns none. (review 2027-04-21)",
     "proyecto2/src/calculations/momentum.py::compute_momentum":
         "DESIGN: FND-0302. The fund's window comes from returns.trailing_window, the same function as the peers' rolling return_ann; "
         "the DateOffset here only tests that the history spans N years, over month-end labelled data. (review 2027-04-21)",

@@ -35,6 +35,12 @@ except ImportError:
 from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.backtesting import Backtester
 from shared.config import REPORT_DIRS, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT, PORTFOLIO_TARGET_SPREAD
+from shared.config import P3_FUND_NAV_MAX_AGE_DAYS, REPORT_RECONCILIATION_ENABLED, REPORT_RECONCILIATION_TOLERANCE_BP   # FND-0428
+from shared import config as _shared_config
+from shared import metric_labels as _metric_labels, report_reconciliation as _report_reconciliation   # FND-0428
+
+# Columns of 1_Cartera whose value is a percentage in percent units (the cell shows value/100 as 0.00%): Retorno real, Max DD, YTD, 1A, Objetivo, Exceso, Divisa.
+_PCT_COLS = {8, 9, 10, 11, 16, 17, 18}
 
 _DEFAULT_REPORTS_DIR = REPORT_DIRS["p3"]          # out/reports/p3 (single source: shared/config.py)
 from proyecto3.src import scenario_lifecycle as _lifecycle
@@ -274,16 +280,28 @@ def _build_cartera(ws, conn, scenario_id):
     obj = _get_objetivo_ipc_m3(conn)
     obj_anual = obj["objetivo_anual"] * 100 if obj["objetivo_anual"] else None
 
+    # FND-0428: every metric header comes from shared/metric_labels.py (it names the horizon and the basis); the incident was a header
+    # ("Retorno real %") on a since-inception ANNUALIZED figure. The six columns after Max DD give the nominal YTD and 1-year returns and say
+    # how far each row can be trusted (window span, history, as-of date, stale flag).
+    _lab = _metric_labels.label_for
+    _rep = _metric_labels.report_label
     headers = ["Sub-cartera", "ISIN", "Nombre", "Naturaleza", "Gestora",
-               "Peso %", "Score", "Retorno real %", "Max DD %",
-               "Obj IPC+M3 %", "Exceso obj %", "Divisa contrib %",
+               _rep("peso"), _rep("score"),
+               _lab("return_ann", "since_inception", 1), _lab("max_dd", "since_inception", 0),
+               _lab("return_cum", "ytd", 0), _lab("return_ann", "rolling_1y", 0),
+               _rep("ventana_1a"), _rep("historia"), _rep("fecha_vl"), _rep("vl_obsoleto"),
+               _rep("objetivo"), _rep("exceso"), _lab("fx_contribution_ann", "since_inception", 0),
                "Moneda", "Cobertura", "Geografia",
-               "Beta Oil", "Beta Rate EU", "Beta Rate US",
-               "Macro R2", "Alpha Persist.", "SRRI KIID", "SRRI Calc",
+               _lab("beta_oil", "since_inception", 0), _lab("beta_rate_eu", "since_inception", 0),
+               _lab("beta_rate_us", "since_inception", 0),
+               _lab("macro_r2", "since_inception", 0), _lab("alpha_persistence", "since_inception", 0),
+               "SRRI KIID", _lab("srri_nav", "since_inception", 0),
                # v24 short-horizon overlay (d1 metrics) ----------------
-               "DD Corto 6M %", "Vol Adj 3M %", "Liq Flag 6M"]
+               _lab("short_max_drawdown", "rolling_6m", 0), _lab("short_vol_adj", "rolling_3m", 0),
+               _lab("short_liquidity_flag", "rolling_6m", 0)]
+    _N_COLS = len(headers)                                   # 31
     _apply_header(ws, headers, row=2)
-    ws.merge_cells(f"A1:{get_column_letter(25)}1")
+    ws.merge_cells(f"A1:{get_column_letter(_N_COLS)}1")
 
     # Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19):
     # fund_scores ahora acumula historia por regimen (PK extendida -- ver
@@ -328,7 +346,11 @@ def _build_cartera(ws, conn, scenario_id):
                -- v24 short-horizon overlay (metric_version='d1') ------
                {round_sql("sh_dd.value * 100", 2)}     as short_dd_6m,
                {round_sql("sh_va.value * 100", 2)}     as short_vol_adj_3m,
-               {round_sql("sh_lq.value", 4)}           as short_liq_flag
+               {round_sql("sh_lq.value", 4)}           as short_liq_flag,
+               -- FND-0428: nominal headline returns (r[23] YTD, r[24] 1 year, r[25] since inception nominal: only for the reconciliation gate) --
+               {round_sql("ytd.value * 100", 4)}       as ret_ytd,
+               {round_sql("r1y.value * 100", 4)}       as ret_1y,
+               {round_sql("rsi.value * 100", 4)}       as ret_si_nominal
         FROM portfolio_weights pw
         JOIN portfolio_scenarios ps ON ps.scenario_id = pw.scenario_id
         JOIN fund_master fm ON fm.ISIN = pw.isin
@@ -388,6 +410,21 @@ def _build_cartera(ws, conn, scenario_id):
                                      AND sh_lq.horizon = 'rolling_6m'
                                      AND sh_lq.metric_version = 'd1'
                                      AND sh_lq.real_flag = 0
+        LEFT JOIN fund_metrics ytd ON ytd.isin = pw.isin
+                                   AND ytd.metric = 'return_cum'
+                                   AND ytd.horizon = 'ytd'
+                                   AND ytd.metric_version IN ('v1', 'ytd_partial')
+                                   AND ytd.real_flag = 0
+        LEFT JOIN fund_metrics r1y ON r1y.isin = pw.isin
+                                   AND r1y.metric = 'return_ann'
+                                   AND r1y.horizon = 'rolling_1y'
+                                   AND r1y.metric_version = 'v1'
+                                   AND r1y.real_flag = 0
+        LEFT JOIN fund_metrics rsi ON rsi.isin = pw.isin
+                                   AND rsi.metric = 'return_ann'
+                                   AND rsi.horizon = 'since_inception'
+                                   AND rsi.metric_version = 'v1'
+                                   AND rsi.real_flag = 0
         WHERE pw.scenario_id = {_ph}
         ORDER BY pw.block, pw.weight DESC
     """, (scenario_id,)).fetchall()
@@ -402,6 +439,7 @@ def _build_cartera(ws, conn, scenario_id):
     RED_FILL   = _fill("F8D7DA")
     AMBER_FILL = _fill("FFF3CD")
 
+    gate_rows = []        # (isin, stored headline fractions, EUR-view NAV) for the reconciliation gate below
     for r in rows:
         row_idx = ws.max_row + 1
         bg = sub_colors.get(r[0], "FFFFFF")
@@ -411,7 +449,7 @@ def _build_cartera(ws, conn, scenario_id):
             cell = ws.cell(row_idx, col_n, val)
             cell.font = _font(size=10)
             cell.fill = fill if fill else bg_fill
-            if col_n in {8, 9, 10, 11, 12} and val is not None:
+            if col_n in _PCT_COLS and val is not None:
                 try:
                     fv = float(val)
                     cell.value = fv / 100
@@ -423,51 +461,66 @@ def _build_cartera(ws, conn, scenario_id):
         for c_idx, val in enumerate(r[:9], 1):
             _wc(c_idx, val)
 
-        # Col 10: Objetivo IPC+M3
-        _wc(10, round(obj_anual, 2) if obj_anual else "N/D")
+        # Cols 10-15 (FND-0428): nominal YTD and 1-year returns plus what they rest on. A fund without a YTD row (P2 not yet recomputed with
+        # YTD_METRIC_ENABLED, or a stale base) shows N/D; nothing is derived here, the stored value is the one reconciled below.
+        ret_ytd, ret_1y, ret_si_nom = r[23], r[24], r[25]
+        ctx = _nav_context(conn, r[1])
+        _wc(10, ret_ytd if ret_ytd is not None else "N/D")
+        _wc(11, ret_1y if ret_1y is not None else "N/D")
+        _wc(12, ctx["window_months"] if ctx["window_months"] is not None else "N/D")
+        _wc(13, ctx["history_years"] if ctx["history_years"] is not None else "N/D")
+        _wc(14, ctx["last_date"].strftime("%Y-%m-%d") if ctx["last_date"] is not None else "N/D")
+        _wc(15, "SI" if ctx["stale"] else "", AMBER_FILL if ctx["stale"] else None)
+        if ctx["nav"] is not None:
+            gate_rows.append((r[1], {"ytd": _frac(ret_ytd), "ret_1y": _frac(ret_1y), "ret_si_nominal": _frac(ret_si_nom)}, ctx["nav"]))
 
-        # Col 11: Exceso vs objetivo
-        ret_real = r[7]
-        if ret_real is not None and obj_anual is not None:
-            exceso = round(float(ret_real) - obj_anual, 2)
-            _wc(11, exceso, GREEN_FILL if exceso >= 0 else RED_FILL)
+        # Col 16: Objetivo IPC+M3
+        _wc(16, round(obj_anual, 2) if obj_anual else "N/D")
+
+        # Col 17: Exceso vs objetivo -- NOMINAL 1-year return minus the NOMINAL objective (the old column subtracted the objective from the
+        # REAL since-inception annualized return: different basis and different horizon).
+        if ret_1y is not None and obj_anual is not None:
+            exceso = round(float(ret_1y) - obj_anual, 2)
+            if not _report_reconciliation.excess_is_like_for_like(exceso, float(ret_1y), obj_anual):
+                raise RuntimeError(f"[GATE:REPORT_EXCESS] {r[1]}: excess {exceso} is not nominal 1Y minus nominal objective")
+            _wc(17, exceso, GREEN_FILL if exceso >= 0 else RED_FILL)
         else:
-            _wc(11, "N/D")
+            _wc(17, "N/D")
 
         # Col 12: Contribucion divisa anual %
         fx_val = r[9]
-        _wc(12, fx_val if fx_val is not None else "",
+        _wc(18, fx_val if fx_val is not None else "",
             AMBER_FILL if (fx_val is not None and abs(float(fx_val)) > 20) else _fill(bg))
 
         # Cols 13-15: Moneda, Cobertura, Geografia
-        _wc(13, r[10] or "")  # Fund_Currency
-        _wc(14, r[11] or "")  # Hedging_Policy
-        _wc(15, r[12] or "")  # Geography
+        _wc(19, r[10] or "")  # Fund_Currency
+        _wc(20, r[11] or "")  # Hedging_Policy
+        _wc(21, r[12] or "")  # Geography
 
         # Col 16: Beta Oil
         bo = r[13]
-        _wc(16, bo, GREEN_FILL if (bo is not None and float(bo) > 0.01) else None)
+        _wc(22, bo, GREEN_FILL if (bo is not None and float(bo) > 0.01) else None)
 
         # Col 17: Beta Rate EU
         bre = r[14]
-        _wc(17, bre, RED_FILL if (bre is not None and float(bre) < -0.10) else None)
+        _wc(23, bre, RED_FILL if (bre is not None and float(bre) < -0.10) else None)
 
         # Col 18: Beta Rate US
-        _wc(18, r[15])
+        _wc(24, r[15])
 
         # Col 19: Macro R2
-        _wc(19, r[16])
+        _wc(25, r[16])
 
         # Col 20: Alpha Persistence
         ap = r[17]
-        _wc(20, ap,
+        _wc(26, ap,
             GREEN_FILL if (ap is not None and float(ap) >= 0.60)
             else AMBER_FILL if (ap is not None and float(ap) >= 0.40)
             else RED_FILL if ap is not None else None)
 
         # Col 21: SRRI KIID (r[18])
         srri_kiid = r[18]
-        _wc(21, srri_kiid)
+        _wc(27, srri_kiid)
 
         # Col 22: SRRI Calculado (r[19])
         srri_calc = r[19]
@@ -480,7 +533,7 @@ def _build_cartera(ws, conn, scenario_id):
                            else GREEN_FILL)
             except Exception:
                 pass
-        _wc(22, srri_calc, srri_bg)
+        _wc(28, srri_calc, srri_bg)
 
         # -- Col 23: DD Corto 6M % (r[20]) — rojo si < -5%, ambar -2..-5%
         sh_dd = r[20]
@@ -492,9 +545,9 @@ def _build_cartera(ws, conn, scenario_id):
                             GREEN_FILL)
             except Exception:
                 sh_dd_bg = None
-            _wc(23, sh_dd, sh_dd_bg)
+            _wc(29, sh_dd, sh_dd_bg)
         else:
-            _wc(23, "")
+            _wc(29, "")
 
         # -- Col 24: Vol Adj 3M % (r[21]) — rojo si > 20%, ambar 10-20%
         sh_va = r[21]
@@ -506,9 +559,9 @@ def _build_cartera(ws, conn, scenario_id):
                             GREEN_FILL)
             except Exception:
                 sh_va_bg = None
-            _wc(24, sh_va, sh_va_bg)
+            _wc(30, sh_va, sh_va_bg)
         else:
-            _wc(24, "")
+            _wc(30, "")
 
         # -- Col 25: Liq Flag 6M (r[22]) — ambar si > 0.20 (datos no fiables)
         sh_lq = r[22]
@@ -518,13 +571,60 @@ def _build_cartera(ws, conn, scenario_id):
                 sh_lq_bg = (AMBER_FILL if flq > 0.20 else GREEN_FILL)
             except Exception:
                 sh_lq_bg = None
-            _wc(25, sh_lq, sh_lq_bg)
+            _wc(31, sh_lq, sh_lq_bg)
         else:
-            _wc(25, "")
+            _wc(31, "")
 
-    ws.auto_filter.ref = f"A2:{get_column_letter(25)}{ws.max_row}"
+    ws.auto_filter.ref = f"A2:{get_column_letter(_N_COLS)}{ws.max_row}"
     ws.freeze_panes = "A3"
     _autofit(ws)
+
+    # FND-0428: the report never leaves the building with a return that its own NAV cannot reproduce (identical definitions, 5 bp).
+    _reconcile_or_raise(gate_rows)
+
+    # Legend under the table: every header with its definition (one source: shared/metric_labels.py).
+    legend_row = ws.max_row + 2
+    ws.cell(legend_row, 1, "LEYENDA DE COLUMNAS").font = _font(bold=True, size=10)
+    for j, line in enumerate(_metric_labels.legend_lines(), 1):
+        ws.cell(legend_row + j, 1, line).font = _font(size=9)
+
+
+def _frac(pct):
+    """Percent (as selected) to fraction, None-safe."""
+    return None if pct is None else float(pct) / 100.0
+
+
+def _nav_context(conn, isin):
+    """What a row's returns rest on: the fund's EUR-view monthly NAV (the one P2 computed on), its last date, history, the real span of the
+    1-year window and whether the last NAV is older than the P3 age limit. All None / False when the fund has no usable NAV."""
+    out = {"nav": None, "last_date": None, "history_years": None, "window_months": None, "stale": False}
+    from proyecto2.src.readers.db_readers import load_nav          # same import discipline as data_freshness.py
+    nav = load_nav(conn, isin)
+    if nav is None or nav.empty:
+        return out
+    nav = nav.sort_values("date").reset_index(drop=True)
+    last = nav["date"].iloc[-1]
+    win = nav[nav["date"] > last - pd.DateOffset(months=12)]
+    out["nav"] = nav
+    out["last_date"] = last
+    out["history_years"] = round((last - nav["date"].iloc[0]).days / 365.25, 1)
+    out["window_months"] = round((last - win["date"].iloc[0]).days / 30.4375, 1) if len(win) >= 2 else None
+    out["stale"] = (pd.Timestamp(date.today()) - last).days > P3_FUND_NAV_MAX_AGE_DAYS
+    return out
+
+
+def _reconcile_or_raise(gate_rows):
+    """Fail the build when a stored headline return differs from the NAV recomputation by more than the tolerance (FND-0428)."""
+    if not REPORT_RECONCILIATION_ENABLED:
+        return
+    conv = dict(by_dates=bool(getattr(_shared_config, "ANNUALIZATION_BY_DATES_ENABLED", False)),
+                interval=bool(getattr(_shared_config, "ANNUALIZATION_INTERVAL_ENABLED", False)))
+    bad = []
+    for isin, stored, nav in gate_rows:
+        bad += _report_reconciliation.reconcile(isin, stored, nav, tolerance_bp=REPORT_RECONCILIATION_TOLERANCE_BP, **conv)
+    if bad:
+        raise RuntimeError("[GATE:REPORT_RECONCILIATION] " + str(len(bad)) + " headline return(s) do not reconcile with the NAV: "
+                           + "; ".join(m.text() for m in bad[:10]))
 
 
 def _build_regimen(ws, clf):

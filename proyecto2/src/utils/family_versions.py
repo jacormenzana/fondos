@@ -70,6 +70,10 @@ FLAG_FAMILIES: dict = {
     # FND-0300: month-end labels of load_nav move the macro join, the rolling / horizon cut-offs (rolling, risk at rolling horizons) and the
     # persistence windows; capture, regime and fx already snap to month-end, momentum and short do not read the stamp.
     "NAV_MONTH_END_ALIGN_ENABLED": ("risk", "macro", "persistence", "rolling"),
+    # FND-0427: window_coverage_ok gates the risk family's rolling horizons, the rolling timeseries and the momentum windows.
+    "ROLLING_WINDOW_COVERAGE_ENABLED": ("risk", "rolling", "momentum"),
+    # FND-0426: the ytd horizon (metric return_cum) is written by the risk family.
+    "YTD_METRIC_ENABLED": "risk",
 }
 
 

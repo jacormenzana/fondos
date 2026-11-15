@@ -33,7 +33,9 @@ import numpy as np
 import pandas as pd
 
 from .deflation import deflate_nav
-from .returns import downside_deviation_ann
+from .returns import downside_deviation_ann, window_continuity_thresholds, window_span_ok
+from shared import config as _config                    # FND-0427: ROLLING_WINDOW_COVERAGE_ENABLED, read at call time
+from shared.nav_continuity import reason_for_months      # FND-0427: the one NAV continuity rule
 from shared.annualization import (
     by_dates_enabled, dense_equivalent_points, gap_months, kweighted_std, month_ordinals, standardised_shortfalls, years_spanned,
 )
@@ -272,6 +274,12 @@ def compute_rolling_rows(
     n = len(nav_series)
     # FND-0253: calendar-month ordinal of each row, sliced per window below; None keeps the stored row convention bit-for-bit.
     month_ords = month_ordinals(nav_df["date"]) if by_dates_enabled() else None
+    # FND-0427: a window-end point is written only when the history behind it really covers the window (span within the tolerance, and the rows
+    # inside it continuous enough): the SAME rule `returns.window_coverage_ok` applies to the scalar rolling_Ny, so SCALAR_EQUALS_TIMESERIES holds.
+    # Monthly series only (the daily short windows keep their own minimum); OFF = the legacy gate (min_obs alone), bit for bit.
+    _cov_on = bool(getattr(_config, "ROLLING_WINDOW_COVERAGE_ENABLED", False)) and periods_per_year == _PERIODS_YEAR_MONTHLY
+    _cov_months = month_ordinals(nav_df["date"]) if _cov_on else None
+    _cov_min, _cov_gap = window_continuity_thresholds() if _cov_on else (0.0, 0)
 
     # §4g: build date-aligned RF rate vector (one value per NAV row, forward-filled).
     # When rf_series is provided each window-end date uses its historically correct rate.
@@ -335,6 +343,9 @@ def compute_rolling_rows(
             window_nav = nav_series[start : i + 1]
             n_obs = len(window_nav)
             if n_obs < min_obs:
+                continue
+            if _cov_on and (not window_span_ok(dates[0], dates[i], w)
+                            or reason_for_months(_cov_months[start : i + 1], _cov_min, _cov_gap) is not None):
                 continue
             date_str = dates[i].date().isoformat()
 

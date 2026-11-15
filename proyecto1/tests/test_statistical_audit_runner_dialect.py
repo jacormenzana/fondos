@@ -526,3 +526,26 @@ def test_blocking_other_warnings_do_not_block():
 
 def test_blocking_empty_run_does_not_block():
     assert not runner._has_blocking_findings(_run_with())
+
+
+# --- ROLLING_COVERAGE (FND-0427): a stored rolling_Ny scalar must rest on a window the NAV history covers ---------------------------------
+def _coverage_inputs(first, rows_horizon="rolling_5y"):
+    nav = pd.DataFrame({"isin": "LU1", "date": pd.date_range(first, "2026-10-31", freq="ME")})
+    long_df = pd.DataFrame([{"isin": "LU1", "metric": "return_ann", "horizon": rows_horizon, "real_flag": 0, "value": 0.05, "metric_version": "v1"}])
+    return long_df, nav
+
+
+def test_rolling_coverage_flagged_when_the_history_is_shorter_than_the_window(monkeypatch):
+    from shared import config as _cfg
+    monkeypatch.setattr(_cfg, "ROLLING_WINDOW_COVERAGE_ENABLED", True)
+    run = runner.AuditRun(domain="p2_metrics")
+    runner._run_rolling_coverage(run, *_coverage_inputs("2023-10-31"))
+    assert _finding_ids(run) == ["ROLLING_COVERAGE"] and run.findings[0]["violating_isins"] == ("LU1",)
+
+
+def test_rolling_coverage_not_flagged_when_the_history_covers_the_window(monkeypatch):
+    from shared import config as _cfg
+    monkeypatch.setattr(_cfg, "ROLLING_WINDOW_COVERAGE_ENABLED", True)
+    run = runner.AuditRun(domain="p2_metrics")
+    runner._run_rolling_coverage(run, *_coverage_inputs("2015-01-31"))
+    assert "ROLLING_COVERAGE" not in _finding_ids(run)

@@ -97,7 +97,8 @@ from src.readers.db_readers import (
     load_peer_returns,               # FND-0392: one-month return panel by Fund_Nature (unshared NAV jump test)
 )
 from src.calculations.short_horizon import compute_short_horizon_metrics
-from src.calculations.returns import trailing_window   # FND-0302
+from src.calculations.returns import trailing_window, window_coverage_ok, ytd_return   # FND-0302, FND-0427, FND-0426
+from src.calculations.deflation import deflate_nav                                       # FND-0426: the real YTD deflates the NAV once, like rolling_stats
 from src.calculations.risk_metrics import compute_risk_metrics
 from src.calculations.consistency import consistency_metrics
 from src.calculations.macro_sensitivity import (
@@ -749,6 +750,41 @@ def _process_horizon(
     )
     _log(conn, isin, "CALC", "OK", horizon,
          f"{written} metricas calculadas", dry_run)
+    return written
+
+
+def _write_ytd(
+    isin: str,
+    nav_df: pd.DataFrame,
+    ipc_df: "pd.DataFrame | None",
+    conn: "psycopg.Connection",
+    dry_run: bool,
+) -> int:
+    """FND-0426: the year-to-date return (metric `return_cum`, horizon `ytd`), nominal and, when CPI is available, real.
+
+    Cumulative, never annualized, from `returns.ytd_return` (base = last NAV on or before the prior Dec 31 within YTD_BASE_MAX_STALENESS_BDAYS business days;
+    a fund launched this year gets the return since its first NAV under metric_version 'ytd_partial'). The fund's `ytd` rows are REPLACED on every call:
+    a stale base writes no row, and a fund moving between 'v1' and 'ytd_partial' (a year change) cannot leave the other version behind.
+    Runs inside the per-fund transaction of the caller; returns the rows written."""
+    _clear_short_horizon_rows(conn, isin, "ytd", dry_run)
+    nominal = ytd_return(nav_df)
+    if nominal is None:
+        return 0
+    in_window = (nav_df["date"] >= nominal["base_date"]) & (nav_df["date"] <= nominal["end_date"])
+    n_rows = int(in_window.sum())
+    metrics = [{"metric": "return_cum", "value": nominal["value"], "real_flag": 0, "source_rows": n_rows}]
+    if ipc_df is not None and not ipc_df.empty:
+        df_real = deflate_nav(nav_df[["date", "nav"]], ipc_df)
+        if not df_real.empty:
+            real = ytd_return(pd.DataFrame({"date": df_real["date"], "nav": df_real["nav_real"]}))
+            if real is not None:
+                metrics.append({"metric": "return_cum", "value": real["value"], "real_flag": 1, "source_rows": n_rows})
+    written = _write_metrics(
+        conn, isin, metrics, "ytd", dry_run,
+        algorithm_version=_algo("risk"), batch_id=RUN_BATCH_ID,
+        metric_version="ytd_partial" if nominal["partial"] else METRIC_VERSION,
+    )
+    _log(conn, isin, "CALC", "OK", "ytd", f"{written} metricas calculadas", dry_run)
     return written
 
 
@@ -1497,6 +1533,13 @@ def run(
                         if horizons_filter and horizon_name not in horizons_filter:
                             continue
                         nav_w = trailing_window(nav_df, months)      # FND-0302: the one definition of a rolling window (momentum shares it)
+                        if shared_config.ROLLING_WINDOW_COVERAGE_ENABLED and not window_coverage_ok(nav_df, months):
+                            # FND-0427: the history does not cover this horizon. No value is written, and an earlier run's row (a partial window
+                            # stored as if it were the full horizon) must not be served as current: delete this (isin, horizon).
+                            _clear_short_horizon_rows(conn, isin, horizon_name, dry_run)
+                            _log(conn, isin, "CALC", "SKIP", horizon_name,
+                                 f"Historial no cubre la ventana ({len(nav_w)} filas en {months} meses)", dry_run)
+                            continue
                         if len(nav_w) < MIN_NAV_ROWS:
                             continue
                         # ipc_df pasado SIN recortar -- ver comentario identico
@@ -1505,6 +1548,10 @@ def run(
                             isin, nav_w, ipc_df, horizon_name, conn, dry_run,
                             rf_rate_df=rf_rate_df,
                         )
+
+                    # ---- Year to date (FND-0426) ---------------------
+                    if shared_config.YTD_METRIC_ENABLED and (horizons_filter is None or "ytd" in horizons_filter):
+                        isin_written += _write_ytd(isin, nav_df, ipc_df, conn, dry_run)
 
                 # ---- Horizontes cortos diarios (v24) -----------------
                 if _wantf("short"):
