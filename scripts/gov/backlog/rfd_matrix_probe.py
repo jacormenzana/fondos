@@ -68,11 +68,11 @@ STRUCTURAL_MARKER_RULES = ("SNAPSHOT_HELD_OUT",)
 # fixed literal here (never text from the condition), and a comparison is done in Python against a whitelisted operator, so a condition cannot carry a statement. args = [check, *params].
 DB_CHECK_COMPARATORS = (">=", "<=", "==", ">", "<")
 AUDIT_DOMAINS = ("p2_metrics", "cost_attributes")
-TABLE_ROWS_SQL = {                                                         # table_rows(table, op, n): a row count of a table that tickets talk about
-    "series_benchmark": "SELECT COUNT(*) FROM bronze.series_benchmark",
-    "nav_sources": "SELECT COUNT(*) FROM control.nav_sources",
-    "nav_sources_older_180d": "SELECT COUNT(*) FROM control.nav_sources WHERE last_nav_date < CURRENT_DATE - 180",
-}
+# table_rows(table, op, n): a row count of a table that tickets talk about. Each query is a named literal that probe_db_check executes directly (tests/test_sql_explain_sweep_pg.py EXPLAINs it).
+Q_ROWS_SERIES_BENCHMARK = "SELECT COUNT(*) FROM bronze.series_benchmark"
+Q_ROWS_NAV_SOURCES = "SELECT COUNT(*) FROM control.nav_sources"
+Q_ROWS_NAV_SOURCES_OLDER_180D = "SELECT COUNT(*) FROM control.nav_sources WHERE last_nav_date < CURRENT_DATE - 180"
+TABLE_ROWS_SQL = {"series_benchmark": Q_ROWS_SERIES_BENCHMARK, "nav_sources": Q_ROWS_NAV_SOURCES, "nav_sources_older_180d": Q_ROWS_NAV_SOURCES_OLDER_180D}
 _RULE_ID = re.compile(r"[A-Za-z0-9_]{3,80}")
 _STEP_OR_STATUS = re.compile(r"[A-Za-z0-9_]{1,60}")
 _ISIN = re.compile(r"[A-Z0-9]{12}")
@@ -284,7 +284,12 @@ def probe_db_check(conn, *args) -> tuple:
     name, p = args[0], list(args[1:])
     if name == "table_rows":
         table, op, n = p
-        value = conn.execute(TABLE_ROWS_SQL[table]).fetchone()[0]
+        if table == "series_benchmark":
+            value = conn.execute(Q_ROWS_SERIES_BENCHMARK).fetchone()[0]
+        elif table == "nav_sources":
+            value = conn.execute(Q_ROWS_NAV_SOURCES).fetchone()[0]
+        else:                                                                  # nav_sources_older_180d: validate_db_check admits nothing else
+            value = conn.execute(Q_ROWS_NAV_SOURCES_OLDER_180D).fetchone()[0]
         return compare(value, op, n), f"table {table}: {value} row(s) (needs {op} {n})"
     if name == "ingestion_events":
         step, status, op, n, days = p
