@@ -163,7 +163,7 @@ Outcomes: explained; a NAV-source defect (a ticket); or still unexplained after 
 | 3 | `YTD_BASE_MAX_STALENESS_BDAYS` | 5 | P | Launched-this-year funds get `ytd_partial` | 1 |
 | 4 | Reconciliation tolerance, identical definitions | 5 bp | P | Warnings cover label-span and daily-monthly gaps | 1 |
 | 5 | Incident reconciliation timebox | 3 working days | P | Escape only after the three checks | 1 |
-| 6 | Restore batch size (funds per commit) | from the rehearsal | C | Keeps the WAL and bloat bounded; measured in the rehearsal | 1 |
+| 6 | Restore batch size (funds per commit) | 50 | C | Measured 2026-11-15 on postgres:17 (600 funds, 2.7M rows per trial): the longest transaction took 10.5 s at 50 funds, 15.7 s at 150, 26.4 s at 300 and 69.7 s at 600; every trial reproduced the export exactly; about 2.6 MB of WAL per fund, so a whole-universe restore of 3,706 funds is about 10 GB of WAL and about 10 minutes | 1 |
 | 7 | Minimum families per peer cell | 15 | P | Smallest categories have 18–20 funds | 2 |
 | 8 | CONTINUE confidence level | one-sided 95% | P | The history is already mined | 2 |
 | 9 | Drawdown margin | 2 pp | P | Precedent in the FND-0193 layer verdicts | 2 |
