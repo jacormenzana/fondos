@@ -1,0 +1,39 @@
+# Package S2 - the probe sweep (FND-0423) and the FRED docstring (FND-0232)
+
+Owner ruling 2026-11-15, after S1 (`PKG_S1_run_evidence_sweep.md`): start now, FND-0232 first as an isolated text win, then FND-0423; check FND-0239 before building; widen the probe kinds before building the sweep. No P1, P2 or P3 process was run.
+
+## 1. Result (read first)
+- **FND-0232 delivered** (`ddbf366`): five stale texts of `macro_discovery.py` (two docstrings, the runtime message, the `fred_api_key` parameter doc, the `--fred-api-key` help) and the provenance note said a FRED key gives the full ICE BofA history; FRED serves ~37 months of `BAMLH0A0HYM2` with or without a key (verified 2026-10-05). Closing conditions: one `absent_in` per stale phrase, all passing, plus `tests_pass`.
+- **FND-0423 delivered in code** (`023adb4`, `bcec012`, `7960108`): the probe vocabulary is widened and the sweep is in the cycle report. **It closes by itself only after the DEPLOY fact**: the delivery changes `db/**` (a third widening of the `probe_kind` CHECK in `db/pg_backlog/99_probes.sql`), so the autopilot prints WAIT until the owner's watcher applies the `probes` phase and records DEPLOY, then closes it. Nothing for the owner to type.
+- **FND-0236 closure** is the owner's (section 5): the closing commit carries its `Closes:` only as the delivery fact that clears its `STALE_PROBES` blocker; the autopilot then waits for DEPLOY and you close it with `close_release.py`.
+
+## 2. FND-0239 checked first: not merged
+Its scope is the `control.cycle_*` tables, `v_cycle_exec` and a flag catalogue (`shared/cycle_telemetry_flags.py`: STEP_SLOW, DIAG_FAILED_CYCLE_OK, FAMILY_REFRESH_PENDING, FAMILY_VERSION_STALE, BACKFILL_NO_WORK, RUN_ERROR_ZERO_WORK, ...) whose rules take one cycle's steps and metrics from the `fondos` database. The sweep evaluates closing conditions of backlog tickets, which live in the `gestion` database and are read through `backlog_client`. Not covered, so not merged, and no telemetry hook is duplicated: the sweep is a pure selection function (`select_closable`) plus a collector in the cycle report's existing backlog collectors. When FND-0239 replaces `attention_items()` with the flag catalogue, a `TICKETS_CLOSABLE` rule can call the same function. Logged on FND-0239.
+
+## 3. The probe vocabulary (before the sweep, as ruled)
+- **`db_check`** (new kind): `[check, *params]` of a closed registry, validated by `validate_db_check` before anything runs: `table_rows` (a named table's count against a whitelisted operator), `ingestion_events` (a step/status count in the last N days), `p2_run_summary` (a `RUN_SUMMARY` with at least N processed funds: a positive log probe), `audit_rule_clear` (the latest finished audit run persists no violation of ONE rule for these funds). The SQL of each check is a fixed literal in the module, parameters are bound, comparisons happen in Python: a condition cannot carry a statement. The `EXPLAIN` sweep covers every query (932 statements, 0 failed).
+- **`audit_isins_clear`, held-out-aware:** the structural `SNAPSHOT_HELD_OUT` row (INFO) is not a violation, so it no longer fails the probe for ever; but a held-out fund was not evaluated either, so the answer is "cannot tell" (MANUAL), never a pass. This is a deliberate reading of "evaluate cleanly": a clean pass for a fund the audit skipped would be false evidence. A claim about one rule is `audit_rule_clear`, where a held-out fund is no obstacle (the FND-0250 case would have been `["audit_rule_clear", "p2_metrics", "WINDOW_FISHER_IDENTITY", <6 ISINs>]`).
+- **DDL:** the CHECK is widened again, idempotently, in `99_probes.sql`; the pinned-list test reads the last widening; a Postgres test applies the phase twice and refuses an unknown kind. The live drift tool compares routines, views and columns, not constraints, so it is unaffected; the watcher re-applies the phase because its file changed.
+
+## 4. The sweep (cycle report)
+`collect_closable_on_evidence` runs, read-only, the conditions of the open tickets that carry one beyond the default `tests_pass` and lists as `[ATENCION]` the tickets where all hold; it also counts the ones waiting on a manual condition and the ones that fail. It moves nothing. First live run: **9 evaluated, 0 closable, 6 manual (FND-0029, 0100, 0158, 0248, 0306, 0404: the owner-held ones), 3 unmet.** Honest limit: only 15 open tickets carry any condition and most are the default, so the sweep finds little until tickets are opened with a machine condition; the opening rule is documented in `NORMAS_BACKLOG.md` (a data ticket carries one or says why not), not enforced by code.
+
+## 5. FND-0236: owner closure, in your cmd.exe terminal
+The ruling and the evidence are in its log (S1 record section 7). `sp_close_release` stamps `CODE_FIX`, which is the resolution you want. The `human:jacor` string is in your vault (`FONDOS_BACKLOG_PG_DSN_HUMAN`: stored).
+
+**Why the closing commit of this package carries `Closes: FND-0236`, and why you still close it.** Read-only checks found two obstacles to a direct `close_release.py`: (1) the ticket has a `STALE_PROBES` blocker (an impact note on 2026-11-14 21:22 invalidated its probe, and in ENFORCE mode `sp_close_release`, which calls `sp_transition` without force, refuses a `CODE_FIX` close while a probe is stale); the autopilot only re-runs the probes of a ticket that has a delivery fact, and 0236 had none. (2) An earlier commit citing it changed `db/pg/35_control.sql`, so the autopilot will never close it by itself without a DEPLOY fact, which only your tools can produce. The `Closes:` is therefore the delivery fact that lets the autopilot move it to READY_FOR_DEPLOY and re-run its probes (clearing the stale state); the autopilot then WAITS for DEPLOY by design, and the close stays your decision, as ruled.
+
+**Before you start, confirm the state** (read-only, any terminal): `C:\Users\jacor\.conda\envs\des\python.exe scripts\gov\backlog\backlog_autopilot.py --since-days 1` must show FND-0236 as `READY_FOR_DEPLOY` with the wait "the merge changes db/**". If it still shows IN_PROGRESS, the closing commit is not published or has no receipt yet: wait for the watcher.
+
+```
+cd /d C:\desarrollo\fondos
+C:\Users\jacor\.conda\envs\des\python.exe scripts\gov\backlog\owner_vault.py check --connect
+set FONDOS_ACTOR=human:jacor
+C:\Users\jacor\.conda\envs\des\python.exe scripts\gov\backlog\close_release.py --release R2026.11-FND0236 --tickets FND-0236 --log "Owner closure 2026-11-15: family-versioned partial recomputation demonstrated: gold.fund_metrics has 1,427,140 rows / 3,707 funds on 20261112.20261019 beside 177,702 / 3,700 on 20261112, and the 11-14 P2 pass was processed=122 skipped=3621 (doc/backlog/PKG_S1_run_evidence_sweep.md section 7)."
+```
+That last command is the DRY RUN (everything is checked and rolled back; exit 0). If it prints no refusal, run the same command again with ` --apply` at the end and type `I CONFIRM THIS IS NOT A SYNTHETIC TEST` when asked. Check afterwards: `C:\Users\jacor\.conda\envs\des\python.exe scripts\gov\backlog\backlog_autopilot.py --since-days 1` prints no decision for FND-0236 and its status is CLOSED. The label `R2026.11-FND0236` is unused today (0 tickets carry it); if the tool says it is taken, change the tag.
+
+## 6. What was not done
+- The opening rule is documentation, not a check in `open_ticket`. A rule that refuses a data ticket without a condition would need the owner's decision (it changes the single door).
+- `test_historia.py` (proyecto2 discovery) fails at collection without network, with or without these changes; not touched.
+- FND-0422 (four funds whose `Fund_Nature` contradicts both benchmark sources) is next, as ruled, and needs the old-vs-new universe replay and your order for a P1 pass before any change.
