@@ -118,6 +118,28 @@ Q_LOW_CONFIDENCE = """
     WHERE step = 'NATURE_LOW_CONFIDENCE' AND created_at >= %s
 """
 
+# FND-0422: the evidence the nature classifier was given. The dispatch row prints `msbench=` (Morningstar / KIID asset class) and `vol=` (realized-volatility band);
+# `None` is legitimate for a fund without that evidence, so the line compares the share of None in the cycle's dispatches with the share of the universe that lacks it.
+Q_EVIDENCE_DISPATCH = """
+    SELECT COUNT(*) AS n,
+           COUNT(*) FILTER (WHERE position(' vol=None ' in message) > 0) AS vol_none,
+           COUNT(*) FILTER (WHERE position(' msbench=None ' in message) > 0) AS ms_none
+    FROM ingestion_log
+    WHERE step = 'OPT_B3_DISPATCH' AND created_at >= %s
+"""
+
+Q_EVIDENCE_AVAILABLE = """
+    SELECT COUNT(*) AS n,
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM fund_metrics m
+                                          WHERE m.isin = fm.isin AND m.metric = 'srri_nav' AND m.horizon = 'since_inception'
+                                            AND m.real_flag = 0 AND m.value IS NOT NULL)) AS with_vol,
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM fund_benchmarks b
+                                          WHERE b.isin = fm.isin AND b.source IN ('MORNINGSTAR', 'KIID')
+                                            AND b.asset_class IN ('Equity', 'Fixed Income', 'Mixed'))) AS with_ms
+    FROM fund_master fm
+    WHERE fm.in_current_universe = 1
+"""
+
 Q_DQ_CYCLE = """
     SELECT check_code, level, COUNT(*) AS n
     FROM fund_data_quality_issues
@@ -384,6 +406,65 @@ def p2_outcome_attention(p2) -> list:
     if p2.get("state") in ("recomputed", "cache_only") and p2.get("errors"):
         return [f"P2 termino con {p2['errors']} errores (RUN_SUMMARY errors=)"]
     return []
+
+
+# ── evidence given to the nature classifier (FND-0422) ────────────────────────────────────────────
+
+EVIDENCE_MIN_DISPATCHES = 50     # fewer dispatches than this (a targeted pass) say nothing about the evidence loads
+EVIDENCE_TOLERANCE = 0.10        # healthy passes differ from the stored availability by about 1-2 points (11-13: 1.3% vol, 12% msbench against the same gap)
+
+
+def nature_evidence_verdict(dispatch: tuple, available: tuple, tolerance: float = EVIDENCE_TOLERANCE, min_rows: int = EVIDENCE_MIN_DISPATCHES) -> dict:
+    """`dispatch` = (dispatches, with vol=None, with msbench=None) of the cycle; `available` = (in-universe funds, with a stored srri_nav, with a Morningstar / KIID asset class).
+    A source is `missing` when the share of None in the dispatches exceeds the share of funds that lack it in the database by more than `tolerance`: the batch load of that evidence
+    failed (a swallowed exception), not the funds. Pure."""
+    n, vol_none, ms_none = (int(x) for x in dispatch)
+    total, with_vol, with_ms = (int(x) for x in available)
+    out = {"dispatches": n, "universe": total, "state": "ok", "missing": []}
+    if n < min_rows or total <= 0:
+        return {**out, "state": "too_few"}
+    for name, none_n, have in (("vol", vol_none, with_vol), ("msbench", ms_none, with_ms)):
+        seen, expected = none_n / n, 1 - have / total
+        out[f"{name}_none_pct"], out[f"{name}_expected_none_pct"] = round(100 * seen, 1), round(100 * expected, 1)
+        if seen - expected > tolerance:
+            out["missing"].append(name)
+    if out["missing"]:
+        out["state"] = "missing"
+    return out
+
+
+def collect_nature_evidence(conn, since: date) -> dict:
+    """Fail-soft like the other diagnostics: a problem becomes an `error` entry in the report. Read-only."""
+    try:
+        dispatch = tuple(conn.execute(Q_EVIDENCE_DISPATCH, (since,)).fetchone())
+        available = tuple(conn.execute(Q_EVIDENCE_AVAILABLE).fetchone())
+        return nature_evidence_verdict(dispatch, available)
+    except Exception as exc:                             # noqa: BLE001 -- the diagnostics never change the cycle
+        try:
+            conn.rollback()
+        except Exception:                                # noqa: BLE001
+            pass
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def nature_evidence_line(ev: dict) -> str:
+    """The one line of the report. Pure."""
+    if ev.get("error"):
+        return f"Evidencia del clasificador de naturaleza: no disponible ({ev['error']})"
+    if ev.get("state") == "too_few":
+        return f"Evidencia del clasificador de naturaleza: {ev['dispatches']} despachos en el ciclo (pocos para medir)"
+    parts = ", ".join(f"{n} None {ev[f'{n}_none_pct']}% (esperado {ev[f'{n}_expected_none_pct']}%)" for n in ("vol", "msbench"))
+    return f"Evidencia del clasificador de naturaleza ({ev['dispatches']} despachos): {parts}"
+
+
+def nature_evidence_attention(ev) -> list:
+    """[ATENCION] sentence when a batch load of evidence did not reach the classifier. Pure."""
+    if not ev or ev.get("error") or ev.get("state") != "missing":
+        return []
+    names = {"vol": "banda de volatilidad realizada (fund_metrics srri_nav)", "msbench": "clase de activo Morningstar / KIID (fund_benchmarks)"}
+    return [f"el clasificador de naturaleza no recibio {' ni '.join(names[m] for m in ev['missing'])} en la proporcion que existe en la base: "
+            "la carga por lotes del inicio de run_block fallo y se trago la excepcion (buscar '[WARN] SC-H' / '[WARN] OPT-B3' en el log de P1); "
+            "las naturalezas escritas en este ciclo no usaron esa evidencia"]
 
 
 # ── hedging drift (FND-0244) ──────────────────────────────────────────────────────────────────────
@@ -758,6 +839,7 @@ def attention_items(report: dict, previous: dict | None) -> list:
         items.append(f"{orphans} metricas nominales sin su par real (hueco silencioso de deflacion): "
                      + ", ".join(f"{m}={n}" for m, n in report["real_orphans"].items()))
     items += p2_outcome_attention(report.get("p2_outcome"))  # absent in reports written before FND-0327
+    items += nature_evidence_attention(report.get("nature_evidence"))  # absent in reports written before FND-0422
     items += closable_attention(report.get("closable_on_evidence"))   # absent in reports written before FND-0423
     zero_ols = report.get("ols_zero_backfills", [])          # absent in reports written before this check
     if zero_ols:
@@ -893,6 +975,8 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
     L += ["Alertas rolling (activos): " + (", ".join(f"{k}={v}" for k, v in report["alerts"].items()) or "ninguna")]
     if report.get("p2_outcome"):                                # absent in reports written before FND-0327
         L += [p2_outcome_line(report["p2_outcome"])]
+    if report.get("nature_evidence"):                           # absent in reports written before FND-0422
+        L += [nature_evidence_line(report["nature_evidence"])]
     if report.get("closable_on_evidence"):                      # absent in reports written before FND-0423
         L += [closable_line(report["closable_on_evidence"])]
     hd = report.get("hedging_drift")
@@ -1013,6 +1097,7 @@ def main(argv: list | None = None) -> int:
         try:
             report = collect(conn, since, today)
             report["p2_outcome"] = collect_p2_outcome(conn, cycle_start, window_from_stamp)
+            report["nature_evidence"] = collect_nature_evidence(conn, since)
             report["hedging_drift"] = collect_hedging_drift(conn) if args.hedging_drift else {"skipped": True}
             report["backlog_links"] = collect_backlog_links()
             report["backlog_violations"] = collect_backlog_violations()

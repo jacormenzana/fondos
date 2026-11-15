@@ -204,6 +204,8 @@ def _canned():
         cr.Q_NAV_NEWEST: [("LU1", date(2026, 10, 16))],   # read by collect_nav_lag, not collect(): see tests/test_nav_lag_fnd0296.py (FND-0296)
         cr.Q_P2_RUN_SUMMARY: [],            # read by collect_p2_outcome, not collect(): see tests/test_p1p2_cycle_report_p2_outcome*.py (FND-0327)
         cr.Q_P2_ACTIVITY: [],               # idem
+        cr.Q_EVIDENCE_DISPATCH: [(2900, 40, 350)],      # read by collect_nature_evidence, not collect(): see tests/test_p1p2_cycle_report_nature_evidence.py (FND-0422)
+        cr.Q_EVIDENCE_AVAILABLE: [(2943, 2900, 2600)],  # idem
     }
 
 
