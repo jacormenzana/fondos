@@ -277,6 +277,17 @@ def _assign_weights(
 # Coste de rotacion
 # ============================================================
 
+def fee_fraction(fund_ratio: float | None, nature_pct: float | None, default_pct: float) -> float:
+    """A fee as a FRACTION of capital (0.05 == 5 %), from the first source that has one (FND-0409): the per-fund value of `fund_master`
+    (a RATIO, used as it is), then the per-nature row of `rotation_costs` (PERCENT, divided by 100), then the explicit default (PERCENT,
+    divided by 100). A stored 0.0 is a real zero and wins over the fallbacks; only NULL falls through. Pure."""
+    if fund_ratio is not None:
+        return float(fund_ratio)
+    if nature_pct is not None:
+        return float(nature_pct) / 100
+    return float(default_pct) / 100
+
+
 def estimate_rotation_cost(
     conn: "psycopg.Connection",
     isin_out: str,
@@ -308,26 +319,29 @@ def estimate_rotation_cost(
 
     ph = "%s"
 
-    def _get_exit_fee_pct(isin: str) -> float:
+    # FND-0409: the two sources are in DIFFERENT units. fund_master.Entry_Fee_Pct / Exit_Fee_Pct are RATIOS (0.05 == 5 %), rotation_costs.* and the
+    # defaults above are PERCENT (1.0 == 1 %). The old COALESCE mixed them and divided the ratio by 100 once too often (a 5 % fee cost 0.05 %).
+    # The SQL only reads both columns; the units are resolved in `fee_fraction`.
+    def _get_exit_fee_fraction(isin: str) -> float:
         row = conn.execute(f"""
-            SELECT COALESCE(fm.Exit_Fee_Pct, rc.exit_fee_pct, {ph})
+            SELECT fm.Exit_Fee_Pct, rc.exit_fee_pct
             FROM fund_master fm
             LEFT JOIN rotation_costs rc ON rc.fund_nature = fm.Fund_Nature
             WHERE fm.ISIN = {ph}
-        """, (DEFAULT_EXIT_FEE_PCT, isin)).fetchone()
-        return float(row[0]) if row and row[0] is not None else DEFAULT_EXIT_FEE_PCT
+        """, (isin,)).fetchone()
+        return fee_fraction(row[0] if row else None, row[1] if row else None, DEFAULT_EXIT_FEE_PCT)
 
-    def _get_entry_fee_pct(isin: str) -> float:
+    def _get_entry_fee_fraction(isin: str) -> float:
         row = conn.execute(f"""
-            SELECT COALESCE(fm.Entry_Fee_Pct, rc.entry_fee_pct, {ph})
+            SELECT fm.Entry_Fee_Pct, rc.entry_fee_pct
             FROM fund_master fm
             LEFT JOIN rotation_costs rc ON rc.fund_nature = fm.Fund_Nature
             WHERE fm.ISIN = {ph}
-        """, (DEFAULT_ENTRY_FEE_PCT, isin)).fetchone()
-        return float(row[0]) if row and row[0] is not None else DEFAULT_ENTRY_FEE_PCT
+        """, (isin,)).fetchone()
+        return fee_fraction(row[0] if row else None, row[1] if row else None, DEFAULT_ENTRY_FEE_PCT)
 
-    exit_fee  = _get_exit_fee_pct(isin_out) / 100
-    entry_fee = _get_entry_fee_pct(isin_in) / 100
+    exit_fee  = _get_exit_fee_fraction(isin_out)
+    entry_fee = _get_entry_fee_fraction(isin_in)
     return round(exit_fee + entry_fee + SPREAD, 4)
 
 
