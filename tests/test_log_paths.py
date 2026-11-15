@@ -103,7 +103,7 @@ def _production_py():
 
 
 def test_no_production_module_writes_to_root_logs_dir():
-    # proyecto2/logs/*.py are misnamed source files (FND-0267), not writers; scanned like the rest.
+    # proyecto2/logs/ held a pasted copy of the mstarpy library (FND-0267, removed 2026-11-15); every production module is scanned.
     offenders = []
     for p, rel in _production_py():
         for n, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):

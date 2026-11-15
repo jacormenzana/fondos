@@ -198,3 +198,36 @@ def evaluate(commit: str, receipts: list, tree_of: Callable) -> tuple:
         verdict = None if r.get("result") == "inconclusive" else False
         last_problem = last_problem or (verdict, f"the newest receipt for {c[:12]} is {r.get('result')}: {r.get('detail')}")
     return last_problem or (False, f"no passing receipt for {c[:12]}")
+
+
+CLOSURE_SOLUTIONS = ("CODE_FIX", "DATA_FIX")                           # the solutions whose closure claims that code or data changed and was tested
+
+
+def closure_blockers(solution: Optional[str], commit: str, paths: list, receipts: list, tree_of: Callable) -> list:
+    """FND-0388, control T-RECEIPT-SCOPE (owner ruling 2026-11-15): reasons a delivery closure as CODE_FIX or DATA_FIX must WAIT, as a list of texts (empty = the receipt vouches for the change). A CODE_FIX / DATA_FIX
+    closure needs (a) at least one code or data path in the delivery (a documents-only delivery is not a code fix: the incident was FND-0280, closed as CODE_FIX with a docs_only receipt of 0 tests passed) and (b) an intact
+    receipt for the delivering `commit` whose result is `pass`, whose scope covers ALL the changed `paths` (`required_scope(paths)`, recomputed here, not the `required` the receipt wrote about itself; an `impact` receipt
+    stands for `full`, which `delivery_attest.verify` re-checks by running the selector again) and that really ran at least one test. Any other solution is not decided here. Pure given `tree_of`."""
+    if solution not in CLOSURE_SOLUTIONS:
+        return []
+    if not any(is_code_path(p) for p in paths):
+        return [f"{solution} but the delivering change touches only documents or records: it is not a code or data fix (deliver the code in the commit that carries Closes:, or close it with another solution)"]
+    c = str(commit or "").strip()
+    need = required_scope(paths)
+    problems: list = []
+    for r in reversed([r for r in receipts if c and c in (r.get("covers") or [])]):
+        if r.get("digest") != digest_of(r):
+            problems.append(f"the receipt for {c[:12]} does not match its digest")
+        elif tree_of(r.get("sha", "")) != r.get("tree"):
+            problems.append(f"git no longer gives tree {str(r.get('tree'))[:12]} for the receipt of {c[:12]}")
+        elif r.get("result") != "pass":
+            problems.append(f"the newest receipt for {c[:12]} is {r.get('result')}: {r.get('detail')}")
+        else:
+            scope = r.get("scope", "")
+            if rank(scope) < rank(need) and not (scope == "impact" and need == "full"):
+                problems.append(f"the receipt for {c[:12]} has scope {scope}, weaker than the {need} the changed paths need")
+            elif int((r.get("counts") or {}).get("passed", 0)) < 1:
+                problems.append(f"the receipt for {c[:12]} ran no test (scope {scope})")
+            else:
+                return []
+    return problems[:1] or [f"no local test receipt covers {c[:12] or 'the delivering commit'} (run scripts/gov/delivery/delivery_attest.py)"]

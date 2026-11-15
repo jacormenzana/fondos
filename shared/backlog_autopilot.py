@@ -74,6 +74,7 @@ class Facts:
     incident: dict = field(default_factory=dict)         # {ap: [reason]}: the audit-incident gate (shared.backlog_release.incident_reasons)
     rfd_blockers: dict = field(default_factory=dict)     # {ap: [str]}: what stops READY_FOR_DEPLOY (backlog_client.gate_blockers)
     delivery_blockers: dict = field(default_factory=dict)  # {ap: [str]}: what stops a delivery closure
+    receipt_blockers: dict = field(default_factory=dict)   # {ap: [str]}: control T-RECEIPT-SCOPE (FND-0388, shared.delivery_receipt.closure_blockers): the receipt does not vouch for a CODE_FIX / DATA_FIX closure
     citations: dict = field(default_factory=dict)          # {ap: [Citation, ...]}: merges that cite the ticket (any status): the facts a reopening is decided from
     closed_at: dict = field(default_factory=dict)          # {ap: datetime}: closure_ts of the CLOSED tickets (aware)
     blockers: dict = field(default_factory=dict)           # {ap: blocker ap}: the structured blocker of a BLOCKED ticket (its latest wait)
@@ -148,7 +149,8 @@ def decide_one(ap: str, facts: Facts) -> Optional[Decision]:
     reasons += [f"closing condition fails: {text}" for ok, text in probes if not ok]
     reasons += [f"incident gate: {r}" for r in facts.incident.get(ap) or ()]
     reasons += [f"delivery gate: {b}" for b in facts.delivery_blockers.get(ap) or ()]
-    release = t.get("release_version") or merge_release(m)
+    reasons += [f"receipt scope (T-RECEIPT-SCOPE): {b}" for b in facts.receipt_blockers.get(ap) or ()]
+    release =t.get("release_version") or merge_release(m)
     if not release:
         reasons.append("no valid release label can be derived from the merge")
     if reasons:

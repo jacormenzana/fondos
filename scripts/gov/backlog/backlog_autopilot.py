@@ -338,6 +338,33 @@ def _gather_gates(candidates: dict, tickets: dict, bc, cfg, record: bool = False
     return probes, incident, rfd_b, del_b
 
 
+def _receipt_blockers(candidates: dict, tickets: dict, cfg, *, read=None, tree_of=None) -> dict:
+    """{ticket: [reason]} of control T-RECEIPT-SCOPE (FND-0388, shared.delivery_receipt.closure_blockers) for the tickets about to be CLOSED by a delivery: a CODE_FIX / DATA_FIX closure needs a local receipt
+    that covers every changed path and ran a test. Only in local delivery mode (with BACKLOG_GITHUB_EVIDENCE_ENABLED the CI run is the evidence and the receipts are not written). Fail closed: receipts that cannot
+    be read are a reason, never a pass. `read` / `tree_of` are injectable for the tests."""
+    if cfg.BACKLOG_GITHUB_EVIDENCE_ENABLED:
+        return {}
+    from shared import delivery_receipt as dr
+    out: dict = {}
+    ready = [a for a in candidates if tickets[a]["status"] == "READY_FOR_DEPLOY" and candidates.get(a)]
+    if not ready:
+        return out
+    try:
+        sys.path.insert(0, str(ROOT / "scripts" / "gov" / "delivery"))
+        import delivery_attest as da
+        receipts = (read or (lambda: da.read_receipts(da.RECEIPTS)))()
+        tree = tree_of or da.tree_of(ROOT)
+    except Exception as exc:                                                 # noqa: BLE001
+        why = f"the local receipts could not be read ({type(exc).__name__}); a CODE_FIX / DATA_FIX closure waits"
+        return {a: [why] for a in ready if (candidates[a][-1][1].solution or "CODE_FIX") in dr.CLOSURE_SOLUTIONS}
+    for a in ready:
+        m = candidates[a][-1][1]
+        why = dr.closure_blockers(m.solution or "CODE_FIX", m.ref, list(m.paths), receipts, tree)
+        if why:
+            out[a] = why
+    return out
+
+
 def _record_probe_runs(probes: dict, bc) -> int:
     """Record one RUN fact per ticket whose closing conditions were just evaluated: passed = every condition held (a manual one does not count). Best effort: before the `probes` phase is applied, or if the
     login is missing, nothing is recorded and a ticket that an impact note invalidated simply stays blocked. Returns how many RUN facts were new."""
@@ -409,12 +436,13 @@ def main(argv: list | None = None) -> int:
         deploys = {r for _ref, r in bc.ops_event_keys("DEPLOY")} if bc.autonomy_store_present() else set()
         cycles = {r for _ref, r in bc.ops_event_keys("CYCLE")} if bc.autonomy_store_present() else set()
         probes, incident, rfd_b, del_b = _gather_gates(candidates, tickets, bc, cfg, record=bool(args.apply and mode != "OFF"))
+        receipt_b = _receipt_blockers(candidates, tickets, cfg)
     except Exception as exc:                                                 # noqa: BLE001
         print(f"error: could not read the facts: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
         return RC_USAGE
     event_aps = {a for a in cited if tickets.get(a, {}).get("status") == "CLOSED"}
     facts = ap_mod.Facts(tickets=tickets, merges={t: [mo for _m, mo in v] for t, v in candidates.items()}, deploys=deploys, cycles=cycles, probes=probes, incident=incident,
-                         rfd_blockers=rfd_b, delivery_blockers=del_b, citations={a: cited[a] for a in event_aps}, closed_at=closed_at, blockers=blockers, revisits=revisits,
+                         rfd_blockers=rfd_b, delivery_blockers=del_b, receipt_blockers=receipt_b, citations={a: cited[a] for a in event_aps}, closed_at=closed_at, blockers=blockers, revisits=revisits,
                          reworked=reworked, today=date.today())
     decisions = ap_mod.decide(facts) if events_ready else [d for d in ap_mod.decide(facts) if d.action not in (ap_mod.REOPEN, ap_mod.UNBLOCK, ap_mod.UNDEFER)]
     for d in decisions:

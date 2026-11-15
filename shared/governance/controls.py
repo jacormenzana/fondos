@@ -145,6 +145,10 @@ CONTROLS = (
             "the promotion record (ingestion_log, same transaction as the promotion) cites the audit run, config hash, exception grants "
             "and the two-pillar verdict line (each pillar's state and the decision)",
             BLOCK, SOURCE_CODE + "shared.governance.orchestrator.verdict_line", STATUS_ENFORCED, deploy_consequence=RECORD),
+    Control("T-RECEIPT-SCOPE", PILLAR_TECHNICAL, "Receipt scope of a CODE_FIX / DATA_FIX closure", "governance pipeline (autopilot, close_release)",
+            "a CODE_FIX or DATA_FIX closure needs a local receipt (intact, passed) whose scope covers every changed path (recomputed from the paths) and that ran at least one test; "
+            "a documents-only delivery is not a code or data fix (FND-0388; the incident was FND-0280); evaluated at ticket closure, never at promotion or deploy",
+            BLOCK, SOURCE_CODE + "shared.delivery_receipt.closure_blockers", STATUS_ENFORCED),
     # ---- Pillar DATA -----------------------------------------------------------------------------------------------------------
     Control("D-FRESHNESS", PILLAR_DATA, "Inputs are fresh", _OWNER_PROMOTION,
             "the P3 data-freshness gate (shared.config.P3_FRESHNESS_MAX_AGE_DAYS) reports no stale input",

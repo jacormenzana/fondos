@@ -61,6 +61,43 @@ def incident_gate(tickets: list, incidents: list, table_present: bool, loop_enab
     return rel.incident_gate(tickets, incidents, table_present, loop_enabled)
 
 
+def delivery_facts(log_text: str, tickets: list, paths_of) -> dict:
+    """{ticket: (delivering commit, paths)} from `git log --format=%H%x1f%B%x1e` text (newest first): the commits whose Refs: / Closes: trailers cite the ticket. `paths` = the files of every such commit; the delivering
+    commit = the newest of them that changed a code or data path (None when none did, which T-RECEIPT-SCOPE reads as a documents-only delivery). A ticket no commit cites is absent. Pure given `paths_of(sha)`."""
+    from shared import backlog_gate as gate
+    from shared.backlog_autopilot import is_code_path
+    cites: dict = {t: [] for t in tickets}
+    for rec in str(log_text or "").split("\x1e"):
+        sha, _sep, body = rec.strip().partition("\x1f")
+        if not sha:
+            continue
+        m = gate.parse_message(body)
+        for t in tickets:
+            if t in m.refs or t in m.closes:
+                cites[t].append(sha)
+    out: dict = {}
+    for t, shas in cites.items():
+        if not shas:
+            continue
+        files = {sha: list(paths_of(sha)) for sha in shas}
+        coded = [sha for sha in shas if any(is_code_path(p) for p in files[sha])]
+        out[t] = (coded[0] if coded else None, sorted({p for f in files.values() for p in f}))
+    return out
+
+
+def receipt_scope_gate(tickets: list, facts: dict, receipts: list, tree_of) -> list:
+    """Control T-RECEIPT-SCOPE (FND-0388): reasons, as `FND-nnnn: reason`, that a CODE_FIX closure is refused (this tool closes as CODE_FIX). A ticket no commit cites is not evaluated here (an operational or analysis
+    closure has no delivering commit to judge). Pure (the rule is shared.delivery_receipt.closure_blockers, the one the autopilot applies)."""
+    from shared import delivery_receipt as dr
+    why = []
+    for t in tickets:
+        if t not in facts:
+            continue
+        sha, paths = facts[t]
+        why += [f"{t}: {r}" for r in dr.closure_blockers("CODE_FIX", sha or "", paths, receipts, tree_of)]
+    return why
+
+
 def main(argv: "list | None" = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--release", required=True)
@@ -108,6 +145,28 @@ def main(argv: "list | None" = None) -> int:
         for r in refusal:
             print(f"  - {r}")
         return RC_REFUSED
+
+    if not cfg.BACKLOG_GITHUB_EVIDENCE_ENABLED:                  # local delivery mode: the receipts are the evidence (FND-0388, T-RECEIPT-SCOPE)
+        import subprocess
+        sys.path.insert(0, str(ROOT / "scripts" / "gov" / "delivery"))
+        import delivery_attest as da
+
+        def _git(*a):
+            return subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+        try:
+            facts = delivery_facts(_git("log", "--first-parent", "-n", "600", "--format=%H%x1f%B%x1e", "HEAD"), tickets,
+                                   lambda sha: [p for p in _git("show", "--name-only", "--format=", sha).splitlines() if p])
+            refusal = receipt_scope_gate(tickets, facts, da.read_receipts(da.RECEIPTS), da.tree_of(ROOT))
+        except Exception as exc:                                 # noqa: BLE001 -- cannot read git or the receipts: fail closed
+            refusal = [f"the delivery commits or the local receipts could not be read ({type(exc).__name__}: {str(exc)[:120]})"]
+        if refusal:
+            print("REFUSED by the receipt-scope control (T-RECEIPT-SCOPE):")
+            for r in refusal:
+                print(f"  - {r}")
+            return RC_REFUSED
+        for t in tickets:
+            if t not in facts:
+                print(f"  note: no commit cites {t}: T-RECEIPT-SCOPE not evaluated for it")
 
     with psycopg.connect(dsn) as conn:
         cur = conn.cursor()
