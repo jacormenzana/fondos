@@ -31,6 +31,23 @@ def test_every_ticket_is_pinned_to_a_commit_or_a_dependency():
         assert re.fullmatch(r"FND-\d{4}", tid)
 
 
+def test_the_flag_probe_reads_switches_by_literal_name_and_the_list_covers_every_switch_of_spec():
+    """FND-0423: `getattr(cfg, name)` with a computed name made every module importing the probe depend on ANY change of shared/config.py for the impact selector. The probe now draws each switch from an
+    inline literal list; this test keeps that list equal to what SPEC asks for, and an unknown switch is an error, never a silent None."""
+    import ast
+    import pytest
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "rfd_matrix_probe.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "probe_flag")
+    loop = next(n for n in ast.walk(fn) if isinstance(n, ast.For))
+    listed = {e.value for e in loop.iter.elts}
+    assert {p[1] for probes in m.SPEC.values() for p in probes if p[0] == "flag"} <= listed
+    assert all(re.fullmatch(r"[A-Z0-9_]+_ENABLED", n) for n in listed)
+    ok, text = m.probe_flag("RATIO_VOL_FLOOR_ENABLED", True)
+    assert ok is True and "RATIO_VOL_FLOOR_ENABLED = True" in text
+    with pytest.raises(ValueError):
+        m.probe_flag("SOME_OTHER_ENABLED", True)
+
+
 def test_the_dormant_flag_tickets_need_their_flag_on_and_a_recompute_by_the_owner():
     for tid in ("FND-0240", "FND-0241", "FND-0242"):
         kinds = [p[0] for p in m.SPEC[tid]]

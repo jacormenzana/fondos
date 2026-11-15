@@ -175,10 +175,17 @@ def probe_pushed(sha: str) -> tuple:
 
 
 def probe_flag(name: str, want: bool) -> tuple:
+    """`flag`: a switch of shared/config.py has the value the condition wants. Each switch is read by its LITERAL name, drawn from the inline list below (FND-0423): a read by a computed name (`getattr(cfg, name)`)
+    makes every module that imports this one depend on ANY change of shared/config.py for the impact selector (shared/test_impact.py), and the cycle report now imports this module, which would pull the launcher
+    end-to-end tests into every config change. A switch a new condition needs is added to the list, with its test (tests/test_rfd_matrix_probe.py checks the list covers every switch of SPEC)."""
     sys.path.insert(0, str(ROOT))
     import shared.config as cfg
-    have = getattr(cfg, name, None)
-    return (have is want), f"{name} = {have} (needs {want})"
+    for known in ("ANNUALIZATION_INTERVAL_ENABLED", "CAPTURE_MONTH_END_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
+                  "MACRO_VIF_ITERATIVE_ENABLED", "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "RATIO_VOL_FLOOR_ENABLED", "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED"):
+        if known == name:
+            have = getattr(cfg, known, None)
+            return (have is want), f"{name} = {have} (needs {want})"
+    raise ValueError(f"flag {name!r} is not one the probe may read: add it to the literal list of probe_flag (with its test)")
 
 
 def probe_absent_in(rel: str, text: str) -> tuple:
