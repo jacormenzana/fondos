@@ -99,6 +99,8 @@ def test_every_test_runs_with_the_test_identity_and_acting_as_restores_it():
 def test_the_footprint_check_fails_the_session_when_the_repository_log_is_touched(tmp_path, monkeypatch):
     fake = tmp_path / "backlog_autolog_fallback.jsonl"
     monkeypatch.setattr(sb, "REPO_FALLBACK_LOG", fake)
+    monkeypatch.setattr(sb, "_state", {})        # the hooks below store their baseline in module state: without this the REAL session's baseline is overwritten with the fake file's (None) and the real
+                                                 # sessionfinish then reports a footprint whenever the repository log exists (seen 2026-11-15 on the live tree, a false rc 1 of one shard)
     monkeypatch.delenv("FONDOS_TESTS_SKIP_FOOTPRINT_CHECK", raising=False)
     clean, dirty = SimpleNamespace(exitstatus=0), SimpleNamespace(exitstatus=0)
     sb.pytest_sessionstart(clean)

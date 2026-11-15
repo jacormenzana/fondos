@@ -81,6 +81,20 @@ def pg_session_conn() -> Iterator["psycopg.Connection"]:
         conn.close()
 
 
+def _private_schema_first(conn: "psycopg.Connection") -> str:
+    """FND-0400 (the deadlock of the receipt of 2026-11-15): tests that use the shared `pg_conn` create tables with UNQUALIFIED names (`CREATE TABLE fund_master ...`), and the concurrent shards of a sharded
+    run (`run_pg_tests.py --shards`) share ONE database, so every shard created the same names in the same default schema. The catalog's unique index on (type name, schema) then makes one shard wait for the
+    other's uncommitted CREATE and, with the creates in a different order, deadlock (`DeadlockDetected` in `pg_type_typname_nsp_index`, a test that passes alone). Each TEST now creates its own uniquely named
+    schema and puts it FIRST in its `search_path`: an unqualified CREATE lands in the private schema and cannot collide with another process, while everything that already exists keeps resolving through the
+    previous path (it stays behind the private schema). It runs INSIDE the test's savepoint, so the schema and the SET are undone by the same ROLLBACK TO SAVEPOINT that discards the test's tables: nothing is
+    left behind, and the sibling fixture `pg_conn_module_schema`, which rolls the shared connection back and resets its search_path, cannot erase it for a later test. Returns the schema name."""
+    schema = f"pgtest_s_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    previous = conn.execute("SHOW search_path").fetchone()[0]
+    conn.execute(f'CREATE SCHEMA "{schema}"')
+    conn.execute(f'SET search_path = "{schema}", {previous}')
+    return schema
+
+
 @pytest.fixture()
 def pg_conn(pg_session_conn: "psycopg.Connection") -> Iterator["psycopg.Connection"]:
     """DEFAULT fixture for PG-backed tests. Wraps the test in an explicit SAVEPOINT that is always
@@ -107,6 +121,7 @@ def pg_conn(pg_session_conn: "psycopg.Connection") -> Iterator["psycopg.Connecti
     savepoint = f"pytest_sp_{uuid.uuid4().hex[:8]}"
     conn.execute(f"SAVEPOINT {savepoint}")
     try:
+        _private_schema_first(conn)                  # FND-0400: unqualified CREATE TABLE of a test cannot collide with another shard
         yield conn
     finally:
         conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")

@@ -47,7 +47,7 @@ def test_pg_conn_rolls_back_between_tests_part2(pg_conn):
     a fixture that LOOKS like it isolates tests but silently doesn't, e.g. because ROLLBACK TO
     SAVEPOINT was misspelled and swallowed, or because release order matters and got it backwards)."""
     row = pg_conn.execute(
-        "SELECT to_regclass('public.pytest_smoke_isolation')"
+        "SELECT to_regclass('pytest_smoke_isolation')"          # unqualified: the table lives in the session's private schema (FND-0400), not in public
     ).fetchone()
     assert row == (None,), (
         "pytest_smoke_isolation still exists — savepoint rollback did not discard the previous "
@@ -98,3 +98,48 @@ def test_skips_cleanly_without_dsn(monkeypatch):
 
     with pytest.raises(pytest.skip.Exception):
         _require_pg()
+
+
+# ---- FND-0400: a private schema per session, so concurrent shards cannot collide on unqualified CREATE TABLE ----------------------------------------------------
+
+def test_an_unqualified_create_table_lands_in_the_sessions_private_schema(pg_conn):
+    pg_conn.execute("CREATE TABLE pytest_private_probe (n integer)")
+    schema = pg_conn.execute(
+        "SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'pytest_private_probe'"
+    ).fetchone()[0]
+    assert schema.startswith("pgtest_s_") and schema != "public"
+    assert pg_conn.execute("SHOW search_path").fetchone()[0].split(",")[0].strip().strip('"') == schema
+
+
+def test_two_sessions_can_create_the_same_unqualified_table_at_the_same_time():
+    """The regression of the receipt of 2026-11-15: two processes of one sharded run create the same table names in the same database. With a private schema per session neither waits for the other;
+    the control shows that the SAME names in `public` do block (the mechanism the deadlock came from), so the test cannot pass vacuously."""
+    import psycopg
+    from shared.testing.pg_fixtures import _private_schema_first, _require_pg
+
+    dsn = _require_pg()
+    opened = []
+
+    def connect():
+        c = psycopg.connect(dsn, autocommit=False)
+        opened.append(c)
+        c.execute("SET lock_timeout = '1500ms'")
+        return c
+
+    try:
+        a, b = connect(), connect()
+        _private_schema_first(a)
+        _private_schema_first(b)
+        a.execute("CREATE TABLE pytest_collision_probe (n integer)")
+        b.execute("CREATE TABLE pytest_collision_probe (n integer)")          # no wait, no error: different schemas
+
+        c, d = connect(), connect()                                            # control: the same name in the shared schema
+        c.execute("CREATE TABLE public.pytest_collision_control (n integer)")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            d.execute("CREATE TABLE public.pytest_collision_control (n integer)")
+    finally:
+        for conn in opened:
+            try:
+                conn.rollback()
+            finally:
+                conn.close()
