@@ -81,7 +81,10 @@ def test_excess_is_the_annualised_difference_and_the_peer_mean_ignores_row_order
     assert a["momentum_3y"] == pytest.approx(own - float(np.mean(values)), abs=1e-12)
 
 
-def test_history_must_span_the_window_and_gaps_use_the_same_date_window():
+def test_history_must_span_the_window_and_gaps_use_the_same_date_window(monkeypatch):
+    from shared import config
+    # the by-dates momentum of a gappy window is the subject; the coverage rule (FND-0427) refuses a window with a 6-month hole, so it is OFF here (its own tests are in test_window_coverage_ytd_fnd0426_0427.py)
+    monkeypatch.setattr(config, "ROLLING_WINDOW_COVERAGE_ENABLED", False, raising=False)
     short = _nav(months=30)                                                      # 2.5 years: no 3-year momentum, still a 1-year one
     conn = _Conn({"rolling_1y": _peers(0.05), "rolling_3y": _peers(0.05)})
     out = {m for m, _, _ in mom.compute_momentum("F", "Mixtos", short, conn)}

@@ -204,7 +204,9 @@ def test_without_dates_the_switch_cannot_change_anything(by_dates):
 
 
 # ------------------------------------------------------------------ rolling windows on a series with a gap
-def test_rolling_return_of_a_gappy_window_uses_the_calendar_span(by_dates):
+def test_rolling_return_of_a_gappy_window_uses_the_calendar_span(by_dates, monkeypatch):
+    # this test pins the ANNUALIZATION convention of a window with a hole; the coverage rule (FND-0427) would not publish such a window at all, so it is OFF here
+    monkeypatch.setattr(config, "ROLLING_WINDOW_COVERAGE_ENABLED", False, raising=False)
     df = _frame(40, 15, skip={14, 15, 16, 17, 18})                                    # 5 missing months inside a 12-month window
     kw = dict(rolling_windows={"rolling_1y": 12}, min_obs=5, risk_free_rate=RF)
     by_dates(False)

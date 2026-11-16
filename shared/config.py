@@ -762,14 +762,14 @@ ROLLING_WINDOWS: dict = {
 # Measured 2026-11-15: 544 claims on 272 funds, 0 mismatches. Read-only on the data; OFF skips the gate, never the columns.
 REPORT_RECONCILIATION_ENABLED: bool = True
 REPORT_RECONCILIATION_TOLERANCE_BP: float = 5.0
-ROLLING_WINDOW_COVERAGE_ENABLED: bool = False
+ROLLING_WINDOW_COVERAGE_ENABLED: bool = True      # ON with CALC_VERSION 20261116 (owner order 2026-11-16, FND-0427)
 ROLLING_WINDOW_COVERAGE_TOLERANCE_DAYS: int = 35
 
 # FND-0426 (selection-quality package I): the `ytd` horizon documented in SCHEMA_REFERENCE had no producer. `returns.ytd_return` is the cumulative (never annualized)
 # nominal and real return since the last NAV on or before the prior Dec 31, which must lie within YTD_BASE_MAX_STALENESS_BDAYS business days of it (else no row); a fund
 # whose first NAV is in the current year gets the return since its first NAV under metric_version 'ytd_partial'. Written as metric `return_cum`, horizon `ytd` by the risk
 # family. A P2 bundle flag on that family (new rows for every fund on the next recompute); OFF = nothing is written.
-YTD_METRIC_ENABLED: bool = False
+YTD_METRIC_ENABLED: bool = True      # ON with CALC_VERSION 20261116 (owner order 2026-11-16, FND-0426)
 YTD_BASE_MAX_STALENESS_BDAYS: int = 5
 
 # ============================================================

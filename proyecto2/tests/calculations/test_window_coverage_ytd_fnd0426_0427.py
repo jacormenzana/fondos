@@ -108,11 +108,11 @@ class TestAdmissibleSwitch:
         assert not rolling_window_admissible(young, 120, min_rows=12)
         assert rolling_window_admissible(young, 36, min_rows=12)
 
-    def test_the_new_switches_ship_off_and_are_registered_bundle_flags(self):
+    def test_the_new_switches_are_on_since_the_recompute_and_registered_bundle_flags(self):
         from shared import config
         from src.utils.family_versions import FLAG_FAMILIES
         for flag in ("ROLLING_WINDOW_COVERAGE_ENABLED", "YTD_METRIC_ENABLED"):
-            assert getattr(config, flag) is False
+            assert getattr(config, flag) is True                                       # ON with CALC_VERSION 20261116 (owner order 2026-11-16)
             assert flag in config.P2_BUNDLE_FLAGS and flag in FLAG_FAMILIES
 
 
