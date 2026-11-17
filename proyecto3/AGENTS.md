@@ -26,6 +26,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `pit_oos.py` | `proyecto3/src` |
 | `pit_peer_metrics.py` | `proyecto3/src` |
 | `pit_run.py` | `proyecto3/src` |
+| `pit_selection_test.py` | `proyecto3/src` |
 | `pit_short_horizon.py` | `proyecto3/src` |
 | `pit_value.py` | `proyecto3/src` |
 | `portfolio_builder.py` | `proyecto3/src` |
