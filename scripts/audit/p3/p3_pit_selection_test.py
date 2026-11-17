@@ -11,7 +11,7 @@ Read-only on the database (it reads a saved PIT run, never the database) and BLI
 
     python scripts/audit/p3/p3_pit_selection_test.py --run-dir out/reports/pit_backtest/<STAMP> [--perms 1000] [--reps 500]
 
-Output: out/reports/wp5/<stamp>/wp5_checks.json and wp5_checks.md. Exit codes: 0 both checks done and passed, 1 a control failed, 3 untestable, 2 usage or missing input.
+Output: out/reports/wp5/<stamp>/wp5_checks.json and wp5_checks.md. Exit codes: 0 both checks done and passed, 1 a control failed, 3 untestable (with `--diagnostic` the controls still run), 2 usage or missing input.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def render_md(r: dict) -> str:
              f"- Locked `MIN_MEANINGFUL_DELTA_SHARPE` {r['min_delta']:.2f}: **{'TESTABLE' if r['testable'] else 'UNTESTABLE - stop'}**.", ""]
     if r.get("controls"):
         p, q = r["controls"]["permutation"], r["controls"]["planted"]
-        lines += ["## WP5.1 controls", "",
+        lines += ["## WP5.1 controls" + (" - DIAGNOSTIC (the WP5.2 stop rule had fired; not part of a verdict)" if r["controls"].get("diagnostic") else ""), "",
                   f"- **Permuted labels** ({p['n_perm']} runs): PASS rate {p['pass_rate']:.3f} ({p['pass_count']} of {p['n_perm']}); Wilson 95 % upper limit {p['pass_rate_wilson95_upper']:.3f}; rule PASS rate <= alpha {p['alpha']}: **{'MET' if p['meets_rule_rate_le_alpha'] else 'NOT MET'}**. SD of the null estimate {p['null_estimate_sd']:.4f}, mean bootstrap SE {p['mean_bootstrap_se']:.4f}.",
                   f"- **Planted alpha** ({q['n_rep']} replications, {q['plant_share']:.0%} of families, outcome shift {q['delta_on_outcome']:.4f}, expected spread {q['delta_on_outcome'] * q['plant_share'] / T.TOP_FRAC:.4f}): detection rate {q['detection_rate']:.3f} against the target {q['detection_target']:.2f}: **{'MET' if q['meets_target'] else 'NOT MET'}**; recovered mean spread {q['mean_recovered_spread']:.4f}.", ""]
     else:
@@ -91,6 +91,7 @@ def main(argv=None) -> int:
     ap.add_argument("--power", type=float, default=0.80)
     ap.add_argument("--min-delta", type=float, default=0.10)
     ap.add_argument("--detect-target", type=float, default=0.80)
+    ap.add_argument("--diagnostic", action="store_true", help="run the WP5.1 controls even when the WP5.2 stop rule fired: the result is a DIAGNOSTIC of the M2 machinery, never part of a verdict")
     a = ap.parse_args(argv)
     run_dir = Path(a.run_dir)
     try:
@@ -110,14 +111,16 @@ def main(argv=None) -> int:
     result = {"feasibility_m1_block_sensitivity": sens, "run_dir": str(run_dir), "git": run["manifest"].get("git_commit"), "generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "seed": a.seed, "min_delta": a.min_delta,
               "feasibility": feas, "feasibility_m1": m1, "testable": testable, "controls": None}
     rc = RC_OK
-    if testable:
+    if testable or a.diagnostic:
         delta_outcome = feas["mde_spread"] * T.TOP_FRAC / T.PLANT_SHARE            # planted funds are half of the top quintile, so the shift is twice the target spread
         t1 = time.time()
         perm = T.permutation_control(panel, boot, a.perms, alpha=a.alpha, seed=a.seed)
         plant = T.planted_control(panel, boot, delta_outcome, a.reps, alpha=a.alpha, target=a.detect_target, seed=a.seed)
-        result["controls"] = {"permutation": perm, "planted": plant, "seconds": round(time.time() - t1, 1)}
+        result["controls"] = {"permutation": perm, "planted": plant, "seconds": round(time.time() - t1, 1), "diagnostic": not testable}
         if not (perm["meets_rule_rate_le_alpha"] and plant["meets_target"]):
             rc = RC_CONTROL_FAILED
+        elif not testable:
+            rc = RC_UNTESTABLE
     else:
         rc = RC_UNTESTABLE
     out = Path(a.out_dir) if a.out_dir else ROOT / "out" / "reports" / "wp5" / datetime.now().strftime("%Y%m%d_%H%M%S")

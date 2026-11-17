@@ -12,7 +12,7 @@ Pre-registration: `doc/decisiones/PREREG_FND-0429_WP5.md` (signed off 2026-11-17
 | **Minimum detectable selection spread** (alpha 0.05, power 80 %) | **0.091** outcome units (12-month return per unit of trailing volatility) | no minimum meaningful selection spread is locked |
 | **Minimum detectable Sharpe difference** (M1) | **0.233** (block 3: 0.220; block 12: 0.231); 90 % interval half-width 0.154 over 261 months | against the locked `MIN_MEANINGFUL_DELTA_SHARPE` **0.10** |
 
-**Outcome under the pre-registered rule (plan 5.2): the minimum detectable Sharpe difference exceeds 0.10, so the question is UNTESTABLE on this history at the portfolio level. The harness stopped; WP5.1 controls were NOT run.** Nothing here is a PIVOT or a CONTINUE.
+**Outcome under the pre-registered rule (plan 5.2): the minimum detectable Sharpe difference exceeds 0.10, so the question is UNTESTABLE on this history at the PORTFOLIO level. The harness stopped. Amendment 1 (section 4) then moved the decisive test to the selection level, where it is testable.** Nothing here is a PIVOT or a CONTINUE.
 
 ## 2. Correction of the draft
 The decision block of the draft derived a minimum detectable difference of about 0.088 at 80 % power from the plan's +-0.058 half-width, and concluded that 0.10 was testable. That half-width is the one measured for the FND-0193 comparisons of near-identical portfolios (the champion with and without a layer). The champion against the pool is a wider paired difference: measured half-width +-0.154. The owner locked 0.10 reading that derivation; the measurement overturns it.
@@ -22,10 +22,9 @@ The decision block of the draft derived a minimum detectable difference of about
 - The independent-window counts (about 21 twelve-month, about 8 thirty-six-month) match the plan's context.
 - The M2 minimum (0.091) is in Sharpe-like outcome units and has no locked threshold to be compared with.
 
-## 4. Options for the owner (none taken)
-- **A. Accept "untestable on the history".** FND-0429 cannot be passed by the PIT alone; the blind months from 2026-11 (FND-0299, first checkpoint 2028-10) are the only way to resolve it. The P3 refactor would then be scoped so that it does not depend on the scoring verdict.
-- **B. Move the primary test to selection level (M2)** with a locked minimum meaningful selection spread, as a dated amendment written before any M2 estimate exists. The harness already measures that spread's detectability (0.091).
-- **C. Run the WP5.1 controls as a diagnostic** (about 2 minutes) to validate the M2 machinery without a verdict.
-- **D. Remove the proxy** (PIT re-run at band 0.10, pool through the cost layer, about 10 minutes) before deciding.
+## 4. WP5.1 controls (diagnostic) and the owner's decision
+- **Controls run as a DIAGNOSTIC** (`--diagnostic`, 2026-11-17, `out/reports/wp5/20261117_210318`, 1,000 permutations, 500 plants, seed 12345): permuted labels 3 of 1,000 PASS (rate 0.003, Wilson 95 % upper limit 0.009, rule rate <= 0.05 MET: the test is conservative, undersized, because the family-cluster bootstrap includes variation between families that random picks lack); planted alpha 497 of 500 detected at an outcome shift 0.182 (0.994, target 0.80 MET; it overstates power for the real, persistent scores).
+- **Option B taken (owner, 2026-11-17):** Amendment 1 (`doc/decisiones/PREREG_FND-0429_WP5_AMENDMENT1.md`) moves the stop rule to the selection level with `MIN_MEANINGFUL_SELECTION_SPREAD` = 0.10 [LOCKED]; the minimum detectable spread 0.091 is inside it, so the question is TESTABLE; M1 stays reported and never decisive; this diagnostic run is adopted as the WP5.1 result.
+- Options A (accept untestable) and D (remove the M1 proxy) were not taken.
 
-The P3 refactor stays paused behind FND-0429 until the owner chooses.
+The P3 refactor stays paused behind FND-0429 until the M2 verdict is recorded.
