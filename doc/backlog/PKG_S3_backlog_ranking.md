@@ -1,55 +1,61 @@
-# Backlog ranking for FND-0425 (2026-11-15) - ONE page, rewritten in place
+# Backlog ranking for FND-0425 (rewritten 2026-11-17) - ONE page, rewritten in place
 
-Read-only analysis (skill `backlog-priorizer`). Nothing was closed, moved or edited by it. Facts are marked **[F]** (read from the backlog or the database today), inferences **[I]**, hypotheses **[H]**. Owner decisions are listed in section 6.
+Read-only analysis (skill `backlog-priorizer`). The analysis moved nothing; the closures and the ordering below are the owner's rulings. Facts are marked **[F]** (read from the backlog, the code or the database), inferences **[I]**, hypotheses **[H]**.
 
-## 1. Executive verdict
-- **Risk: LOW-MEDIUM. No open item is a live reliability or data-integrity failure [F]**: the two CRITICAL audit incidents (0281, 0282) are accepted residuals until 2027-01-15, and one PRODUCTION fund carries a statistical ALARM.
-- **45 open items [F]**: 34 DEFERRED (each with a dated review), 5 IN_PROGRESS, 3 OPEN (one is FND-0425 itself), 2 BLOCKED, 1 TODO. Only about 10 are live work; the rest is parked by order. The 5 closures of today (0354, 0390, 0364, 0388, 0267) are already reflected.
-- **7 clusters: 1 High (a decision, not a defect), 2 Medium, 4 Low.**
-- **Most consequential systemic point:** the P3 selection / risk cluster (0158, 0257, 0222, 0304, 0299, 0206, 0306) is the only one that touches fund-selection decisions and the 15 % drawdown mandate, and it is exactly what the P3 refactor would absorb.
-- **Decision required: confirm "P3 refactor first".** No other group is significant enough to outrank it. Then close the 4 candidates in section 6.
+## 1. Owner ordering (ruling 2026-11-17)
+1. **FND-0427 and FND-0428 (HIGH) first:** metric and report correctness take precedence over any refactoring.
+2. **FND-0426 (MEDIUM) after the two HIGH fixes:** the `ytd` horizon is restored once core metric and report integrity is settled.
+3. **FND-0429 (MEDIUM) is a GATE before the P3 refactor:** validate whether the scoring layer beats a baseline before executing "P3 first". The refactor scope follows the verdict.
+4. Everything else keeps the order of section 3.
 
-## 2. Evidence coverage
+## 2. Executive verdict
+- **Risk: MEDIUM.** The two HIGH items are about published numbers (rolling windows the NAV history does not cover; an excess return that mixes a real and a nominal figure), not about live selection failures **[F]**.
+- **45 open items [F]**: 30 DEFERRED with review dates, 6 IN_PROGRESS, 6 OPEN, 2 BLOCKED, 1 TODO (read at the time of writing; another session moves tickets of Package I meanwhile). The 9 closures of 2026-11-15 (0354, 0390, 0364, 0388, 0267, 0395, 0396 and the four of 17:14: 0033, 0035, 0180, 0206) are reflected.
+- **Package I code is already delivered by another session [F]** (commits `02c885e`, `c926984`, `209af91`, `b42ee0f`: rolling-window coverage rule, YTD metric, scoped report headers; `CALC_VERSION` 20261116, recomputed). 0426, 0427 and 0428 are still OPEN: what is left for them is **verification against the live data and the closing probes**, not new construction.
+- **Decision required:** confirm the verification work on 0427 / 0428 / 0426 (section 5, step 1-2) and run the full-universe PIT that opens the FND-0429 gate (owner-run, about 20-25 minutes cold).
+
+## 3. Evidence coverage
 | Source | Scope | Retrieved | Limitations | Completeness |
 |---|---|---|---|---|
-| `gestion.backlog` (tickets) | all non-CLOSED, 2026-11-15 | 45 of 45 | none | complete |
-| ticket logs | last non-system log of 36 tickets | partial by design | older history not read | partial |
-| confirmed links | between open items | 8 CONFIRMED, 3 PROPOSED | the 3 PROPOSED were not read | complete for CONFIRMED |
-| `fund_metric_alerts` | 2026-07-31 .. 2026-11-15, aggregates only | 18,376 rows, 3,706 funds | **no ticket reference column**: alert to ticket correlation is not possible except through the ticket text; only two detection batches (2026-08-14, 2026-11-15) | complete (aggregates), no causal reading |
-| receipts / cycle | this session's receipts | 4 receipts | small sample | indicative |
+| `gestion.backlog` | all non-CLOSED, 2026-11-17 | 45 of 45 | none | complete |
+| ticket logs | last non-system log of the candidates | partial by design | older history not read | partial |
+| confirmed links | between open items | 8 CONFIRMED, 3 PROPOSED | the 3 PROPOSED not read | complete for CONFIRMED |
+| `fund_metric_alerts` | 2026-07-31 .. 2026-11-15, aggregates | 18,376 rows, 3,706 funds | no ticket reference column: no alert-to-ticket correlation | complete (aggregates), no causal reading |
+| `fund_metrics` horizons | `ytd` and `rolling_*` return_ann, today | counts only | counts, not a value audit | indicative |
 
-## 3. Prioritised clusters
-| Rank | Cluster / suspected root cause | Priority | Items | Alert evidence | Cascading impact | Confidence |
-|---|---|---|---|---|---|---|
-| 1 | **P3 selection and risk policy still open**: hysteresis shadow (live OFF), FX budget per sub-portfolio, Safe Mode, stress scenarios, forward holdout, baseline notes, promotion-gate lineage | **High (decision)** | 0158, 0257, 0222, 0304, 0299, 0206, 0306 | 1 PRODUCTION fund with ALARM [F]; alerts are category-percentile flags, no corroboration | every one is decided inside the P3 code the refactor rewrites | High |
-| 2 | **Delivery cost: full receipts for any shared/ or proyecto*/ change** (selector in SHADOW, cascading PG tests) | Medium | 0385, 0387, 0400 | none (not a data issue) | each package pays one 506-602 s receipt [F]; delays every other cluster | High |
-| 3 | **Manual and un-scheduled operations (D-0)** | Medium | 0100, 0248, 0326, 0090, 0239 | none | 0078 DEPENDS_ON 0100 [F]; 0248 is `[CARGA MANUAL]` | Medium |
-| 4 | **Cost and policy attribute residuals** (Package H / A tails, accepted residuals) | Low | 0384, 0410-0414, 0416-0418, 0421, 0424, 0281, 0282, 0415 | 295 ALARM rows have no value [F]; equals the 2026-08-14 batch count [I] | none recorded on PRODUCTION or DRAFT | Medium |
-| 5 | **Classification semantics** (derived, not discovered; legacy P1 rules) | Low | 0397, 0398, 0402, 0033, 0035, 0324, 0325, 0185 | none | 0397: IE00008TZ2E8 held at 5.5 % in PRODUCTION, owner NO GO unchanged [F] | Medium |
-| 6 | **Data provenance and coverage** | Low | 0167, 0182, 0209, 0078, 0389 | none | 0167: a bad Morningstar payload drops the fund, fail closed [F] | Low |
-| 7 | **Blocked by population** | Low | 0029 | none | 5 WRONG_DOC funds; out of scope by standing rule | High |
-| - | Unclustered | - | 0180, 0425 | - | 0180: empty unused table; 0425 is this task | - |
-
-## 4. Dependency map
-- **Explicit [F] (CONFIRMED links):** 0078 DEPENDS_ON 0100; 0033 OVERLAPS 0035; 0257 OVERLAPS 0158; 0325 RELATED 0257; 0239 RELATED 0167; 0239 RELATED 0222; 0402 RELATED 0397; 0402 RELATED 0398.
-- **From ticket text [F]:** 0400 was found by the mutation evidence of 0385 and 0387 is its symbol-level follow-up; 0306 waits for an event (a promotion attempt with a commit between build and audit); 0281 and 0282 stay open while their residual acceptance is active.
-- **Inferred [I]:** 0222 and 0304 are P3 roadmap items that depend on the shape of the refactor, not on each other.
+## 4. Prioritised clusters
+| Rank | Cluster | Priority | Items | Evidence | Confidence |
+|---|---|---|---|---|---|
+| 1 | **Published-number correctness (Package I)**: windows beyond the NAV history, real vs nominal excess in the monthly report | **High** | **0427, 0428** | 0427: rolling coverage is now close to the NAV history (see section 6) **[F]**; 0428: report fix committed (`02c885e`), not verified by this analysis | Medium |
+| 2 | **YTD horizon restored** | Medium | **0426** | horizon `ytd` now has 7,386 rows (`return_cum`, `20261116.20261019`); it had 0 **[F]** | Medium |
+| 3 | **Gate: does scoring beat a baseline** | Medium (gate) | **0429** | parked by its own text until Package I recomputed P2 (done 11-16 for 3,699 funds, 458 still on the old version) and the owner re-runs the full-universe PIT **[F]** | High |
+| 4 | **P3 selection and risk policy** (to execute after the gate) | High (decision) | 0158, 0257, 0222, 0304, 0299, 0306 | the shadow wrote 2 rows, ON arm equals PRODUCTION, no ruling basis yet **[F]** | High |
+| 5 | **Delivery cost** (full receipts of 506-602 s, selector in SHADOW) | Medium | 0385, 0387, 0400 | none (not a data issue) | High |
+| 6 | **Manual and unscheduled operations (D-0)** | Medium | 0100, 0248, 0326, 0090, 0239 | 0078 DEPENDS_ON 0100 **[F]** | Medium |
+| 7 | **Cost and policy attribute residuals** | Low | 0384, 0410-0414, 0416-0418, 0421, 0424, 0281, 0282, 0415 | 295 ALARM rows have no value: all from the 2026-08-14 batch, where every row has none; the 2026-11-15 batch has none missing; the table is keyed on (isin, metric, window) and rows the new run does not rewrite stay **[F]** (whether a consumer reads them as current was NOT checked) | Medium |
+| 8 | **Classification semantics** | Low | 0397, 0398, 0402, 0324, 0325, 0185 | 0397: IE00008TZ2E8 held at 5.5 % in PRODUCTION, owner NO GO unchanged **[F]** | Medium |
+| 9 | **Data provenance and coverage** | Low | 0167, 0182, 0209, 0078, 0389 | none | Low |
+| 10 | **Blocked by population** | Low | 0029 | 5 WRONG_DOC funds, out of scope by standing rule | High |
+| - | Unclustered | - | 0425 (this task) | - | - |
 
 ## 5. Roadmap
 | Sequence | Priority | Action | Items | Dependencies | Exit criteria | Residual risk |
 |---|---|---|---|---|---|---|
-| 0 | - | Owner closes the 4 candidates (section 6) | 0033, 0035, 0180, 0206 | owner | count 45 to 41 | none |
-| 1 | High | Define the P3 refactor scope and absorb cluster 1 into it; keep the `shadow_after_build` call | 0158, 0257, 0222, 0304 (0299 stays a dated tracker; 0306 waits its event) | owner scope | ONE refactor ticket replaces four; shadow rows still written | scope creep |
-| 2 | Medium | Earn the selector's narrower receipt (bounded change under 3 min), then close | 0385, 0387; 0400 cascade subclass stays open | a bounded change | one measured receipt, then close | full receipts stay the default until then |
-| 3 | Medium | Schedule the daily NAV load and harvest steps 1-3 when the owner lifts "not now" | 0100 (then 0078) | owner | task registered, one clean run | operator cost until then |
-| 4 | Low | Keep dated deferrals; review 2026-11-29 (0411, 0415, 0248) and 2026-12-15 (Package H residuals) | cluster 4, 6 | review dates | decide each on its date | none |
+| 1 | **High** | **Verify the Package I fixes on the live data, then close with evidence**: rolling windows only where the NAV history covers them; the report's excess uses like-for-like returns and says what each column is | 0427, 0428 | the code and recompute already done by the other session | per ticket: a read-only check of the stored rows (and the report) against the ticket's own figures, a closing condition that passes, then the `Closes:` route | 458 funds still on the old `CALC_VERSION` until the next cycle |
+| 2 | Medium | **Close the YTD item after step 1**: check `ytd` for the incident fund (NAV-derived YTD 3.09 % per the ticket) and for the NAV-short funds | 0426 | step 1 | the stored `ytd` value equals the NAV-derived one for the named fund, no value where there is no base | none known |
+| 3 | Medium | **Gate**: owner re-runs the full-universe PIT, then the selection-quality question is answered with hysteresis ON in both arms (champion vs equal-weight pool) | 0429 | steps 1-2 (the recompute), the owner's PIT run | a written verdict: the scoring layer adds net value or does not, at selection and portfolio level | the PIT window is the test set already used (blind months start 2026-11) |
+| 4 | High (decision) | **P3 refactor, scope set by the gate verdict**; keep the `shadow_after_build` call; absorb 0158, 0257, 0222, 0304 into one ticket | cluster 4 | step 3, owner scope | one refactor ticket replaces four; shadow rows still written | scope creep |
+| 5 | Medium | Earn the selector's narrower receipt, then close | 0385, 0387 (0400 cascade stays) | a bounded change | one measured receipt, then close | full receipts stay the default until then |
+| 6 | Medium | Schedule the daily NAV load and harvest when the owner lifts "not now" | 0100, then 0078 | owner | task registered, one clean run | operator cost until then |
+| 7 | Low | Keep dated deferrals: 2026-11-29 (0411, 0415, 0248), 2026-12-15 (Package H residuals) | clusters 7-9 | review dates | decide each on its date | none |
 
-## 6. Decisions and unresolved questions
-1. **P3 refactor first?** Recommended yes: the only cluster tied to selection and drawdown decisions, and it absorbs four tickets.
-2. **Close 4 candidates (owner console, forced REJECTED; an agent cannot).** Each needs a one-line owner OK:
-   - **0033 and 0035** (P1 v22 / v24 legacy items, OVERLAPS each other, revisit dates are the `DEFAULT_90D` placeholder, no recorded impact).
-   - **0180** (the table is empty and unused; its own text says the `db/pg/10_bronze.sql` comment already documents it).
-   - **0206** (interpretation notes with no deliverable, per its own deferral log).
-3. **0078 (short-window tactical metrics): confirm or drop.** Its spec is a draft "needing the owner's confirmation" (2026-09-25) and it DEPENDS_ON 0100.
-4. **Missing evidence:** an alert to ticket reference would let the next ranking correlate alerts with tickets instead of reading text.
-5. **Not touched:** 0281 and 0282 (CRITICAL residuals, accepted to 2027-01-15), 0299 (a tracker to 2028-09-01).
+## 6. Live checks behind steps 1-2 (2026-11-17, counts only)
+- `ytd`: 7,386 `return_cum` rows, all on `20261116.20261019`.
+- Rolling windows (nominal `return_ann`): 10y 2,549 funds against 2,571 funds with at least 120 monthly NAV rows; 5y 3,446 against 3,465 with at least 60; 1y 3,688, 2y 3,659, 3y 3,612. The small gaps are not explained here and belong to the verification of 0427.
+
+## 7. Decisions and unresolved questions
+1. **Confirm steps 1-2** as verification and closure work (the build is done), not as new construction.
+2. **FND-0429 gate:** the full-universe PIT re-run is yours; the verdict decides the scope of the P3 refactor **[I]** (if scoring adds no net value, the refactor is about simplification rather than extension).
+3. **FND-0078:** confirm or drop (draft spec, DEPENDS_ON 0100).
+4. **Not checked:** whether any consumer (the ALARM_WATCH gate, dashboards) reads the stale 2026-08-14 alert rows as current (cluster 7).
+5. **Not touched:** 0281 and 0282 (CRITICAL residuals accepted to 2027-01-15), 0299 (tracker to 2028-09-01).
