@@ -240,9 +240,11 @@ def probe_db(conn, kind: str, *args) -> tuple:
     if kind == "calc_share":
         src = (ROOT / "proyecto2/src/pipeline/run_pipeline.py").read_text(encoding="utf-8")
         calc = re.search(r'CALC_VERSION\s*(?::\s*str\s*)?=\s*["\'](\d+)["\']', src).group(1)
-        cur, total = conn.execute("SELECT COUNT(*) FILTER (WHERE algorithm_version = %s), COUNT(*) FROM fund_metrics", (calc,)).fetchone()
+        # FND-0427: a family with an epoch override stores `<CALC_VERSION>.<override>` (proyecto2/src/utils/family_versions.family_token), so an exact match counted 11.6 % of rows on a universe that
+        # was 99.5 % recomputed. Both forms are on the current CALC_VERSION.
+        cur, total = conn.execute("SELECT COUNT(*) FILTER (WHERE algorithm_version = %s OR algorithm_version LIKE %s), COUNT(*) FROM fund_metrics", (calc, calc + ".%")).fetchone()
         share = cur / total if total else 0.0
-        return share >= args[0], f"{share:.1%} of {total:,} fund_metrics rows are on CALC_VERSION {calc} (needs >= {args[0]:.0%})"
+        return share >= args[0], f"{share:.1%} of {total:,} fund_metrics rows are on CALC_VERSION {calc} (exact or family token {calc}.<epoch>; needs >= {args[0]:.0%})"
     if kind == "metric_absent":
         n = conn.execute("SELECT COUNT(*) FROM fund_metrics WHERE metric = %s", (args[0],)).fetchone()[0]
         return n == 0, f"{n} rows of metric {args[0]}"
