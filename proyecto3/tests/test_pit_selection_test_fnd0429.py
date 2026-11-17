@@ -141,3 +141,69 @@ def test_the_sharpe_difference_feasibility_returns_only_the_interval_width():
 
 def test_wilson_upper_bound_is_above_the_rate():
     assert T.wilson_upper(10, 200) > 0.05 and T.wilson_upper(0, 200) > 0.0
+
+
+# ---- the verdict path (Amendment 1) -----------------------------------------------------------------------------------------------------------------
+def test_forward_max_drawdown_follows_the_path_and_is_nan_with_a_hole():
+    idx = pd.date_range("2020-01-31", periods=6, freq="ME")
+    nav = pd.DataFrame({"A": [100.0, 110.0, 99.0, 105.0, 120.0, 118.0], "B": [100.0, 101.0, np.nan, 103.0, 104.0, 105.0]}, index=idx)
+    m = T.monthly_nav(nav)
+    dd = T.forward_max_drawdown(m, [int(m.index[0])], months=3)
+    assert dd["A"].iloc[0] == pytest.approx(99.0 / 110.0 - 1.0)                     # peak 110, trough 99 inside the 4-point path
+    assert np.isnan(dd["B"].iloc[0])                                                # a missing month: no drawdown, no fill
+
+
+def test_outcomes_carry_the_forward_drawdown_only_on_request():
+    m = T.monthly_nav(_nav(60))
+    a = [int(m.index[40])]
+    assert "mdd" not in T.outcomes_frame(m, a).columns
+    o = T.outcomes_frame(m, a, with_dd=True)
+    assert "mdd" in o.columns and (o["mdd"] <= 0).all()
+
+
+def test_the_nature_free_peers_keep_a_nature_offset_that_the_signed_peers_remove():
+    units, outcomes, fx = _synthetic(n_dates=24, n_fam=120, seed=21)
+    odd = outcomes["isin"].str[-4:].astype(int) % 2 == 1                              # the B nature
+    outcomes = outcomes.assign(outcome=outcomes["outcome"] + np.where(odd, 5.0, 0.0))
+    a = T.build_panel(units, outcomes, fx, peers="nature")
+    b = T.build_panel(units, outcomes, fx, peers="no_nature")
+    fam_odd = np.array([int(f[-4:]) % 2 == 1 for f in units["fund_family_id"]])
+    assert abs(np.nanmean(a.excess[fam_odd])) < 0.4                                    # centred inside its own nature
+    assert np.nanmean(b.excess[fam_odd]) > 1.5 and np.nanmean(b.excess[~fam_odd]) < -1.5       # the offset stays when the nature is not a peer criterion
+    with pytest.raises(ValueError):
+        T.build_panel(units, outcomes, fx, peers="other")
+
+
+def test_the_panel_carries_drawdown_excess_and_the_worst_decile_gap_when_outcomes_have_mdd():
+    units, outcomes, fx = _synthetic(n_dates=24, n_fam=90, seed=5)
+    rng = np.random.default_rng(1)
+    outcomes = outcomes.assign(mdd=-np.abs(rng.normal(0.05, 0.02, len(outcomes))))
+    p = T.build_panel(units, outcomes, fx)
+    assert p.excess_dd is not None and np.isfinite(p.excess_dd).all() and (p.q10_gap < 0).all()
+    r = T.m2_estimate(p, T.make_boot(p.n_dates, p.n_families, n_boot=200))
+    assert {"estimate", "se", "lower_bound", "dd_excess_mean", "q10_gap_mean"} <= set(r) and r["lower_bound"] < r["estimate"]
+
+
+def test_attrition_adjustment_only_lowers_the_estimate_and_can_flip_its_sign():
+    rows = T.attrition_adjusted({"estimate": 0.10, "se": 0.04, "q10_gap_mean": -2.0})
+    by = {r["rate"]: r for r in rows}
+    assert by[0.025]["estimate_adjusted"] == pytest.approx(0.975 * 0.10 - 0.025 * 2.0) and not by[0.025]["flips_sign"]
+    assert by[0.05]["estimate_adjusted"] == pytest.approx(0.95 * 0.10 - 0.05 * 2.0) and by[0.05]["flips_sign"]       # 0.095 - 0.100 < 0
+    assert all(r["estimate_adjusted"] < 0.10 for r in rows)
+
+
+def _m2(est, lower, dd=0.0):
+    return {"estimate": est, "lower_bound": lower, "se": 0.03, "dd_excess_mean": dd, "q10_gap_mean": -1.0}
+
+
+def test_the_outcome_rule_branches():
+    good = _m2(0.2, 0.1)
+    assert T.verdict(good, _m2(0.1, 0.0), _m2(0.18, 0.08), 0.006)["outcome"] == "CONTINUE"
+    assert T.verdict(_m2(0.2, -0.01), _m2(0.1, 0.0), _m2(0.2, -0.01), 0.006)["outcome"] == "INCONCLUSIVE"       # positive, lower bound not above zero
+    assert T.verdict(_m2(-0.05, -0.1), _m2(-0.1, -0.2), _m2(-0.04, -0.1), 0.006)["outcome"] == "PIVOT"          # not positive; the survivorship adjustment cannot flip it up
+    assert T.verdict(good, _m2(-0.1, -0.2), _m2(0.18, 0.08), 0.006)["outcome"] == "INCONCLUSIVE"                # 36-month sign differs
+    assert T.verdict(good, _m2(0.1, 0.0), _m2(0.1, -0.05), 0.006)["outcome"] == "INCONCLUSIVE"                  # the nature-free reading changes
+    assert T.verdict(_m2(0.2, 0.1, dd=-0.03), _m2(0.1, 0.0), _m2(0.2, 0.1, dd=-0.03), 0.006)["outcome"] == "INCONCLUSIVE"   # drawdown condition fails
+    assert T.verdict(good, _m2(0.1, 0.0), _m2(0.18, 0.08), 0.027)["outcome"] == "PIVOT"                          # champion drawdown worse than the pool by more than 2 pp
+    v = T.verdict(good, _m2(0.1, 0.0), _m2(0.18, 0.08), 0.006, m1_diff=-0.1)
+    assert v["outcome"] == "CONTINUE" and "CONSTRUCTION-LOSS" in v["note"] and T.verdict(good, _m2(0.1, 0.0), _m2(0.18, 0.08), 0.006, m1_diff=0.1)["note"] is None

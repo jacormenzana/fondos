@@ -11,8 +11,9 @@ charge). Peers: Fund_Nature x ex-ante volatility tercile x FX-exposure class, co
 The statistic is the pooled mean of those excesses over the top-quintile fund-months. Its standard error is the larger of a stationary block bootstrap over dates and a
 cluster bootstrap over families.
 
-BLINDNESS (a design rule, pinned by a test). The verdict is not produced here. The WP5.1 / WP5.2 code paths that touch the REAL scores call `bootstrap_se` only, which never
-computes or returns the point estimate; the point estimate of a real-score run is `estimate`, which no WP5.1 / WP5.2 path calls. The controls use permuted or planted scores.
+BLINDNESS (a design rule, pinned by a test). The WP5.1 / WP5.2 code paths that touch the REAL scores call `bootstrap_se` only, which never computes or returns the point estimate;
+the point estimate of a real-score run is `estimate`, which no WP5.1 / WP5.2 path calls. The controls use permuted or planted scores. The VERDICT path (`m2_estimate`, `verdict`,
+Amendment 1 of the pre-registration, owner order 2026-11-17) is the only one that reads the point estimate, and it is run once, after the amendment was committed.
 
 Every outcome uses month ordinals from shared.period_key (one period key, R-9) and never fills a missing month: a missing NAV month makes the return NaN.
 """
@@ -51,7 +52,22 @@ def monthly_nav(nav: pd.DataFrame) -> pd.DataFrame:
     return m.reindex(np.arange(int(m.index.min()), int(m.index.max()) + 1))
 
 
-def outcomes_frame(nav_m: pd.DataFrame, as_ords, fwd_months: int = FWD_MONTHS, vol_window: int = VOL_WINDOW, min_obs: int = MIN_VOL_OBS, vol_floor: float = VOL_FLOOR) -> pd.DataFrame:
+def forward_max_drawdown(nav_m: pd.DataFrame, as_ords, months: int = FWD_MONTHS) -> pd.DataFrame:
+    """Maximum drawdown (a negative number) of every fund's NAV path over the `months` months after each formation month, the path starting at the formation month itself. NaN when any
+    month of the path is missing (no fill). Returns the (len(as_ords) x funds) frame indexed by the ordinal."""
+    out = {}
+    for t in as_ords:
+        w = nav_m.loc[t:t + months]
+        if len(w) < months + 1:
+            continue
+        a = w.to_numpy(dtype=float)
+        peak = np.maximum.accumulate(a, axis=0)
+        out[t] = np.min(a / peak - 1.0, axis=0)
+    return pd.DataFrame.from_dict(out, orient="index", columns=nav_m.columns)
+
+
+def outcomes_frame(nav_m: pd.DataFrame, as_ords, fwd_months: int = FWD_MONTHS, vol_window: int = VOL_WINDOW, min_obs: int = MIN_VOL_OBS, vol_floor: float = VOL_FLOOR,
+                   with_dd: bool = False) -> pd.DataFrame:
     """Long frame (as_ord, isin, fwd, vol, outcome) for the formation months `as_ords`: fwd = NAV[t + fwd_months] / NAV[t] - 1; vol = std of the monthly returns of the `vol_window` months
     ending at t (at least `min_obs`), annualised; outcome = fwd / vol, NaN where vol < `vol_floor`. Rows without a finite outcome are dropped."""
     r = nav_m / nav_m.shift(1) - 1.0
@@ -61,7 +77,11 @@ def outcomes_frame(nav_m: pd.DataFrame, as_ords, fwd_months: int = FWD_MONTHS, v
     sel = np.asarray([o for o in np.asarray(as_ords).tolist() if o in out.index])
     f, v, o = fwd.loc[sel].to_numpy(), vol.loc[sel].to_numpy(), out.loc[sel].to_numpy()
     ti, ni = np.nonzero(np.isfinite(o))
-    return pd.DataFrame({"as_ord": sel[ti], "isin": nav_m.columns.to_numpy()[ni], "fwd": f[ti, ni], "vol": v[ti, ni], "outcome": o[ti, ni]})
+    frame = pd.DataFrame({"as_ord": sel[ti], "isin": nav_m.columns.to_numpy()[ni], "fwd": f[ti, ni], "vol": v[ti, ni], "outcome": o[ti, ni]})
+    if with_dd:                                                                       # the forward 12-month path risk of the drawdown condition (plan 5.4)
+        dd = forward_max_drawdown(nav_m, sel.tolist(), FWD_MONTHS).reindex(sel)
+        frame["mdd"] = dd.to_numpy()[ti, ni]
+    return frame
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------
@@ -87,39 +107,61 @@ class Panel:
     n_dates: int
     n_families: int
     cell_levels: dict         # share of valid unit-months by the peer-cell level used (1 = nature x tercile x FX, 2 = nature x FX, 3 = nature)
+    excess_dd: "np.ndarray | None" = None   # forward max drawdown minus its peer-cell median (NaN where unknown); None when the outcomes carry no `mdd`
+    q10_gap: "np.ndarray | None" = None     # the cell's 10th-percentile outcome minus its median (the worst-decile loss given death of the survivorship bound)
 
 
-def build_panel(units: pd.DataFrame, outcomes: pd.DataFrame, fx_exposed: pd.Series, min_families: int = MIN_FAMILIES) -> Panel:
+def build_panel(units: pd.DataFrame, outcomes: pd.DataFrame, fx_exposed: pd.Series, min_families: int = MIN_FAMILIES, peers: str = "nature") -> Panel:
     """Join the units with their outcomes and assign each valid unit-month its peer-cell median (plan 5.3). `units` has as_of, subportfolio, fund_family_id, fund_nature, isin,
     score_final; `outcomes` is `outcomes_frame`; `fx_exposed` is a bool Series indexed by ISIN. Funds with no outcome stay in the frame (they are ranked by the score, which is ex-ante)
-    but have NaN excess and enter no mean and no median."""
+    but have NaN excess and enter no mean and no median. `peers` = "nature" (the signed cells) or "no_nature" (the pre-registered sensitivity: ex-ante volatility tercile x FX, collapsing to FX and
+    then to the whole group, because the nature classifier uses realized volatility over the full history)."""
     from shared.period_key import period_ordinals
     df = units.copy()
     df["as_ord"] = np.asarray(period_ordinals(df["as_of"]))
-    df = df.merge(outcomes[["as_ord", "isin", "vol", "outcome"]], on=["as_ord", "isin"], how="left")
+    cols = ["as_ord", "isin", "vol", "outcome"] + (["mdd"] if "mdd" in outcomes.columns else [])
+    df = df.merge(outcomes[cols], on=["as_ord", "isin"], how="left")
     fx = fx_exposed.reindex(df["isin"]).to_numpy()
     df["fx"] = np.where(pd.isna(fx), False, fx).astype(bool)
     df["fund_nature"] = df["fund_nature"].astype(str)
     valid = np.isfinite(df["outcome"].to_numpy(dtype=float))
     grp = ["as_ord", "subportfolio"]
-    v = df.loc[valid, grp + ["fund_nature", "fx", "vol", "outcome"]].copy()
-    pct = v.groupby(grp + ["fund_nature"])["vol"].rank(pct=True, method="first")
+    has_dd = "mdd" in df.columns
+    v = df.loc[valid, grp + ["fund_nature", "fx", "vol", "outcome"] + (["mdd"] if has_dd else [])].copy()
+    if peers == "nature":
+        terc_keys, levels = grp + ["fund_nature"], ((1, grp + ["fund_nature", "terc", "fx"]), (2, grp + ["fund_nature", "fx"]), (3, grp + ["fund_nature"]))
+    elif peers == "no_nature":
+        terc_keys, levels = grp, ((1, grp + ["terc", "fx"]), (2, grp + ["fx"]), (3, grp))
+    else:
+        raise ValueError(f"peers must be 'nature' or 'no_nature', not {peers!r}")
+    pct = v.groupby(terc_keys)["vol"].rank(pct=True, method="first")
     v["terc"] = (np.ceil(pct * 3.0).astype(int) - 1).clip(0, 2)
-    med, cnt = {}, {}
-    for lvl, keys in ((1, grp + ["fund_nature", "terc", "fx"]), (2, grp + ["fund_nature", "fx"]), (3, grp + ["fund_nature"])):
+    med, cnt, q10, med_dd = {}, {}, {}, {}
+    for lvl, keys in levels:
         g = v.groupby(keys)["outcome"]
-        med[lvl], cnt[lvl] = g.transform("median").to_numpy(), g.transform("size").to_numpy()
+        med[lvl], cnt[lvl], q10[lvl] = g.transform("median").to_numpy(), g.transform("size").to_numpy(), g.transform("quantile", 0.10).to_numpy()
+        if has_dd:
+            med_dd[lvl] = v.groupby(keys)["mdd"].transform("median").to_numpy()
     use1, use2 = cnt[1] >= min_families, cnt[2] >= min_families
     level = np.where(use1, 1, np.where(use2, 2, 3))
-    chosen = np.where(use1, med[1], np.where(use2, med[2], med[3]))
+
+    def pick(d):
+        return np.where(use1, d[1], np.where(use2, d[2], d[3]))
+    chosen = pick(med)
     excess = np.full(len(df), np.nan)
     excess[np.flatnonzero(valid)] = v["outcome"].to_numpy() - chosen
+    excess_dd = q10_gap = None
+    if has_dd:
+        excess_dd = np.full(len(df), np.nan)
+        excess_dd[np.flatnonzero(valid)] = v["mdd"].to_numpy() - pick(med_dd)
+    q10_gap = np.full(len(df), np.nan)
+    q10_gap[np.flatnonzero(valid)] = pick(q10) - chosen
     group_id = df.groupby(grp, sort=False).ngroup().to_numpy()
     date_id, uniq = pd.factorize(df["as_ord"])        # every unit-month has a date id; rows without an outcome never enter a sum (valid is False)
     fam_id, fam_u = pd.factorize(df["fund_family_id"])
-    levels = {int(k): float((level == k).mean()) for k in (1, 2, 3)}
+    levels_share = {int(k): float((level == k).mean()) for k in (1, 2, 3)}
     return Panel(group_id=group_id, date_id=date_id, family_id=fam_id, score=df["score_final"].to_numpy(dtype=float), excess=excess, valid=np.isfinite(excess),
-                 n_dates=int(len(uniq)), n_families=int(len(fam_u)), cell_levels=levels)
+                 n_dates=int(len(uniq)), n_families=int(len(fam_u)), cell_levels=levels_share, excess_dd=excess_dd, q10_gap=q10_gap)
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------
@@ -269,3 +311,75 @@ def sharpe_difference_feasibility(champion_net: pd.Series, pool: pd.Series, cash
     half = float((r["ci_high"] - r["ci_low"]) / 2.0)
     se = half / z_of(0.95)
     return {"n_months": int(r["n"]), "ci90_half_width": half, "se": se, "mde_delta_sharpe": float((z_of(1 - alpha) + z_of(power)) * se)}
+
+
+# --------------------------------------------------------------------------------------------------------------------------------------------------
+# the M2 verdict (Amendment 1, owner order 2026-11-17): the only path that reads the point estimate of the real scores
+# --------------------------------------------------------------------------------------------------------------------------------------------------
+DD_MARGIN = 0.02                          # parameter 5 of the pre-registration: the top quintile's max drawdown may be at most 2 pp worse than the peer median's
+ATTRITION_RATES = (0.025, 0.05, 0.10)     # the locked base 5 % a year and its bounds
+
+
+def m2_estimate(panel: Panel, boot: Boot, alpha: float = 0.05) -> dict:
+    """M2 for one outcome horizon: the pooled mean excess of the champion's top quintile over its peer-cell median, its date-block and family-cluster standard errors, the one-sided lower
+    bound at `alpha`, and (when the panel carries drawdowns) the mean forward max-drawdown excess of the top quintile and the mean worst-decile gap of its cells."""
+    mask = top_mask(panel.group_id, panel.score)
+    sums = sums_for(panel, mask)
+    est, se = estimate(sums), bootstrap_se(sums, boot)
+    out = {"estimate": est, **se, "lower_bound": float(est - z_of(1 - alpha) * se["se"]), "n_selected_valid": int(sums.n_date.sum()), "n_dates": int(panel.n_dates),
+           "n_families": int(panel.n_families), "cell_levels": panel.cell_levels}
+    if panel.excess_dd is not None:
+        w = mask & np.isfinite(panel.excess_dd)
+        out["dd_excess_mean"], out["n_dd"] = float(panel.excess_dd[w].mean()), int(w.sum())
+    if panel.q10_gap is not None:
+        out["q10_gap_mean"] = float(np.nanmean(panel.q10_gap[mask & panel.valid]))
+    return out
+
+
+def attrition_adjusted(m2: dict, rates=ATTRITION_RATES, alpha: float = 0.05) -> list:
+    """Survivorship bound (plan 5.5, pre-registered rule of the draft: the loss given death is the worst-decile outcome of the fund's own peer cell). A fraction `a` of the funds that
+    would have been in the sample died unobserved and is selected at the base rate (the scores cannot know it), so the top-quintile mean becomes (1 - a) * M2 + a * (worst-decile gap).
+    The expectation replaces the 1,000 simulated paths: the pooled mean is deterministic in `a`. Returns one dict per rate with the adjusted estimate, its lower bound and whether the
+    adjustment flips the sign of the unadjusted estimate."""
+    est, se, gap = m2["estimate"], m2["se"], m2.get("q10_gap_mean", 0.0)
+    z = z_of(1 - alpha)
+    rows = []
+    for a in rates:
+        adj = (1 - a) * est + a * gap
+        rows.append({"rate": a, "estimate_adjusted": float(adj), "lower_bound_adjusted": float(adj - z * (1 - a) * se), "flips_sign": bool((adj > 0) != (est > 0))})
+    return rows
+
+
+def _klass(m2: dict, dd_margin: float) -> str:
+    """The M2-level reading of one run: PIVOT-side when the estimate is not positive, CONTINUE-side when the lower bound is above zero and the drawdown condition holds, else INCONCLUSIVE."""
+    if m2["estimate"] <= 0:
+        return "PIVOT"
+    dd_ok = m2.get("dd_excess_mean", 0.0) >= -dd_margin
+    return "CONTINUE" if (m2["lower_bound"] > 0 and dd_ok) else "INCONCLUSIVE"
+
+
+def verdict(main: dict, h36: dict, nonat: dict, portfolio_dd_worse_by: float, m1_diff: "float | None" = None, dd_margin: float = DD_MARGIN) -> dict:
+    """The WP5 outcome of the signed pre-registration and Amendment 1. `main` = M2 at 12 months, `h36` = M2 at 36 months, `nonat` = the 12-month run with peers that avoid Fund_Nature,
+    `portfolio_dd_worse_by` = champion max drawdown worse than B-POOL's, in fractions (positive = worse).
+      CONTINUE: lower bound of the 12-month M2 above zero and the drawdown condition met. PIVOT: the 12-month estimate is not positive (the survivorship adjustment only lowers it, so it
+      cannot flip it) or the champion's portfolio drawdown is worse than B-POOL's by more than the margin. INCONCLUSIVE: anything else, and also when the 36-month estimate has the other
+      sign or the nature-free sensitivity changes the reading. `m1_diff` (net Sharpe difference, descriptive only) adds the CONSTRUCTION-LOSS note to a CONTINUE when it is not positive."""
+    base = _klass(main, dd_margin)
+    reasons = []
+    outcome = base
+    if portfolio_dd_worse_by > dd_margin:
+        outcome = "PIVOT"
+        reasons.append(f"champion max drawdown is worse than B-POOL's by {portfolio_dd_worse_by:.3%}, above the {dd_margin:.0%} margin")
+    consistent36 = bool((h36["estimate"] > 0) == (main["estimate"] > 0))
+    nonat_klass = _klass(nonat, dd_margin)
+    if outcome != "INCONCLUSIVE" and not consistent36:
+        outcome = "INCONCLUSIVE"
+        reasons.append("the 36-month estimate has the other sign than the 12-month one")
+    if outcome != "INCONCLUSIVE" and nonat_klass != base and not (outcome == "PIVOT" and portfolio_dd_worse_by > dd_margin):
+        outcome = "INCONCLUSIVE"
+        reasons.append(f"the nature-free sensitivity reads {nonat_klass}, the main run {base}")
+    note = None
+    if outcome == "CONTINUE" and m1_diff is not None and m1_diff <= 0:
+        note = "CONSTRUCTION-LOSS (descriptive only, Amendment 1): scoring has selection value while the portfolio net Sharpe does not beat the pool"
+    return {"outcome": outcome, "main_klass": base, "nonature_klass": nonat_klass, "consistent_36m_sign": consistent36, "dd_condition_met": bool(main.get("dd_excess_mean", 0.0) >= -dd_margin),
+            "reasons": reasons, "note": note, "attrition": attrition_adjusted(main)}

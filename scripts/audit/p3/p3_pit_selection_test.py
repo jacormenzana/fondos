@@ -11,7 +11,9 @@ Read-only on the database (it reads a saved PIT run, never the database) and BLI
 
     python scripts/audit/p3/p3_pit_selection_test.py --run-dir out/reports/pit_backtest/<STAMP> [--perms 1000] [--reps 500]
 
-Output: out/reports/wp5/<stamp>/wp5_checks.json and wp5_checks.md. Exit codes: 0 both checks done and passed, 1 a control failed, 3 untestable (with `--diagnostic` the controls still run), 2 usage or missing input.
+Output: out/reports/wp5/<stamp>/wp5_checks.json and wp5_checks.md. With `--m2` it runs the M2 VERDICT instead (Amendment 1, owner order 2026-11-17; the only mode that reads the point estimate of the real scores): M2 at 12 months, the 36-month sign check, the
+nature-free peer sensitivity, the drawdown condition, the survivorship adjustment and the outcome rule of the signed pre-registration; M1 is reported, never decisive. Output: wp5_m2_verdict.json / .md.
+Exit codes: 0 both checks done and passed, 1 a control failed, 3 untestable (with `--diagnostic` the controls still run), 2 usage or missing input.
 """
 from __future__ import annotations
 
@@ -43,15 +45,15 @@ def load_run(run_dir: Path) -> dict:
             "manifest": json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))}
 
 
-def build(run: dict, n_boot: int, seed: int) -> tuple:
+def build(run: dict, n_boot: int, seed: int, fwd_months: int = T.FWD_MONTHS, peers: str = "nature", with_dd: bool = False) -> tuple:
     from shared.period_key import period_ordinals
     nav_m = T.monthly_nav(run["nav"])
     units = T.pick_units(run["scores"], pd.to_numeric(run["attrs"]["Ongoing_Charge"], errors="coerce"))
     last_ord, first_ord = int(nav_m.index.max()), int(nav_m.index.min())
     as_ord = np.asarray(period_ordinals(units["as_of"]))
-    units = units[as_ord <= last_ord - T.FWD_MONTHS].reset_index(drop=True)              # only formation months whose 12-month outcome can exist
-    outcomes = T.outcomes_frame(nav_m, np.unique(np.asarray(period_ordinals(units["as_of"]))))
-    panel = T.build_panel(units, outcomes, run["fx"])
+    units = units[as_ord <= last_ord - fwd_months].reset_index(drop=True)                # only formation months whose forward outcome can exist
+    outcomes = T.outcomes_frame(nav_m, np.unique(np.asarray(period_ordinals(units["as_of"]))), fwd_months=fwd_months, with_dd=with_dd)
+    panel = T.build_panel(units, outcomes, run["fx"], peers=peers)
     boot = T.make_boot(panel.n_dates, panel.n_families, n_boot=n_boot, mean_block=6.0, seed=seed)
     return panel, boot, first_ord, last_ord
 
@@ -79,6 +81,64 @@ def render_md(r: dict) -> str:
     return "\n".join(lines)
 
 
+def render_m2_md(r: dict) -> str:
+    m, v = r["m2_12m"], r["verdict"]
+    row = lambda name, x: f"| {name} | {x['estimate']:+.4f} | {x['se_date']:.4f} / {x['se_family']:.4f} | {x['lower_bound']:+.4f} | {x['n_selected_valid']:,} | {x['n_dates']} |"
+    lines = [f"# WP5 M2 verdict - FND-0429 - **{v['outcome']}**", "",
+             f"Run `{r['run_dir']}` (git {r['git']}), harness commit {r['harness_commit']}, generated {r['generated']}, seed {r['seed']}. Pre-registration `PREREG_FND-0429_WP5.md` + `PREREG_FND-0429_WP5_AMENDMENT1.md`. "
+             "alpha 0.05 one-sided; the three locked values and the adopted rules apply unchanged.", "",
+             "## Outcome", "", f"- **{v['outcome']}** (main reading: {v['main_klass']}; nature-free sensitivity: {v['nonature_klass']}; 36-month sign consistent: {v['consistent_36m_sign']}; drawdown condition met: {v['dd_condition_met']}).",
+             *[f"- Reason: {x}" for x in v["reasons"]], *([f"- Note: {v['note']}"] if v["note"] else []), "",
+             "## M2 (selection level): top quintile by score_final minus its peer-cell median, outcome = forward return / trailing 36-month volatility", "",
+             "| Run | Estimate | SE date / family | One-sided lower bound | Selected unit-months | Months |", "|---|---|---|---|---|---|",
+             row("12 months, signed peers (PRIMARY)", m), row("36 months, signed peers (sign check)", r["m2_36m"]), row("12 months, nature-free peers (sensitivity)", r["m2_nonature"]), "",
+             f"- Drawdown condition (forward 12-month max drawdown of the top quintile minus its peer median, must be >= -{r['dd_margin']:.0%}): {m['dd_excess_mean']:+.4f} over {m['n_dd']:,} unit-months.",
+             f"- Peer cells (share of valid unit-months, level 1 / 2 / 3): {m['cell_levels'][1]:.1%} / {m['cell_levels'][2]:.1%} / {m['cell_levels'][3]:.1%}.", "",
+             "## Survivorship adjustment (attrition base 5 % a year, bounds 2.5 % and 10 %; loss given death = the worst-decile gap of the cell)", "",
+             "| Rate | Adjusted estimate | Adjusted lower bound | Flips the sign |", "|---|---|---|---|",
+             *[f"| {a['rate']:.1%} | {a['estimate_adjusted']:+.4f} | {a['lower_bound_adjusted']:+.4f} | {a['flips_sign']} |" for a in v["attrition"]], "",
+             "## M1 (portfolio level), DESCRIPTIVE ONLY (Amendment 1)", "",
+             f"- Champion at band 0.10: Sharpe {r['m1']['champion_band010_sharpe']:.3f}, max drawdown {r['m1']['champion_band010_maxdd']:.2%}; pool (frictionless): Sharpe {r['m1']['pool_sharpe']:.3f}, max drawdown {r['m1']['pool_maxdd']:.2%}; "
+             f"champion drawdown worse than the pool by {r['m1']['dd_worse_by']:.2%} (PIVOT margin {r['dd_margin']:.0%}; at band 0 it would be {r['m1']['dd_worse_by_band0']:.2%}).",
+             f"- Paired Sharpe difference, champion at band 0 net vs frictionless pool: {r['m1']['paired']['diff']:+.3f} (90 % interval {r['m1']['paired']['ci_low']:+.3f} .. {r['m1']['paired']['ci_high']:+.3f}, {r['m1']['paired']['n']} months): "
+             "not testable on this history (minimum detectable 0.233), shown for the record only.", "",
+             "## Not computed in this pass", "", "- The forward Sortino secondary outcome of plan 5.4 (secondary by the plan, never decisive).", "- The 1,000 simulated attrition paths: the pooled expectation replaces them (the pooled mean is deterministic in the rate).", "",
+             "## Reading", "", "This page records the outcome of the signed rule; the P3 refactor scope is the owner's decision after reading it.", ""]
+    return "\n".join(lines)
+
+
+def run_m2(run: dict, a, run_dir: Path) -> int:
+    import subprocess
+    from proyecto3.src.backtest_inference import paired_sharpe_difference
+    t0 = time.time()
+    p12, b12, _f, _l = build(run, a.boot, a.seed, fwd_months=12, peers="nature", with_dd=True)
+    p36, b36, _f, _l = build(run, a.boot, a.seed, fwd_months=36, peers="nature", with_dd=False)
+    pnn, bnn, _f, _l = build(run, a.boot, a.seed, fwd_months=12, peers="no_nature", with_dd=True)
+    m12, m36, mnn = T.m2_estimate(p12, b12, a.alpha), T.m2_estimate(p36, b36, a.alpha), T.m2_estimate(pnn, bnn, a.alpha)
+    exp = pd.read_csv(run_dir / "hysteresis_experiment.csv").set_index("hysteresis_band")
+    stats = json.loads((run_dir / "series_stats.json").read_text(encoding="utf-8"))
+    ch = exp.loc[0.1]
+    pool_dd, pool_sharpe = float(stats["benchmark"]["max_drawdown"]), float(stats["benchmark"]["sharpe"])
+    dd_worse, dd_worse_0 = pool_dd - float(ch["max_drawdown"]), pool_dd - float(stats["portfolio"]["max_drawdown"])
+    tab = run["table"]
+    paired = paired_sharpe_difference(tab["net_turnover_1m"], tab["bench_1m"], cash=tab["cash_ret_1m"], n_boot=2000, mean_block=6.0, ci=0.90, seed=a.seed)
+    m1_diff = float(ch["sharpe"]) - pool_sharpe
+    ver = T.verdict(m12, m36, mnn, dd_worse, m1_diff=m1_diff)
+    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+    res = {"run_dir": str(run_dir), "git": run["manifest"].get("git_commit"), "harness_commit": commit, "generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "seed": a.seed, "alpha": a.alpha,
+           "dd_margin": T.DD_MARGIN, "m2_12m": m12, "m2_36m": m36, "m2_nonature": mnn, "verdict": ver,
+           "m1": {"champion_band010_sharpe": float(ch["sharpe"]), "champion_band010_maxdd": float(ch["max_drawdown"]), "pool_sharpe": pool_sharpe, "pool_maxdd": pool_dd, "dd_worse_by": dd_worse,
+                  "dd_worse_by_band0": dd_worse_0, "paired": {k: float(paired[k]) for k in ("n", "diff", "ci_low", "ci_high")}}, "seconds": round(time.time() - t0, 1)}
+    out = Path(a.out_dir) if a.out_dir else ROOT / "out" / "reports" / "wp5" / datetime.now().strftime("%Y%m%d_%H%M%S")
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "wp5_m2_verdict.json").write_text(json.dumps(res, indent=2, default=float), encoding="utf-8")
+    md = render_m2_md(res)
+    (out / "wp5_m2_verdict.md").write_text(md, encoding="utf-8")
+    print(md)
+    print(f"written: {out}")
+    return RC_OK
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--run-dir", required=True)
@@ -91,6 +151,7 @@ def main(argv=None) -> int:
     ap.add_argument("--power", type=float, default=0.80)
     ap.add_argument("--min-delta", type=float, default=0.10)
     ap.add_argument("--detect-target", type=float, default=0.80)
+    ap.add_argument("--m2", action="store_true", help="run the M2 verdict (Amendment 1); reads the point estimate of the real scores")
     ap.add_argument("--diagnostic", action="store_true", help="run the WP5.1 controls even when the WP5.2 stop rule fired: the result is a DIAGNOSTIC of the M2 machinery, never part of a verdict")
     a = ap.parse_args(argv)
     run_dir = Path(a.run_dir)
@@ -99,6 +160,8 @@ def main(argv=None) -> int:
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return RC_USAGE
+    if a.m2:
+        return run_m2(run, a, run_dir)
     t0 = time.time()
     panel, boot, first_ord, last_ord = build(run, a.boot, a.seed)
     print(f"panel: {len(panel.score):,} unit-months, {panel.n_dates} formation months, {panel.n_families} families, valid outcomes {panel.valid.mean():.1%}; built in {time.time() - t0:.0f}s")
