@@ -26,13 +26,15 @@ from statistics import NormalDist
 import numpy as np
 import pandas as pd
 
+from shared.config import RATIO_MIN_VOL_ANN
+
 TOP_FRAC = 0.20
 MIN_FAMILIES = 15
 FWD_MONTHS = 12
 VOL_WINDOW = 36
 MIN_VOL_OBS = 30          # harness detail: at least 30 of the 36 monthly returns must exist for the volatility to count
 PLANT_SHARE = 0.10
-VOL_FLOOR = 0.001         # shared.config.RATIO_MIN_VOL_ANN: no ratio on a near-zero denominator
+VOL_FLOOR = RATIO_MIN_VOL_ANN   # one definition (P#11, FND-0431 H-11): was a literal copy of 0.001; a run records the value it used in its manifest
 
 
 def z_of(p: float) -> float:
@@ -90,6 +92,10 @@ def outcomes_frame(nav_m: pd.DataFrame, as_ords, fwd_months: int = FWD_MONTHS, v
 def pick_units(scores: pd.DataFrame, ongoing_charge: pd.Series) -> pd.DataFrame:
     """One class per (as_of, sub-portfolio, fund_family_id) among the eligible rows: the one with the lowest ongoing charge (unknown last), ties by ISIN."""
     s = scores[scores["eligible"]].copy()
+    # FND-0431 E-16: a fund with no family id is its own family (the scorer's rule, fund_scorer.deduplicate_by_family). A null here used to collapse
+    # every such fund of a date into ONE unit (drop_duplicates treats nulls as equal) and then break the panel's family factorisation.
+    fam = s["fund_family_id"]
+    s["fund_family_id"] = fam.where(fam.notna() & (fam.astype(str).str.strip() != ""), "isin:" + s["isin"].astype(str))
     s["_chg"] = pd.to_numeric(s["isin"].map(ongoing_charge), errors="coerce").to_numpy(dtype=float)
     s["_chg"] = np.where(np.isfinite(s["_chg"]), s["_chg"], np.inf)
     s = s.sort_values(["as_of", "subportfolio", "fund_family_id", "_chg", "isin"], kind="mergesort")
@@ -157,11 +163,17 @@ def build_panel(units: pd.DataFrame, outcomes: pd.DataFrame, fx_exposed: pd.Seri
     q10_gap = np.full(len(df), np.nan)
     q10_gap[np.flatnonzero(valid)] = pick(q10) - chosen
     group_id = df.groupby(grp, sort=False).ngroup().to_numpy()
-    date_id, uniq = pd.factorize(df["as_ord"])        # every unit-month has a date id; rows without an outcome never enter a sum (valid is False)
+    # FND-0431 H-12: the date index counts only dates with at least one valid outcome (as the Panel docstring says), in time order. Before, the final
+    # months, which have no 12-month outcome yet, were counted too: n_dates (and so the independent-window count) was overstated and the date
+    # bootstrap drew empty dates. A row of an outcome-less date takes id 0: its excess is NaN, so it never enters a sum.
+    codes, uniq_all = pd.factorize(df["as_ord"])
+    has_outcome = np.zeros(len(uniq_all), dtype=bool)
+    has_outcome[codes[np.isfinite(excess)]] = True
+    date_id = np.where(has_outcome[codes], (np.cumsum(has_outcome) - 1)[codes], 0)
     fam_id, fam_u = pd.factorize(df["fund_family_id"])
     levels_share = {int(k): float((level == k).mean()) for k in (1, 2, 3)}
     return Panel(group_id=group_id, date_id=date_id, family_id=fam_id, score=df["score_final"].to_numpy(dtype=float), excess=excess, valid=np.isfinite(excess),
-                 n_dates=int(len(uniq)), n_families=int(len(fam_u)), cell_levels=levels_share, excess_dd=excess_dd, q10_gap=q10_gap)
+                 n_dates=int(has_outcome.sum()), n_families=int(len(fam_u)), cell_levels=levels_share, excess_dd=excess_dd, q10_gap=q10_gap)
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------
@@ -336,12 +348,21 @@ def m2_estimate(panel: Panel, boot: Boot, alpha: float = 0.05) -> dict:
     return out
 
 
+def _required(m2: dict, key: str, what: str) -> float:
+    """FND-0431 E-14: a quantity the outcome rule depends on must be present. A missing one used to default to 0.0, which PASSES the drawdown
+    condition and leaves the survivorship gap at zero without a word; now it is an error that names the cause."""
+    if key not in m2:
+        raise ValueError(f"M2 result has no {key!r}: {what}")
+    return m2[key]
+
+
 def attrition_adjusted(m2: dict, rates=ATTRITION_RATES, alpha: float = 0.05) -> list:
     """Survivorship bound (plan 5.5, pre-registered rule of the draft: the loss given death is the worst-decile outcome of the fund's own peer cell). A fraction `a` of the funds that
     would have been in the sample died unobserved and is selected at the base rate (the scores cannot know it), so the top-quintile mean becomes (1 - a) * M2 + a * (worst-decile gap).
     The expectation replaces the 1,000 simulated paths: the pooled mean is deterministic in `a`. Returns one dict per rate with the adjusted estimate, its lower bound and whether the
     adjustment flips the sign of the unadjusted estimate."""
-    est, se, gap = m2["estimate"], m2["se"], m2.get("q10_gap_mean", 0.0)
+    est, se = m2["estimate"], m2["se"]
+    gap = _required(m2, "q10_gap_mean", "the panel has no worst-decile gap; build the outcomes with the peer cells (build_panel computes it)")
     z = z_of(1 - alpha)
     rows = []
     for a in rates:
@@ -354,7 +375,7 @@ def _klass(m2: dict, dd_margin: float) -> str:
     """The M2-level reading of one run: PIVOT-side when the estimate is not positive, CONTINUE-side when the lower bound is above zero and the drawdown condition holds, else INCONCLUSIVE."""
     if m2["estimate"] <= 0:
         return "PIVOT"
-    dd_ok = m2.get("dd_excess_mean", 0.0) >= -dd_margin
+    dd_ok = _required(m2, "dd_excess_mean", "the drawdown condition needs the forward drawdown; build the outcomes with with_dd=True") >= -dd_margin
     return "CONTINUE" if (m2["lower_bound"] > 0 and dd_ok) else "INCONCLUSIVE"
 
 
@@ -381,5 +402,8 @@ def verdict(main: dict, h36: dict, nonat: dict, portfolio_dd_worse_by: float, m1
     note = None
     if outcome == "CONTINUE" and m1_diff is not None and m1_diff <= 0:
         note = "CONSTRUCTION-LOSS (descriptive only, Amendment 1): scoring has selection value while the portfolio net Sharpe does not beat the pool"
-    return {"outcome": outcome, "main_klass": base, "nonature_klass": nonat_klass, "consistent_36m_sign": consistent36, "dd_condition_met": bool(main.get("dd_excess_mean", 0.0) >= -dd_margin),
+    # FND-0431 E-15: the outcome rule turns on the SIGN of the point estimate, so the verdict also carries the numbers that say how firm that sign is.
+    return {"outcome": outcome, "main_klass": base, "nonature_klass": nonat_klass, "consistent_36m_sign": consistent36,
+            "dd_condition_met": bool(_required(main, "dd_excess_mean", "the drawdown condition needs the forward drawdown") >= -dd_margin),
+            "main_estimate": main["estimate"], "main_se": main["se"], "main_lower_bound": main["lower_bound"],
             "reasons": reasons, "note": note, "attrition": attrition_adjusted(main)}

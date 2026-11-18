@@ -47,7 +47,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
-from proyecto3.src.score_candidates import exposure_constrained, flag_fx_exposed, load_current_candidates
+from proyecto3.src.score_candidates import exposure_constrained, flag_fx_exposed, fx_exposed_map, load_current_candidates, load_run_scores
 from proyecto3.src import scenario_lifecycle as _lifecycle
 from proyecto3.src.portfolio_engine import (
     PortfolioConstraints,
@@ -57,7 +57,8 @@ from proyecto3.src.portfolio_engine import (
     round_master_weights,
     cash_weight,
 )
-from shared.config import PORTFOLIO_HYSTERESIS_BAND, PORTFOLIO_HYSTERESIS_ENABLED, PORTFOLIO_WEIGHT_METHOD, ROTATION_COST_GATE_ENABLED
+from shared.config import (MAX_NON_EUR_UNHEDGED_WEIGHT, PORTFOLIO_HYSTERESIS_BAND, PORTFOLIO_HYSTERESIS_ENABLED, PORTFOLIO_WEIGHT_METHOD,
+                           ROTATION_COST_GATE_ENABLED)
 
 
 # ============================================================
@@ -397,70 +398,155 @@ def should_rotate(
                        f"{cost_in_score_units:.3f} + umbral {min_improvement:.3f}")
 
 
+def _incumbent_run_scores(conn, score_version: str, regime: str, isins) -> dict:
+    """Seam over score_candidates.load_run_scores (the tests replace it): incumbent rows of the scoring run the candidates come from."""
+    return load_run_scores(conn, score_version, regime, isins)
+
+
+def _incumbent_attrs(conn, isins) -> dict:
+    """{isin: {fund_name, fund_nature, gestora, fund_family_id}} from fund_master, for the incumbents the gate may reinstate."""
+    isins = list(isins)
+    if not isins:
+        return {}
+    rows = conn.execute("SELECT ISIN, Fund_Name, Fund_Nature, Management_Company, fund_family_id FROM fund_master WHERE ISIN = ANY(%s)",
+                        (isins,)).fetchall()
+    return {r[0]: {"fund_name": r[1], "fund_nature": r[2], "gestora": r[3], "fund_family_id": r[4]} for r in rows}
+
+
+def _fx_flags(conn, isins) -> "dict | None":
+    """{isin: exposed?} under the SAME rule as the construction budget and the promotion gate (shared/fx_exposure.py), or None when the budget
+    is switched off. Seam over score_candidates.fx_exposed_map (the tests replace it)."""
+    return fx_exposed_map(conn, isins)
+
+
+def _family_key(fund_family_id, fund_name: str):
+    """The key under which a fund counts as 'the same family' in the construction: its fund_family_id when it has one, else the first three
+    words of its name (upper case). One definition for build() and for the rotation gate (P#11)."""
+    if fund_family_id and str(fund_family_id).strip():
+        return fund_family_id
+    return " ".join((fund_name or "").strip().split()[:3]).upper()
+
+
+def _retainability(info: "dict | None") -> "tuple[bool, str]":
+    """ROT-0 (FND-0431): can an incumbent still be held, judged ONLY on its row of the latest scoring run (the one the candidates come from)?
+    No row means not retainable: never an older row. `eligible` already carries the scorer's hard filters (stale NAV, data hold, data suspicion,
+    wrong document, risk limits), so a held or suspect fund is ineligible here. The ALARM_WATCH rule (an alarmed fund may not GAIN weight) stays
+    in the promotion gate (scenario_lifecycle), which also judges a reinstated incumbent."""
+    if info is None:
+        return False, "ROT-0: el titular no tiene fila en la ultima ejecucion de scoring (no se usa ninguna fila anterior)"
+    if not info["in_universe"]:
+        return False, "ROT-0: el titular esta fuera del universo actual"
+    if not info["eligible"]:
+        return False, "ROT-0: el titular es inelegible en la ultima ejecucion de scoring"
+    if not info["score"] > 0:
+        return False, "ROT-0: el titular tiene score 0 en la ultima ejecucion de scoring"
+    return True, ""
+
+
 def rotation_plan(
     conn: "psycopg.Connection",
     portfolio_current: "Portfolio",
     portfolio_new: "Portfolio",
     score_version: str = "v1",
+    incumbent_scores: "dict | None" = None,
 ) -> list[dict]:
     """
-    Compara dos carteras y genera el plan de rotacion optimo.
-    Solo recomienda rotaciones donde el beneficio supera el coste.
+    Compara dos carteras y genera el plan de rotacion: cada fondo que sale se empareja con UN fondo que entra
+    (uno a uno, determinista: el titular de mayor score con el entrante de mayor score, desempate por ISIN) y se
+    decide si la rotacion se recomienda.
 
-    Devuelve lista de operaciones recomendadas:
-        [{isin_out, isin_in, subportfolio, weight, coste, razon}]
+    incumbent_scores: {(sub-cartera, isin): {"score", "eligible", "in_universe"}} de la ULTIMA ejecucion de scoring
+        (score_candidates.load_run_scores). Un titular sin fila o inelegible no es retenible (ROT-0): su salida se
+        recomienda siempre, sin comprobar el coste. Con None (llamadores antiguos) el score es el que lleva el propio
+        fondo; si no lo lleva, el titular no es retenible. Antes (FND-0431) el score era 0 por defecto: el umbral de
+        coste salia unas 100 veces el coste.
+
+    Devuelve lista de operaciones, una por fondo que sale:
+        [{subportfolio, isin_out, isin_in, recomendar, coste_est, razon, retenible, score_out, score_in}]
+    isin_in lleva el entrante emparejado AUNQUE la rotacion no se recomiende (la reversion lo necesita); None solo cuando
+    no hay entrante para ese titular.
     """
-    # Construir mapas de fondos actuales por sub-cartera
-    current_map = {}
-    for f in portfolio_current.all_funds:
-        current_map[f["subportfolio"]] = current_map.get(f["subportfolio"], {})
-        current_map[f["subportfolio"]][f["isin"]] = f
+    def _group(portfolio):
+        out = {}
+        for f in portfolio.all_funds:
+            out.setdefault(f["subportfolio"], {})[f["isin"]] = f
+        return out
 
-    new_map = {}
-    for f in portfolio_new.all_funds:
-        new_map[f["subportfolio"]] = new_map.get(f["subportfolio"], {})
-        new_map[f["subportfolio"]][f["isin"]] = f
+    current_map, new_map = _group(portfolio_current), _group(portfolio_new)
+
+    def _info(sub: str, isin: str, fund: dict) -> "dict | None":
+        if incumbent_scores is not None:
+            return incumbent_scores.get((sub, isin))
+        s = fund.get("score")
+        return None if s is None else {"score": float(s), "eligible": True, "in_universe": True}
 
     operations = []
-
-    for sub in set(list(current_map.keys()) + list(new_map.keys())):
+    for sub in sorted(set(current_map) | set(new_map)):
         curr_funds = current_map.get(sub, {})
-        new_funds  = new_map.get(sub, {})
+        new_funds = new_map.get(sub, {})
 
-        # Fondos que salen
-        isins_out = set(curr_funds.keys()) - set(new_funds.keys())
-        # Fondos que entran
-        isins_in  = set(new_funds.keys()) - set(curr_funds.keys())
+        isins_out = set(curr_funds) - set(new_funds)
+        isins_in = set(new_funds) - set(curr_funds)
+        infos = {i: _info(sub, i, curr_funds[i]) for i in isins_out}
+        # Determinista y uno a uno: mejor titular con mejor entrante; los titulares sin fila, al final.
+        exits = sorted(isins_out, key=lambda i: (infos[i] is None, -(infos[i]["score"] if infos[i] else 0.0), i))
+        entrants = sorted(isins_in, key=lambda i: (-float(new_funds[i].get("score") or 0.0), i))
 
-        for isin_out in isins_out:
-            # Buscar el mejor candidato de entrada para reemplazarlo
-            best_in   = None
-            best_rot  = False
-            best_reason = ""
-            for isin_in in isins_in:
-                score_out = curr_funds[isin_out].get("score", 0)
-                score_in  = new_funds[isin_in].get("score", 0)
-                weight    = curr_funds[isin_out].get("master_weight", 0.05)
-                rotate, reason = should_rotate(
-                    conn, isin_out, score_out, isin_in, score_in, weight)
-                if rotate:
-                    best_in     = isin_in
-                    best_rot    = True
-                    best_reason = reason
-                    break
-
-            cost = estimate_rotation_cost(conn, isin_out,
-                                          best_in if best_in else isin_out)
+        for k, isin_out in enumerate(exits):
+            isin_in = entrants[k] if k < len(entrants) else None
+            info = infos[isin_out]
+            retainable, why = _retainability(info)
+            score_in = float(new_funds[isin_in].get("score") or 0.0) if isin_in else None
+            weight = curr_funds[isin_out].get("master_weight", 0.05)
+            if isin_in is None:
+                cost = estimate_rotation_cost(conn, isin_out, isin_out)
+                rotate, reason = True, "El titular sale de la seleccion sin entrante que lo sustituya" + ("" if retainable else f" ({why})")
+            elif not retainable:
+                cost = estimate_rotation_cost(conn, isin_out, isin_in)
+                rotate, reason = True, why
+            else:
+                cost = estimate_rotation_cost(conn, isin_out, isin_in)
+                rotate, reason = should_rotate(conn, isin_out, info["score"], isin_in, score_in, weight)
             operations.append({
                 "subportfolio": sub,
                 "isin_out":     isin_out,
-                "isin_in":      best_in,
-                "recomendar":   best_rot,
+                "isin_in":      isin_in,
+                "recomendar":   bool(rotate),
                 "coste_est":    cost,
-                "razon":        best_reason if best_rot else "Mejora insuficiente",
+                "razon":        reason,
+                "retenible":    retainable,
+                "score_out":    round(info["score"], 4) if info else None,
+                "score_in":     round(score_in, 4) if score_in is not None else None,
             })
 
     return operations
+
+
+def _reinstatement_blocker(tentative: "Portfolio", sp: "SubPortfolioAllocation", slot: dict, inc_isin: str,
+                           inc: dict, fx_flags: "dict | None") -> "str | None":
+    """Why the incumbent cannot take the entrant's slot, or None when it can (E-11, FND-0431). The same rules the selection enforces: the ISIN
+    and the family appear once in the whole portfolio, at most MAX_FUNDS_PER_MGR per manager (global across sub-portfolios), at most
+    MAX_SAME_NATURE per nature inside the sub-portfolio, and the non-EUR exposed weight of the sub-portfolio stays within
+    MAX_NON_EUR_UNHEDGED_WEIGHT (a swap that does not increase the exposed weight is always allowed)."""
+    others = [f for s in tentative.sub_portfolios for f in s.funds if f is not slot]
+    if any(f["isin"] == inc_isin for f in others):
+        return "el ISIN ya esta en la cartera"
+    fam = _family_key(inc.get("fund_family_id"), inc.get("fund_name"))
+    if fam and any(_family_key(f.get("fund_family_id"), f.get("fund_name")) == fam for f in others):
+        return "la familia ya esta en la cartera"
+    mgr = inc.get("gestora") or "Desconocida"
+    if sum(1 for f in others if (f.get("gestora") or "Desconocida") == mgr) + 1 > MAX_FUNDS_PER_MGR:
+        return f"tope de {MAX_FUNDS_PER_MGR} fondos por gestora"
+    nature = inc.get("fund_nature")
+    if sum(1 for f in sp.funds if f is not slot and f.get("fund_nature") == nature) + 1 > MAX_SAME_NATURE:
+        return f"tope de {MAX_SAME_NATURE} fondos por naturaleza"
+    if fx_flags is not None:
+        w = slot["weight"]
+        now = sum(f["weight"] for f in sp.funds if fx_flags.get(f["isin"], False))
+        after = now - (w if fx_flags.get(slot["isin"], False) else 0.0) + (w if fx_flags.get(inc_isin, False) else 0.0)
+        if after > MAX_NON_EUR_UNHEDGED_WEIGHT + 1e-9 and after > now + 1e-12:
+            return f"presupuesto de divisa no EUR ({after:.0%} > {MAX_NON_EUR_UNHEDGED_WEIGHT:.0%})"
+    return None
 
 
 def _apply_rotation_gate(
@@ -470,58 +556,52 @@ def _apply_rotation_gate(
     score_version: str,
 ) -> tuple["Portfolio", list[dict]]:
     """
-    Revierte al titular las rotaciones que rotation_plan() no recomienda
-    (coste > beneficio), sustituyendo el fondo entrante por el saliente EN
-    LA MISMA RANURA (mismo peso interno) -- no vuelve a ejecutar
-    _assign_weights ni la logica de diversificacion (dedup por familia/
-    gestora), que ya se resolvio sobre el conjunto tentativo.
+    Revierte al titular las rotaciones que rotation_plan() no recomienda (coste > beneficio), sustituyendo el
+    fondo entrante por el titular EN LA MISMA RANURA (mismo peso interno) -- no vuelve a ejecutar _assign_weights.
 
-    Fase 2d (P3 optimization plan, 2026-09-18): antes, should_rotate/
-    rotation_plan solo los invocaba scripts/test/test_portfolio.py --
-    build()/_persist() nunca los consultaban, asi que las carteras
-    persistidas no reflejaban ningun chequeo de coste de rotacion. Los
-    datos del titular (score/nombre/naturaleza/gestora) se releen en vivo
-    de fund_scores/fund_master en vez de reusar los que trae `previous`
-    (que solo tiene isin/weight/role -- portfolio_weights no guarda el
-    resto) -- asegura que el titular retenido lleve su score ACTUAL, no el
-    del periodo anterior.
+    FND-0431: (1) el titular se juzga en la ULTIMA ejecucion de scoring de la que salen los candidatos (misma
+    sub-cartera, version y regimen): sin fila, inelegible, fuera del universo o con score 0 no se retiene (ROT-0,
+    nunca se usa una fila anterior); (2) un titular retenible solo vuelve si cumple las reglas de construccion
+    (ISIN y familia unicos, tope por gestora y por naturaleza, presupuesto de divisa): si no, la rotacion sigue
+    adelante y la operacion lo dice; (3) antes la reversion no podia ocurrir nunca, porque el plan solo llevaba el
+    entrante cuando la rotacion SE recomendaba y aqui se revierten las que NO.
 
-    Devuelve (portfolio_resultante, plan_completo) -- plan_completo se
-    persiste en macro_context para trazabilidad aunque no haya un informe
-    dedicado todavia (el sheet "4_Rotacion" de monthly_report.py no existe
-    pese a que su docstring lo cita -- pendiente, fuera del alcance de esta
-    fase).
+    Devuelve (portfolio_resultante, plan_completo) -- plan_completo se persiste en macro_context para trazabilidad;
+    cada operacion revertida o rechazada lleva `revertida` True / False.
     """
-    plan = rotation_plan(conn, previous, tentative)
+    prev_isins = sorted({f["isin"] for sp in previous.sub_portfolios for f in sp.funds})
+    run_scores = _incumbent_run_scores(conn, score_version, tentative.regime, prev_isins)
+    plan = rotation_plan(conn, previous, tentative, score_version, incumbent_scores=run_scores)
     reverted = [op for op in plan if not op["recomendar"] and op["isin_in"]]
+    if not reverted:
+        return tentative, plan
+
+    attrs = _incumbent_attrs(conn, [op["isin_out"] for op in reverted])
+    fx_flags = _fx_flags(conn, [f["isin"] for s in tentative.sub_portfolios for f in s.funds] + [op["isin_out"] for op in reverted])
 
     for op in reverted:
         sub_name, isin_out, isin_in = op["subportfolio"], op["isin_out"], op["isin_in"]
         sp = next((s for s in tentative.sub_portfolios if s.name == sub_name), None)
-        if sp is None:
+        slot_idx = None if sp is None else next((i for i, f in enumerate(sp.funds) if f["isin"] == isin_in), None)
+        if slot_idx is None:
+            blocker = "el entrante no esta en la cartera construida"
+        elif isin_out not in attrs:
+            blocker = "el titular no tiene ficha en fund_master"
+        else:
+            blocker = _reinstatement_blocker(tentative, sp, sp.funds[slot_idx], isin_out, attrs[isin_out], fx_flags)
+        if blocker:
+            op["recomendar"], op["revertida"] = True, False
+            op["razon"] = f"{op['razon']} | reversion refused: {blocker}"
             continue
-        entrant_idx = next(
-            (i for i, f in enumerate(sp.funds) if f["isin"] == isin_in), None)
-        if entrant_idx is None:
-            continue
-
-        _ph = "%s"
-        row = conn.execute(f"""
-            SELECT fs.score_total, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company
-            FROM fund_scores fs JOIN fund_master fm ON fm.ISIN = fs.isin
-            WHERE fs.isin = {_ph} AND fs.block = {_ph} AND fs.score_version = {_ph}
-        """, (isin_out, sub_name, score_version)).fetchone()
-        if row is None:
-            continue  # titular ya no puntuable (deslistado, etc.) -- se mantiene el entrante
-
-        score, name, nature, mgr = row
-        entrant_weight = sp.funds[entrant_idx]["weight"]
-        sp.funds[entrant_idx] = {
-            "isin": isin_out, "fund_name": name, "fund_nature": nature,
-            "gestora": mgr, "fund_family_id": None,
-            "score": round(float(score), 4), "weight": entrant_weight,
-            "role": f"{sub_name} - {nature} (incumbente retenido, rotacion revertida)",
+        a = attrs[isin_out]
+        slot = sp.funds[slot_idx]
+        sp.funds[slot_idx] = {
+            "isin": isin_out, "fund_name": a["fund_name"], "fund_nature": a["fund_nature"],
+            "gestora": a["gestora"], "fund_family_id": a["fund_family_id"],
+            "score": round(float(run_scores[(sub_name, isin_out)]["score"]), 4), "weight": slot["weight"],
+            "role": f"{sub_name} - {a['fund_nature']} (incumbente retenido, rotacion revertida)",
         }
+        op["revertida"] = True
 
     return tentative, plan
 
@@ -707,14 +787,9 @@ class PortfolioBuilder:
                     "role":           f"{sub_name} - {row['fund_nature']}",
                 })
 
-            def _norm_fallback(name: str) -> str:
-                return " ".join((name or "").strip().split()[:3]).upper()
-
             for f in funds_list:
                 isins_used.add(f["isin"])
-                fam_id = f.get("fund_family_id")
-                dedup_key = fam_id if (fam_id and str(fam_id).strip()) \
-                            else _norm_fallback(f["fund_name"])
+                dedup_key = _family_key(f.get("fund_family_id"), f["fund_name"])
                 if dedup_key:
                     families_used.add(dedup_key)
                 mgr = f["gestora"] or "Desconocida"

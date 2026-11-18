@@ -26,13 +26,13 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | E-4 | Short-horizon weights can push the score out of [0, 1] (switch OFF) | Low | DEFER 2027-01-15 (reopen only if the switch is considered) |
 | E-5 | Missing metric is penalised, not neutral | High (affects every ranking) | P3-1.5: measure first, decide after |
 | E-6 | Fund with no monthly NAV row passes the age rule | Medium | P3-1.7 (measure-only diff, rule fixed beforehand) |
-| E-7 | Latest run assumed to be the full universe | High (silent partial portfolio) | P3-1.5 (set-based check, WARN for one cycle) |
+| E-7 | Latest run assumed to be the full universe | Low-Medium (revised 2026-11-18: no production path writes a partial run) | P3-1.6 `selection_health` (eligible-set change, calibrated alert); no refusal, no set comparison (deduplication removes rows, so no expected set exists) |
 | E-8 | Legacy backtest has no history for some regimes | Low | DEFER 2027-01-15 |
 | E-9 | No `assert_no_overlay` inside `proyecto3/src` | Medium | DEFER 2027-01-15; verify in the launcher audit when P3-1 touches the launchers |
 | E-10 | Cross-exclusion favours the sub-portfolio built first | Medium | P3-2' (correctness fix with a non-inferiority test) |
 | E-11 | Reverted rotation skips family, manager, nature, FX checks | High (latent) | P3-1.2 |
 | E-12 | `generate_report(score_version)` ignored | Low | DEFER 2027-01-15 |
-| E-13 | Promotion override passes when the backlog is unreachable | High | P3-1.5 (WARN for one cycle, then enforce on the owner's order) |
+| E-13 | Promotion override passes when the backlog is unreachable | Policy question (revised 2026-11-18: documented, tested behaviour, "a warning, never a blocker") | Owner decision: keep, or refuse when the owning ticket cannot be checked. Not changed |
 | E-14 | Drawdown condition and survivorship gap default to 0.0 when missing | Medium | P3-1.3 |
 | E-15 | PIVOT by the sign of the point estimate | Low (it is the signed rule) | P3-1.3: `verdict` also returns lower bound and standard error |
 | E-16 | `pick_units` does not validate a null `fund_family_id` | Low (static reading) | P3-1.3 diagnostic |
@@ -44,8 +44,8 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | GAP-01 | "Judge" absent (net appraisal ratio, Newey-West, FDR, shrinkage) | High | P3-5b, only if P3-5a leaves headroom (C2) |
 | GAP-02 | "Navigator" absent (HMM, probabilities, EMAs) | Medium | P3-6 (C2). The FND-0193 static-mix result shows the regime layer earns its place on drawdown, so a Navigator is judged against the current tree, not retired by default |
 | GAP-03 | No `TRANSITION_MAX_DEVIATION` | High | P3-2' arm 1 (behind C1) |
-| GAP-04 | Economic layer inoperative: gate OFF, incumbent score defect, no tax, no pessimistic cost | High | P3-1.1 (defect); the rest in P3-4 (conditional) |
-| GAP-05 | ROT-0 not explicit, can be reverted | High | P3-1.2 |
+| GAP-04 | Economic layer inoperative: gate OFF, incumbent score defect, no tax, no pessimistic cost | High | **P3-1.1 done 2026-11-18 (FND-0431)**; the rest in P3-4 (conditional) |
+| GAP-05 | ROT-0 not explicit, can be reverted | High (revised: the revert branch was unreachable, so it could not reinstate anyone; the real defect was that the gate never reverted) | **P3-1.2 done 2026-11-18 (FND-0431)** |
 | GAP-06 | Vehicle eligibility (UCITS / ETF, allowed types) absent | Medium | P3-3 (census first) |
 | GAP-07 | Family class not chosen by cost | Medium | P3-1.3 diagnostic, then P3-2' arm 2 |
 | GAP-08 | L3 and L4 coupled | Medium | P3-4 (conditional) |

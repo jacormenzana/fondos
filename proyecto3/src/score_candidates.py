@@ -71,6 +71,31 @@ def exposure_constrained(constraints):
     return dataclasses.replace(constraints, max_exposed_weight=MAX_NON_EUR_UNHEDGED_WEIGHT)
 
 
+def load_run_scores(conn: "psycopg.Connection", score_version: str, regime: str, isins) -> dict:
+    """{(block, isin): {"score", "eligible", "in_universe"}} for `isins`, read from the SAME scoring run the candidates come from: the latest
+    `as_of_date` of each (block, score_version, regime), exactly the predicate of load_current_candidates, but WITHOUT the eligibility, score and
+    universe filters, so a fund that was scored and cannot be held shows up as such (eligible False, score 0, in_universe False) instead of
+    vanishing. A fund with no row in that run is simply absent: the caller must treat it as not retainable and NEVER fall back to an older row
+    (the defect this module's docstring describes). FND-0431 (ROT-0, P3-1.1): the rotation gate reads its incumbents here."""
+    isins = list(isins)
+    if not isins:
+        return {}
+    rows = conn.execute("""
+        SELECT fs.block, fs.isin, fs.score_total, fs.eligible, fm.In_Current_Universe
+        FROM fund_scores fs
+        JOIN fund_master fm ON fm.ISIN = fs.isin
+        WHERE fs.score_version = %s
+          AND fs.regime = %s
+          AND fs.isin = ANY(%s)
+          AND fs.as_of_date = (
+              SELECT MAX(cur.as_of_date) FROM fund_scores cur
+              WHERE cur.block = fs.block
+                AND cur.score_version = fs.score_version
+                AND cur.regime = fs.regime)
+    """, (score_version, regime, isins)).fetchall()
+    return {(r[0], r[1]): {"score": float(r[2] or 0.0), "eligible": bool(r[3]), "in_universe": bool(r[4])} for r in rows}
+
+
 def load_current_candidates(conn: "psycopg.Connection",
                             score_version: str,
                             regime: str,
