@@ -1,0 +1,25 @@
+# Package L - P3 alignment with its functional specification
+
+Owner order and decisions 2026-11-17/18: evidence wins over the spec (every new behaviour ships OFF and is tested under a prereg; a spec item that fails is RETIRADO); first build package after the integrity fixes is the construction study, behind checkpoint C1; "I trust the values you recommend" confirmed the proposed values of `doc/audit/DECISION_CARD_P3_ALIGNMENT.md`. One page, rewritten in place. Cluster ticket: FND-0430; finding tickets FND-0431 (rotation gate), FND-0432 (partial-run and override guards), both OPEN and not worked until the owner lifts the freeze for P3 alignment. Letter L chosen by the assistant (the owner left it open). Position: after Package I closes (FND-0427 waits for the owner's diff review). Exit metric: every requirement of `doc/especificacion/ESPECIFICACION_P3.md` is VIGENTE, built and accepted under its prereg, or RETIRADO on recorded evidence.
+
+## 1. Decision needed
+None now. The next step, P3-1, starts on the owner's go-ahead (lift of the freeze) and after Package I closes.
+
+## 2. State (verified 2026-11-18)
+- **P3-0 delivered** (`8e2fd56`, `6a6e78b`, this page): audit reports in `doc/audit/`, `MATRIZ_HALLAZGOS_P3.md` (53 findings, each to a package or a dated DEFER, review 2027-01-15), `T0_BASELINE_P3.md`, `PIT_FIDELITY_REGISTER.md`, `DECISION_CARD_P3_ALIGNMENT.md`, spec with status per requirement, drift fixes in `proyecto3/AGENTS.md`.
+- **T0:** the 2026-11-17 PIT run is survivor-only (zero retired funds on 262 dates). Champion (band 0, net) Sharpe 0.56 against the frictionless pool 0.75; the champion's gross return is above the pool's, so most of the M1 gap is cost charged to one side (derived, not a measured result). Neither meets IPC+M3 (median 12-month excess -1.83 / -2.08 pp).
+- **Existing evidence found:** FND-0303 outcome V0_STAYS (a 60-month common window lowered Sharpe 0.129, drawdown -19.6 %); FND-0193 A3 (the static mix breaches the -15 % drawdown mandate at -20.5 %, so the regime layer earns its place on drawdown); FND-0299 reads returns at 24 and 36 months (2028-10, 2029-10).
+
+## 3. Sequence (unchanged from the approved plan)
+`P3-0` done -> `P3-1` -> **C1** -> `P3-2'` -> `P3-5a` -> **C2** -> conditional `P3-3`, `P3-4`, `P3-5b`, `P3-6`. One writing session at a time.
+- **P3-1 (2-3 sessions, red tests first):** 1.1 incumbent score from the same scoring run, one-to-one pairing; 1.2 ROT-0 as a priority rule; 1.3 harness hardening (E-14, H-11, H-12, GAP-07 diagnostic, E-15, E-16); 1.4 decision benchmarks (mandate-matched costed pool, persistent random selection R1 and redraw R2, gross and net, turnover split into regime-weight and holding changes); 1.5 silent-failure fixes (E-7 set-based, E-13, E-5 measured first; new refusals ship as WARN for one cycle); 1.6 `selection_health` in calibration mode; 1.7 `MIN_NAV_ROWS` diff with the rule fixed beforehand. Docstring fixes H-2 and H-8 ride with the first code delivery.
+- **C1:** continue to P3-2' if the mandate-matched gross construction gap is negative with its block-bootstrap interval below zero and net does not reverse it, or if the champion's cost drag against R1 exceeds 0.25 pp a year; cancel only if both fail and the gap lies inside +-0.10 Sharpe; otherwise INCONCLUSIVE goes to the owner with the power statement.
+- **P3-2':** feasibility first; at most 4 structural arms with grids of at most 2 points (transition cap {0.10, 0.20}; family representative highest score vs cheapest within a tolerance; a third only if C1 points to it); E-10 order bias as a correctness fix with a non-inferiority test; default universe (retired funds included), so a new PIT run; shadow log generalised from `hysteresis_shadow.py` with parameter hash and fail-soft isolation.
+- **P3-5a:** nature bonus off, within-nature ranking, an `Ongoing_Charge` cost term; the common-window question is already answered by FND-0303.
+- **P3-6 gate (changed 2026-11-18):** a Navigator must beat the current tree on drawdown without losing Sharpe; retirement by default is dropped because of FND-0193 A3.
+
+## 4. Rules that apply to every step
+Prereg and power check before any deciding run; ship OFF behind `*_ENABLED`; one function for live and PIT; mandate-level metrics (median and 25th percentile of excess over IPC+M3, max drawdown); structural rules activate on PIT, survivorship check, full-universe diff, deterministic shadow stream and the owner's order, while predictive changes wait for the FND-0299 checkpoints unless a power calculation justifies an earlier read; one full receipt per delivery; tickets only for what outlives the package.
+
+## 5. Decisions pending
+None open on the card. Later: C1 and C2; each switch-ON after its diff; the `MIN_NAV_ROWS` share once P3-1.6 measures the month-to-month change of the eligible set; the marginal tax rate and a broker statement sample only if the vehicle census and C2 start P3-4.

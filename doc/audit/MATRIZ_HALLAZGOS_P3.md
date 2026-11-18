@@ -42,7 +42,7 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | ID | Finding (short) | Severity | Destination |
 |---|---|---|---|
 | GAP-01 | "Judge" absent (net appraisal ratio, Newey-West, FDR, shrinkage) | High | P3-5b, only if P3-5a leaves headroom (C2) |
-| GAP-02 | "Navigator" absent (HMM, probabilities, EMAs) | Medium | P3-6, only if the static-mix result of FND-0193 shows the regime layer adds value (C2) |
+| GAP-02 | "Navigator" absent (HMM, probabilities, EMAs) | Medium | P3-6 (C2). The FND-0193 static-mix result shows the regime layer earns its place on drawdown, so a Navigator is judged against the current tree, not retired by default |
 | GAP-03 | No `TRANSITION_MAX_DEVIATION` | High | P3-2' arm 1 (behind C1) |
 | GAP-04 | Economic layer inoperative: gate OFF, incumbent score defect, no tax, no pessimistic cost | High | P3-1.1 (defect); the rest in P3-4 (conditional) |
 | GAP-05 | ROT-0 not explicit, can be reverted | High | P3-1.2 |
