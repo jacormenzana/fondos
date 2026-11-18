@@ -36,6 +36,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `scenario_lifecycle.py` | `proyecto3/src` |
 | `score_candidates.py` | `proyecto3/src` |
 | `scorer_config.py` | `proyecto3/src` |
+| `selection_health.py` | `proyecto3/src` |
 <!-- AUTO:END p3-module-map -->
 
 ### Regime classification (7 regimes, priority order)

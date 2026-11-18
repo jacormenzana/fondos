@@ -29,9 +29,11 @@ completo, runs 20261004_165611 / 20261004_172934): beta_oil > 0.01 x1.20, beta_r
 macro_r2 > 0.50 x0.85 y las patas de crisis beta_spread_hy / beta_vix (x0.60 / x1.30). Las de petroleo, VIX y spread
 HY no se activaban NUNCA en produccion (umbrales 15-40x fuera del rango real de las betas y, ademas, con el signo
 invertido); el spread HY no aporta nada y el VIX solo se comporta como una penalizacion de volatilidad suave cuyo
-beneficio es un unico episodio (2008-09); macro_r2 penalizaba a los fondos que menos caen. Quedan la penalizacion FX
-(no evaluada: sin equivalente PIT todavia) y el bonus de persistencia de alpha. Las betas macro se siguen calculando
-en P2 (informes, auditoria); el scorer ya no las lee.
+beneficio es un unico episodio (2008-09); macro_r2 penalizaba a los fondos que menos caen. La penalizacion FX y el bonus
+de persistencia de alpha de la lista de arriba quedaron NEUTRALES (x1.0) con el veredicto SIMPLIFY de FND-0193
+(2026-10-19: todos los MULT_* de scorer_params.yaml valen 1.0, PREREG_FND-0193 / SIMPLIFY_RUNBOOK_FND-0193): sus
+umbrales se siguen cargando y evaluando, sin efecto sobre el score; el codigo se retira tras dos ciclos estables.
+Las betas macro se siguen calculando en P2 (informes, auditoria); el scorer ya no las lee.
 
 Filtros duros:
     max_drawdown < límite_sub    excluir (riesgo de ruina)

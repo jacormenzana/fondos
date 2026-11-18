@@ -14,9 +14,9 @@ The champion's gross return is at or above the frictionless pool's (+0.28 pp, in
 
 ## Next, in this order
 1. **Owner job (needs his order):** a default-universe PIT run (no `--current-universe-only`; about 8 minutes cold): `python scripts/launch/p3_pit_backtest.py` as in `proyecto3/AGENTS.md`, then `python scripts/audit/p3/p3_pit_benchmarks.py --run-dir out/reports/pit_backtest/<STAMP>` (50 R1 draws take about 6 minutes). Read the report with the survivor-only banner absent. That is the C1 evidence; the owner decides C1.
-2. **1.6 `selection_health`** (read-only block, calibration mode over the PIT history first; thresholds at empirical percentiles; alerts only after calibration, never blocks): top-10 turnover per sub-portfolio, nature and manager concentration, NaN-weight share, eligible-set change (this is where E-7 is watched), hold and suspect counts.
-3. **E-5 measurement:** how many funds carry NaN in weighted metrics and what it does to the rank (a missing metric is penalised, not neutral); decide after measuring.
-4. **H-2, H-8 docstrings** (`fund_scorer.py` header, `pit_backtest.py`) with the next code delivery.
+2. **1.6 `selection_health`: built in calibration mode** (`proyecto3/src/selection_health.py`, `scripts/audit/p3/p3_selection_health.py --run-dir <PIT run>`, 8 tests). Calibrate it on the default-universe run of step 1 and read the thresholds; the survivor-only calibration found `top_nature_max` of the RAW top-10 degenerate (it cannot fire). Then wire the LIVE block (report-only): eligible-set change (E-7), top turnover, concentration on the CONSTRUCTED portfolio (nature and manager), `nan_weight_share` (E-5, in the module), counts of funds under a data hold or suspicion flag. Alerts never block.
+3. **E-5 measured (done):** the missing weight is almost all `alpha_persistence` (about 19 % of eligible funds); median imputation would change 6 of the Defensiva top 10, 2 of Equilibrada, 0 of Dinamica. The decision is an out-of-sample test in P3-5a, not a code change.
+4. **H-2, H-8 docstrings: done.**
 5. **One full receipt for the P3-1 delivery** (`python scripts/gov/delivery/delivery_attest.py --scope full`, started in the background on the last commit of the slice), then define FND-0431's closing condition (`backlog_client.add_close_condition`) and close on recorded evidence.
 
 ## Standing orders that bit this session

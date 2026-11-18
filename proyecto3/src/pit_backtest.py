@@ -16,8 +16,11 @@ Replaces the look-ahead loop in Backtester.run(): for every month-end t
      (funds that pass the same hard filters, no score selection) -> excess return isolates selection skill
      (FND-0189 / N3), instead of the old first-100-columns average.
 
-Not here yet: transaction costs / slippage (FND-0190, N4: needs the turnover convention for overlapping
-windows decided), the IPC+M3 absolute target of N3, incumbents/hysteresis, Sharpe of the simulated series.
+Also here (this list said "not here yet" until 2026-11-18, P3-1 / H-8): transaction costs (assemble_table: tx_cost_bps per side, once per
+holding window at entry plus a turnover-based cost on the chained 1-month series), the IPC+M3 absolute target (target_* / vs_target_*
+columns), incumbents / hysteresis (build_weights use_incumbents, hysteresis_experiment) and the statistics of the simulated series
+(series_stats, table_stats). NOT modelled: bid-ask by vehicle, redemption days out of the market, taxes, and the pool benchmark's own costs
+(it is frictionless; proyecto3/src/pit_benchmarks.py costs it for the C1 decision).
 """
 
 import logging
@@ -99,7 +102,8 @@ def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.Dat
     use_incumbents (FND-0205): the funds each sub-portfolio held the previous month are passed to the engine as
     incumbents, so they get the hysteresis bonus constraints.hysteresis_band in the ranking (the same mechanism
     as the live builder, PORTFOLIO_HYSTERESIS_ENABLED). An empty month resets the holdings. Only the SELECTION is
-    sticky: weights stay score-proportional, so turnover from re-weighting held funds remains.
+    sticky: the weights follow constraints.weight_method (equal by default, shared.config.PORTFOLIO_WEIGHT_METHOD since FND-0193; the
+    pre-registered study names score_proportional explicitly), so turnover from re-weighting held funds remains only with that method.
 
     rebalance_every / phase (FND-0217): the portfolio is re-selected only on every `rebalance_every`-th evaluation date
     (positions i with (i - phase) % rebalance_every == 0, counted over `at`); in between, the last portfolio is held as it

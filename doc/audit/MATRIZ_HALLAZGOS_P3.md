@@ -9,13 +9,13 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | ID | Finding (short) | Severity | Destination |
 |---|---|---|---|
 | H-1 | Regime tree: `AGENTS.md` says Estanflacion IPC > 4 %, code uses 3 % | Low | **Done 2026-11-18** in `proyecto3/AGENTS.md` (P3-0 item 5) |
-| H-2 | `fund_scorer.py` header still cites FX penalty and alpha bonus (both 1.0) | Low | First P3-1 code delivery (a docstring edit; P3-0 is docs-only) |
+| H-2 | `fund_scorer.py` header still cites FX penalty and alpha bonus (both 1.0) | Low | **Done 2026-11-18** (`fund_scorer.py` header: both multipliers are neutral since FND-0193) |
 | H-3 | Rolling-percentile multipliers 0.90 / 1.10 hardcoded outside the YAML, OFF | Low | DEFER 2027-01-15 (dead-code removal "after two stable cycles", `proyecto3/AGENTS.md`) |
 | H-4 | `DATA_SUSPECT_ENABLED` documented as OFF, value is True | Medium (misleads agents) | **Done 2026-11-18** (also the gate status, now ENFORCED in `controls.py:176`) |
 | H-5 | "Score ranks and selects, hysteresis included" while hysteresis is OFF; three band values | Medium | **Done 2026-11-18**; the rule itself stays with Package D (FND-0158) |
 | H-6 | Report colour thresholds hardcoded and out of line with the scorer | Low | DEFER 2027-01-15 (report package) |
 | H-7 | Legacy benchmark takes the first 100 valid funds by ISIN order | Low-Medium | DEFER 2027-01-15; sheet `3_Backtesting` only |
-| H-8 | PIT docstrings obsolete (costs, hysteresis, weights) | Low | First P3-1 code delivery (docstring edit; `pit_backtest.py` is touched by 1.4) |
+| H-8 | PIT docstrings obsolete (costs, hysteresis, weights) | Low | **Done 2026-11-18** (`pit_backtest.py` header and `build_weights` docstring) |
 | H-9 | `Dinámica` in docs vs `Dinamica` in code and YAML | Low | **Done 2026-11-18** (note added under the regime table) |
 | H-10 | Rotation gate reads `fund_scores` without regime or date | High (latent) | P3-1.2 |
 | H-11 | `VOL_FLOOR` duplicated as a literal | Low | P3-1.3 |
@@ -24,7 +24,7 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | E-2 | Cover sheet shows today's regime, not the scenario's | Medium (transparency) | DEFER 2027-01-15; revisit at C2 if the report is touched |
 | E-3 | Backtest sheet compares all months with today's target | Low | DEFER 2027-01-15 |
 | E-4 | Short-horizon weights can push the score out of [0, 1] (switch OFF) | Low | DEFER 2027-01-15 (reopen only if the switch is considered) |
-| E-5 | Missing metric is penalised, not neutral | High (affects every ranking) | P3-1.5: measure first, decide after |
+| E-5 | Missing metric is penalised, not neutral | Medium (revised 2026-11-18: measured; material only in Defensiva) | **Measured 2026-11-18 (P3-1.5)**: the missing weight is almost all `alpha_persistence` (about 19 % of eligible funds), an implicit short-history discount; median imputation would change 6 of the Defensiva top 10, 2 of Equilibrada, 0 of Dinamica. Decision moved to **P3-5a** (arm: missing metric = median percentile, tested out of sample); no code change by reading |
 | E-6 | Fund with no monthly NAV row passes the age rule | Medium (revised 2026-11-18: measured, no live effect) | **Done 2026-11-18** (P3-1.7, `scripts/audit/p3/nav_rows_eligibility_diff.py`): of 963 eligible funds of the live scoring run (regime Shock_Energetico), 0 have no monthly NAV and 0 have fewer than 12 rows. No switch needed; reopen only if the count becomes non-zero |
 | E-7 | Latest run assumed to be the full universe | Low-Medium (revised 2026-11-18: no production path writes a partial run) | P3-1.6 `selection_health` (eligible-set change, calibrated alert); no refusal, no set comparison (deduplication removes rows, so no expected set exists) |
 | E-8 | Legacy backtest has no history for some regimes | Low | DEFER 2027-01-15 |
