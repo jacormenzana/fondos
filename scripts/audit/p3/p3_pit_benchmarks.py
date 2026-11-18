@@ -68,7 +68,7 @@ def _neg(g: dict) -> dict:
     return {**g, "point": -g["point"], "ci_low": -g["ci_high"], "ci_high": -g["ci_low"], "prob_positive": 1.0 - g["prob_positive"]}
 
 
-def _gaps(champion: dict, pool_free: pd.DataFrame, pool_match: pd.DataFrame, r1: "list[pd.DataFrame]", cash: pd.Series, args) -> dict:
+def _gaps(champion: dict, pool_free: pd.DataFrame, pool_match: pd.DataFrame, r1: "list[pd.DataFrame]", r2: "list[pd.DataFrame]", cash: pd.Series, args) -> dict:
     kw = dict(n_boot=args.boot, mean_block=args.mean_block, seed=args.seed)
     out = {}
     for level in ("gross", "net"):
@@ -79,6 +79,15 @@ def _gaps(champion: dict, pool_free: pd.DataFrame, pool_match: pd.DataFrame, r1:
             "champion - matched pool": {k: B.bootstrap_gap([c], pm, k, cash, **kw) for k in ("ann_return", "sharpe")},
             "champion - unconstrained pool (the FND-0429 comparator)": {k: B.bootstrap_gap([c], pf, k, cash, **kw) for k in ("ann_return", "sharpe")},
         }
+    # Gross-only separations that use the monthly-redraw variant. R1 keeps its holdings until they stop being eligible, so "R1 - pool" mixes the cost of the caps
+    # with a persistence effect; R2 re-selects every month like the champion, so R2 - pool isolates the caps and champion - R2 is the gross selection effect. R2's NET
+    # is meaningless (it trades about 185 % of the capital a month), hence gross only. The persistence row compares with the MEAN of the R2 draws (descriptive).
+    r2g = [s[level_] for s in r2 for level_ in ("gross",)]
+    r2_mean = pd.concat(r2g, axis=1).mean(axis=1)
+    pm, c = pool_match["gross"], champion["gross"]
+    out["gross"]["caps R2 - matched pool (fresh random each month)"] = {k: B.bootstrap_gap(r2g, pm, k, cash, **kw) for k in ("ann_return", "sharpe")}
+    out["gross"]["persistence R1 - R2 (mean of the R2 draws)"] = {k: B.bootstrap_gap([s["gross"] for s in r1], r2_mean, k, cash, **kw) for k in ("ann_return", "sharpe")}
+    out["gross"]["selection champion - R2 (both re-select every month)"] = {k: _neg(B.bootstrap_gap(r2g, c, k, cash, **kw)) for k in ("ann_return", "sharpe")}
     return out
 
 
@@ -90,7 +99,12 @@ def c1_rule(gaps: dict, arms: dict, args) -> dict:
     s = g_gross["sharpe"]
     inside = bool(s["ci_low"] > -args.delta and s["ci_high"] < args.delta)
     outcome = "PROCEED" if (a_ok or b_ok) else ("CANCEL" if inside else "INCONCLUSIVE")
-    return {"outcome": outcome, "a_gross_construction_gap_below_zero_and_net_not_reversed": a_ok, "b_champion_drag_minus_R1_drag": float(drag_diff),
+    caps = gaps["gross"]["caps R2 - matched pool (fresh random each month)"]["ann_return"]
+    pers = gaps["gross"]["persistence R1 - R2 (mean of the R2 draws)"]["ann_return"]
+    return {"outcome": outcome,
+            "information_not_in_the_rule": {"gross_caps_gap_R2_minus_pool": caps["point"], "gross_caps_gap_interval": [caps["ci_low"], caps["ci_high"]],
+                                            "gross_persistence_gap_R1_minus_R2": pers["point"], "champion_drag_minus_pool_drag": float(arms["champion_band0"]["annual_cost_drag"] - arms["pool_matched"]["annual_cost_drag"]),
+                                            "note": "R1 keeps its holdings, so R1 - pool mixes the caps with a persistence effect; the rule above follows the approved plan (R1)"}, "a_gross_construction_gap_below_zero_and_net_not_reversed": a_ok, "b_champion_drag_minus_R1_drag": float(drag_diff),
             "b_exceeds_threshold": b_ok, "drag_threshold": args.drag_threshold, "sharpe_gap_inside_equivalence_margin": inside, "delta": args.delta,
             "reading": "mechanical reading of the decision card; the owner decides at C1"}
 
@@ -128,6 +142,11 @@ def render_md(r: dict) -> str:
           f"- (a) gross construction gap below zero with its interval, and net not reversed: {c['a_gross_construction_gap_below_zero_and_net_not_reversed']}",
           f"- (b) champion annual cost drag minus R1's: {fmt(c['b_champion_drag_minus_R1_drag'])} against the threshold {fmt(c['drag_threshold'])}: {c['b_exceeds_threshold']}",
           f"- Sharpe construction gap inside +-{c['delta']}: {c['sharpe_gap_inside_equivalence_margin']}", "", c["reading"] + ".", ""]
+    i = c["information_not_in_the_rule"]
+    L += ["### Not in the rule, for the reading", "",
+          f"- Gross caps effect (R2 - matched pool): {fmt(i['gross_caps_gap_R2_minus_pool'])} a year, 90 % interval {fmt(i['gross_caps_gap_interval'][0])} .. {fmt(i['gross_caps_gap_interval'][1])}.",
+          f"- Gross persistence effect (R1 - R2): {fmt(i['gross_persistence_gap_R1_minus_R2'])} a year: part of R1 - pool is NOT the construction rules.",
+          f"- Champion annual cost drag minus the pool's: {fmt(i['champion_drag_minus_pool_drag'])}.", f"- {i['note']}.", ""]
     return "\n".join(L)
 
 
@@ -194,7 +213,7 @@ def main(argv=None) -> int:
     mandate = {n: {str(w): B.window_summary(B.rolling_excess(s, target, w)) for w in (36, 60)} for n, s in mandate_src.items()}
     gaps = _gaps({"gross": series["champion_band0"]["gross"], "net": series["champion_band0"]["net"]},
                  {"gross": series["pool_unconstrained"]["gross"], "net": series["pool_unconstrained"]["net"]},
-                 {"gross": series["pool_matched"]["gross"], "net": series["pool_matched"]["net"]}, r1_series, cash, args)
+                 {"gross": series["pool_matched"]["gross"], "net": series["pool_matched"]["net"]}, r1_series, r2_series, cash, args)
     result = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "run_dir": str(run), "run_git": manifest.get("git_commit"), "n_dates": len(at),
               "survivor_only": bool(manifest.get("args", {}).get("current_universe_only")), "bps": args.bps, "draws": args.draws, "r2_draws": args.r2_draws,
               "seed": args.seed, "elapsed_s": time.time() - t0, "arms": arms, "mandate": mandate, "gaps": gaps}
