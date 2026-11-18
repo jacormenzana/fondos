@@ -5,7 +5,7 @@ One page, answered once. Every value below is **my proposal**, with its reason. 
 ## Owner confirmation, 2026-11-18
 The owner answered "I trust the values you recommend". That confirms the proposed values of rows 2, 3, 5, 6, 7 and 10 as written, and row 1's position. Recorded with these precisions, so nothing is left implicit:
 - **Row 1:** the letter was left to me; I chose **L** (A, B, D, F, H, I, J, K, S and RECEIPT already have pages; C, E, G are reserved for other clusters). Position: after Package I closes.
-- **Row 4:** the rule is confirmed; the **5 % share stays a placeholder** and is set from the P3-1.6 measurement and announced before the diff is read. It is not a measured value.
+- **Row 4:** the rule is confirmed; the **5 % share stays a placeholder** and is set from the P3-1.6 measurement and announced before the diff is read. It is not a measured value. **Update 2026-11-18: moot for now.** The diff was run (`scripts/audit/p3/nav_rows_eligibility_diff.py`, read-only): the live eligible set (963 funds) has 0 funds under 12 monthly NAV rows, so the share is 0 % in every nature and no threshold decides anything.
 - **Row 7:** the construction study uses the **default universe** (retired funds included), which needs a new PIT run.
 - **Rows 8 and 9:** these were requests for pointers, not values; I found both results myself (below), so they are answered, not delegated.
 

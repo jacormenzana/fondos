@@ -25,7 +25,7 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | E-3 | Backtest sheet compares all months with today's target | Low | DEFER 2027-01-15 |
 | E-4 | Short-horizon weights can push the score out of [0, 1] (switch OFF) | Low | DEFER 2027-01-15 (reopen only if the switch is considered) |
 | E-5 | Missing metric is penalised, not neutral | High (affects every ranking) | P3-1.5: measure first, decide after |
-| E-6 | Fund with no monthly NAV row passes the age rule | Medium | P3-1.7 (measure-only diff, rule fixed beforehand) |
+| E-6 | Fund with no monthly NAV row passes the age rule | Medium (revised 2026-11-18: measured, no live effect) | **Done 2026-11-18** (P3-1.7, `scripts/audit/p3/nav_rows_eligibility_diff.py`): of 963 eligible funds of the live scoring run (regime Shock_Energetico), 0 have no monthly NAV and 0 have fewer than 12 rows. No switch needed; reopen only if the count becomes non-zero |
 | E-7 | Latest run assumed to be the full universe | Low-Medium (revised 2026-11-18: no production path writes a partial run) | P3-1.6 `selection_health` (eligible-set change, calibrated alert); no refusal, no set comparison (deduplication removes rows, so no expected set exists) |
 | E-8 | Legacy backtest has no history for some regimes | Low | DEFER 2027-01-15 |
 | E-9 | No `assert_no_overlay` inside `proyecto3/src` | Medium | DEFER 2027-01-15; verify in the launcher audit when P3-1 touches the launchers |
@@ -51,7 +51,7 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | GAP-08 | L3 and L4 coupled | Medium | P3-4 (conditional) |
 | GAP-09 | No execution ledger or orders | Medium | P3-4 (conditional) |
 | GAP-10 | L4 friction parameters absent | Medium | P3-4 (conditional) |
-| GAP-11 | `MIN_NAV_ROWS` and survival only indirect in the live scorer | Low | P3-1.7 |
+| GAP-11 | `MIN_NAV_ROWS` and survival only indirect in the live scorer | Low | **Measured 2026-11-18 (P3-1.7): the live eligible set has no fund under 12 rows**, so the indirect guarantee (P2 does not produce metrics for short histories) holds today. Documented as a precondition in `ESPECIFICACION_P3.md` REQ-02; an explicit check in `check_hard_filters` stays optional |
 
 ## Unspecified behaviours found in code (IMP)
 

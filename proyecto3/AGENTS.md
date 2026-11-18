@@ -17,6 +17,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `monthly_report.py` | `proyecto3/src` |
 | `pit_backtest.py` | `proyecto3/src` |
 | `pit_baselines.py` | `proyecto3/src` |
+| `pit_benchmarks.py` | `proyecto3/src` |
 | `pit_cache.py` | `proyecto3/src` |
 | `pit_candidates.py` | `proyecto3/src` |
 | `pit_crisis_variants.py` | `proyecto3/src` |
