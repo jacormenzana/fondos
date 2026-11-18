@@ -43,11 +43,13 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 |--------|---------|
 | `Crisis_Financiera` | HY spread > 600bps AND VIX YoY > 30% |
 | `Shock_Energetico` | WTI oil YoY > 25% |
-| `Estanflacion` | Weak/negative growth + IPC > 4% |
-| `Contraccion` | Recession + low/negative inflation |
-| `Recalentamiento_Tardio` | Rates rising, IPC high, CLI still positive |
-| `Recalentamiento` | Strong growth, IPC high and rising |
-| `Expansion` | Normal growth, moderate rates, IPC < 3% |
+| `Estanflacion` | CLI < 100 AND IPC > 3% (`regime_classifier.py:398`) |
+| `Contraccion` | CLI < 100 without IPC > 3%; also the fail-safe for a missing CLI, and CLI ≥ 100 with deposit rate < 1% (`:392-393,411-413`) |
+| `Recalentamiento_Tardio` | CLI ≥ 100, IPC > 4% and the 3-month change of the deposit rate > 0 |
+| `Recalentamiento` | CLI ≥ 100, IPC > 4% and rates not rising |
+| `Expansion` | Residual case: CLI ≥ 100, deposit rate ≥ 1%, IPC up to 4% (`:415`) |
+
+Sub-portfolio keys in code and YAML are spelled `Dinamica` (no accent); the tables here keep the accent for reading only.
 
 ### Sub-portfolio weights by regime
 
@@ -81,7 +83,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 ### Portfolio construction constraints
 
 Max 10 funds/sub-portfolio · max 20% per fund · max 2 funds per manager (a count, global across sub-portfolios — there is no weight cap per manager) · min 3% per fund · max 5 same Fund_Nature per sub-portfolio.  
-Weight method: `equal` (FND-0193 SIMPLIFY, 2026-10-19: score weighting did not earn its place out of sample; the score still ranks and selects, hysteresis included; `portfolio_builder.WEIGHT_METHOD`). Sub-portfolio and master weights sum to exactly 1.0000 (largest-remainder rounding, never a weight past
+Weight method: `equal` (FND-0193 SIMPLIFY, 2026-10-19: score weighting did not earn its place out of sample; the score still ranks and selects; the hysteresis bonus to incumbents is OFF, `PORTFOLIO_HYSTERESIS_ENABLED = False` in `shared/config.py`, so with the switch OFF no previous portfolio is loaded and no bonus applies, and the band is 0.10 in `shared/config.py`, 0.05 as the `PortfolioConstraints` default and a 0-0.40 grid in the PIT experiments; `portfolio_builder.WEIGHT_METHOD`). Sub-portfolio and master weights sum to exactly 1.0000 (largest-remainder rounding, never a weight past
 its bound); the currency budget is a construction constraint too (see "Scenario lifecycle & currency exposure").
 
 ### Monthly report (monthly_report.py)
@@ -135,12 +137,12 @@ is active. Each entry carries its ticket, `since` / `until` (at most 90 days: it
 `load_fund_metrics_for_scoring` and read second by `check_hard_filters`, independent of `FUND_DATA_ELIGIBILITY_ENABLED`; the PIT backtest does not carry it. Release early by deleting the entry once the ticket has its verdict. It acts at the
 next scoring run (a stored `fund_scores` row is not rewritten by the config change).
 
-**Verified-genuine exemptions (FND-0394, `shared/data_exemption.py`, `shared.config.DATA_SUSPECT_EXEMPTIONS`):** the data-suspicion predicate (`shared/data_suspect.py`, `DATA_SUSPECT_ENABLED` OFF, nothing in selection reads it) flags statistical extremes; an exemption records that a human
+**Verified-genuine exemptions (FND-0394, `shared/data_exemption.py`, `shared.config.DATA_SUSPECT_EXEMPTIONS`):** the data-suspicion predicate (`shared/data_suspect.py`, `DATA_SUSPECT_ENABLED` ON since 2026-11-12 by owner decision, `shared/config.py:701-703`; OFF is the rollback) flags statistical extremes; an exemption records that a human
 verified named QUANTITIES (`metric|horizon`) of one fund and its family as real (ticket with the evidence, `since` / `until` at most 180 days, reason, evidence), so they stop counting for the DEVIATION and INTEGRITY tiers; a NAV-level flag is never exempted. It warns
 `DATA_SUSPECT_EXEMPTION_WARN_DAYS` (7) before `until` (cycle report and promotion output), then exempts exactly ONE more P3 build (`exemption_grace`: the first scenario created after `until`, derived from `gold.portfolio_scenarios`, no stored state), then lapses.
 Consumers pass `load_effective_exemptions(conn)` to `find_suspects`; `scripts/audit/nav/data_suspect_report.py` (read-only) prints the suspects with and without them. First case: ES0116848013 (`sortino|crisis_2022`, FND-0403).
 
-**Suspicion barriers (FND-0394 phase 2, all behind `DATA_SUSPECT_ENABLED`, ships OFF; with it OFF nothing is read, printed or changed):** (1) live scorer: `load_fund_metrics_for_scoring` adds `data_suspect_reason` (every share class of a suspect family) and `exemption_grace`; `check_hard_filters` returns the reason (`data_suspect: ...`, after the data hold, before the data-eligibility rules); a fund in its one grace build stays eligible and carries `exemption_grace: ...` in `fund_scores.notes` and `score_detail`. (2) promotion gate `D-DATA-SUSPECT` (`GATE_DATA_SUSPECT`, `shared/governance/controls.py`, status `dormant:DATA_SUSPECT_ENABLED`): a suspect fund in the scenario is a soft blocker covered by `--accept-alarms` + `--ap`; an unreadable panel refuses (fail closed). (3) PIT backtest: at EACH date the predicate judges the metrics observable then (`pit_suspect_reasons`, months of NAV as the sample size) and feeds the scorer's own filter through `data_suspect_reason`; only the exemption registry is today's decision (grace excluded); part of the cache key only when ON. Read the diff before anyone switches it on: `python scripts/audit/nav/data_suspect_report.py --diff` (read-only, eligible set OFF versus ON, PRODUCTION funds marked).
+**Suspicion barriers (FND-0394 phase 2, all behind `DATA_SUSPECT_ENABLED`, ON since 2026-11-12; with it OFF, the rollback, nothing is read, printed or changed):** (1) live scorer: `load_fund_metrics_for_scoring` adds `data_suspect_reason` (every share class of a suspect family) and `exemption_grace`; `check_hard_filters` returns the reason (`data_suspect: ...`, after the data hold, before the data-eligibility rules); a fund in its one grace build stays eligible and carries `exemption_grace: ...` in `fund_scores.notes` and `score_detail`. (2) promotion gate `D-DATA-SUSPECT` (`GATE_DATA_SUSPECT`, `shared/governance/controls.py:172-176`, status ENFORCED): a suspect fund in the scenario is a soft blocker covered by `--accept-alarms` + `--ap`; an unreadable panel refuses (fail closed). (3) PIT backtest: at EACH date the predicate judges the metrics observable then (`pit_suspect_reasons`, months of NAV as the sample size) and feeds the scorer's own filter through `data_suspect_reason`; only the exemption registry is today's decision (grace excluded); part of the cache key only when ON. Read the diff before anyone switches it on: `python scripts/audit/nav/data_suspect_report.py --diff` (read-only, eligible set OFF versus ON, PRODUCTION funds marked).
 **Degenerate ratios (structural rule for money-market / constant-NAV funds, FND-0404):** a Sharpe / Sortino / return-to-volatility row whose OWN volatility denominator (`vol_ann` of the same horizon or regime; the smallest across nominal and real variants) is below
 `DATA_SUSPECT_LOW_VOL_FLOOR` (0.005 = the first SRRI boundary: volatility < 0.5% is risk class 1; 0 = off) is arithmetic on a near-zero denominator and does not count for the DEVIATION or INTEGRITY tier. It reads the denominator the fund has, never its nature or name; an unknown
 denominator is not degenerate; the fund's other metrics still count; `degenerate_hits` / the report list every withdrawn row; the PIT run applies it with the `vol_ann` observable at each date. Measured 2026-11-09: 150 of the 153 adequate ratio rows at |z| >= 20 sit under the floor. It makes
