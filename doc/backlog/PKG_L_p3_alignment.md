@@ -25,3 +25,6 @@ Prereg and power check before any deciding run; ship OFF behind `*_ENABLED`; one
 
 ## 5. Decisions pending
 None open on the card. Later: C1 and C2; each switch-ON after its diff; the `MIN_NAV_ROWS` share once P3-1.6 measures the month-to-month change of the eligible set; the marginal tax rate and a broker statement sample only if the vehicle census and C2 start P3-4.
+
+## 6. Owner rulings of 2026-11-19
+FND-0432 rejected as not a defect (successor FND-0433). E-13 decided fail-closed and implemented in `f365c11` (FND-0433): a promotion override is refused when its owning ticket cannot be verified in `gestion.backlog`; the hard gates and promotions without an override are unchanged. Full receipt PASSED for `f365c11` (7485 passed, 0 failed, 751.9 s, scope full). P3-1 stays paused until the owner's default-universe PIT run delivers the C1 numbers.
