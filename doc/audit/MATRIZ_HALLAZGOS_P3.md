@@ -1,6 +1,6 @@
 # P3 finding → package matrix (P3-0, 2026-11-18)
 
-Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_proyecto3.md` (GAP-, IMP-) goes to a package of the approved roadmap or to a dated DEFER. Package names follow the plan: P3-0 governance, P3-1 integrity fixes and benchmarks, P3-2' construction study (after checkpoint C1), P3-5a score-layer tests, and the conditional packages P3-3, P3-4, P3-5b, P3-6 (each needs a go-ahead at checkpoint C2).
+Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_proyecto3.md` (GAP-, IMP-) goes to a package of the approved roadmap or to a dated DEFER. Package names follow the plan: P3-0 governance, P3-1 integrity fixes and benchmarks, P3-2' hysteresis and turnover calibration (FND-0158 PIT calibration, scores frozen; narrowed by the owner on 2026-11-19 after checkpoint C1), P3-5a score-layer levers (with a read-only turning-point diagnostic first), and the conditional packages P3-3, P3-4, P3-5b, P3-6 (each needs a go-ahead at checkpoint C2).
 
 **DEFER review dates are proposals** (2027-01-15 is the date already used by FND-0257); nothing here is a recorded decision of the owner until confirmed on the decision card. Severity is the report's own where it has one, otherwise my judgement.
 
@@ -29,7 +29,7 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | E-7 | Latest run assumed to be the full universe | Low-Medium (revised 2026-11-18: no production path writes a partial run) | P3-1.6 `selection_health` (eligible-set change, calibrated alert); no refusal, no set comparison (deduplication removes rows, so no expected set exists) |
 | E-8 | Legacy backtest has no history for some regimes | Low | DEFER 2027-01-15 |
 | E-9 | No `assert_no_overlay` inside `proyecto3/src` | Medium | DEFER 2027-01-15; verify in the launcher audit when P3-1 touches the launchers |
-| E-10 | Cross-exclusion favours the sub-portfolio built first | Medium | P3-2' (correctness fix with a non-inferiority test) |
+| E-10 | Cross-exclusion favours the sub-portfolio built first | Medium | **DEFER to C2, review 2027-01-15** (owner, 2026-11-19: P3-2' is isolated to hysteresis and turnover calibration; construction order is a Layer 3 correctness issue, reviewed at C2 with a non-inferiority test if construction is reopened) |
 | E-11 | Reverted rotation skips family, manager, nature, FX checks | High (latent) | P3-1.2 |
 | E-12 | `generate_report(score_version)` ignored | Low | DEFER 2027-01-15 |
 | E-13 | Promotion override passes when the backlog is unreachable | Policy question (revised 2026-11-18: documented, tested behaviour, "a warning, never a blocker") | **Decided 2026-11-19 by the owner: fail-closed.** Implemented in FND-0433 (`scenario_lifecycle.evaluate_promotion`, `p3_promote_scenario.py`, control `G-OVERRIDE-AP`); FND-0432 rejected |
@@ -43,11 +43,11 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 |---|---|---|---|
 | GAP-01 | "Judge" absent (net appraisal ratio, Newey-West, FDR, shrinkage) | High | P3-5b, only if P3-5a leaves headroom (C2) |
 | GAP-02 | "Navigator" absent (HMM, probabilities, EMAs) | Medium | P3-6 (C2). The FND-0193 static-mix result shows the regime layer earns its place on drawdown, so a Navigator is judged against the current tree, not retired by default |
-| GAP-03 | No `TRANSITION_MAX_DEVIATION` | High | P3-2' arm 1 (behind C1) |
+| GAP-03 | No `TRANSITION_MAX_DEVIATION` | High (revised 2026-11-19: regime jumps are 5 % of capital a month, at most 0.15 pp a year of cost) | **Out of P3-2'** (owner: isolated to hysteresis and turnover calibration). REQ-24 marked "untestable on history (about 0.4 pp detectable); decide on mandate grounds or retire" |
 | GAP-04 | Economic layer inoperative: gate OFF, incumbent score defect, no tax, no pessimistic cost | High | **P3-1.1 done 2026-11-18 (FND-0431)**; the rest in P3-4 (conditional) |
 | GAP-05 | ROT-0 not explicit, can be reverted | High (revised: the revert branch was unreachable, so it could not reinstate anyone; the real defect was that the gate never reverted) | **P3-1.2 done 2026-11-18 (FND-0431)** |
 | GAP-06 | Vehicle eligibility (UCITS / ETF, allowed types) absent | Medium | P3-3 (census first) |
-| GAP-07 | Family class not chosen by cost | Medium | P3-1.3 diagnostic, then P3-2' arm 2 |
+| GAP-07 | Family class not chosen by cost | Medium | **Diagnostic run 2026-11-19** (saved scores of run 20261119_202509): exactly one eligible row per (date, sub-portfolio, family), 0 of 319,750 groups with more than one, no missing family id; so `pit_selection_test.pick_units`' "cheapest class" rule is a no-op and the representative is always the highest-scored class (E-16 does not occur). The cost-based choice becomes the P3-5a candidate **fee-aware class choice** (stated entry fees: median 2.0 %, mean 2.3 %) |
 | GAP-08 | L3 and L4 coupled | Medium | P3-4 (conditional) |
 | GAP-09 | No execution ledger or orders | Medium | P3-4 (conditional) |
 | GAP-10 | L4 friction parameters absent | Medium | P3-4 (conditional) |
@@ -66,7 +66,7 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | IMP-07 | DRAFT / PRODUCTION / ARCHIVED lifecycle | Absorbed as the real execution step today |
 | IMP-08 | Structural cash and 10 % cap | Absorbed |
 | IMP-09 | Data hold, data suspicion, exemptions | Absorbed (merged with REQ-01 quarantine) |
-| IMP-10 | Hysteresis shadow measurement | Absorbed as an L4 control; generalised in P3-2' |
+| IMP-10 | Hysteresis shadow measurement | Absorbed as an L4 control, owned by FND-0158; P3-2' only calibrates the band and cadence on the saved scores (no code; the shadow log is not generalised) |
 | IMP-11 | PIT backtest and model-value study | Absorbed as the validation layer |
 | IMP-12 | Report reconciliation gates and colour thresholds | Gates absorbed; colours DEFER with H-6 |
 | IMP-13 | FND-0429 selection test | Absorbed as the validation criterion for the Judge and for L3 |
