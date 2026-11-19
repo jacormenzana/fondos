@@ -20,6 +20,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `pit_benchmarks.py` | `proyecto3/src` |
 | `pit_cache.py` | `proyecto3/src` |
 | `pit_candidates.py` | `proyecto3/src` |
+| `pit_cost_check.py` | `proyecto3/src` |
 | `pit_crisis_variants.py` | `proyecto3/src` |
 | `pit_inputs.py` | `proyecto3/src` |
 | `pit_macro.py` | `proyecto3/src` |
@@ -27,6 +28,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `pit_oos.py` | `proyecto3/src` |
 | `pit_peer_metrics.py` | `proyecto3/src` |
 | `pit_run.py` | `proyecto3/src` |
+| `pit_seal.py` | `proyecto3/src` |
 | `pit_selection_test.py` | `proyecto3/src` |
 | `pit_short_horizon.py` | `proyecto3/src` |
 | `pit_value.py` | `proyecto3/src` |
