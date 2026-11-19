@@ -128,11 +128,11 @@ def main(argv=None) -> int:
     fees = pd.DataFrame()
     if not args.no_fees:
         entry, exit_ = _load_fees(conn)
-        eligible_attr = inputs.attrs.index
+        eligible_attr = pd.Index(pit_run.scores.loc[pit_run.scores["eligible"], "isin"].unique())      # the funds the model could ever hold, not retired junk
         known = entry.reindex(eligible_attr).dropna()
         de = float(known.median()) if len(known) else 0.0
         dx = float(exit_.reindex(eligible_attr).dropna().median()) if exit_.reindex(eligible_attr).notna().any() else 0.0
-        print(f"[FEES] entry fee known for {len(known)} of {len(eligible_attr)} funds; median {de:.4f}; default for unknown funds = the median (counted, not hidden)")
+        print(f"[FEES] entry fee known for {len(known)} of {len(eligible_attr)} ever-eligible funds; median {de:.4f}; default for unknown funds = the median of the ever-eligible funds (counted, not hidden)")
         frows = []
         for label, (g, tu, cash, W) in var.items():
             if W is None:
