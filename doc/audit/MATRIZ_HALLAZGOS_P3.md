@@ -32,7 +32,7 @@ Every finding of `INVENTARIO_FUNCIONAL_proyecto3.md` (H-, E-), `GAP_ANALYSIS_pro
 | E-10 | Cross-exclusion favours the sub-portfolio built first | Medium | P3-2' (correctness fix with a non-inferiority test) |
 | E-11 | Reverted rotation skips family, manager, nature, FX checks | High (latent) | P3-1.2 |
 | E-12 | `generate_report(score_version)` ignored | Low | DEFER 2027-01-15 |
-| E-13 | Promotion override passes when the backlog is unreachable | Policy question (revised 2026-11-18: documented, tested behaviour, "a warning, never a blocker") | Owner decision: keep, or refuse when the owning ticket cannot be checked. Not changed |
+| E-13 | Promotion override passes when the backlog is unreachable | Policy question (revised 2026-11-18: documented, tested behaviour, "a warning, never a blocker") | **Decided 2026-11-19 by the owner: fail-closed.** Implemented in FND-0433 (`scenario_lifecycle.evaluate_promotion`, `p3_promote_scenario.py`, control `G-OVERRIDE-AP`); FND-0432 rejected |
 | E-14 | Drawdown condition and survivorship gap default to 0.0 when missing | Medium | P3-1.3 |
 | E-15 | PIVOT by the sign of the point estimate | Low (it is the signed rule) | P3-1.3: `verdict` also returns lower bound and standard error |
 | E-16 | `pick_units` does not validate a null `fund_family_id` | Low (static reading) | P3-1.3 diagnostic |

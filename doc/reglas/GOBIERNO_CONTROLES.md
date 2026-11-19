@@ -122,7 +122,7 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
 
 | Id | Criterio | Consecuencia | Fuente | Estado |
 |---|---|---|---|---|
-| `G-OVERRIDE-AP` | `--accept-alarms` exige motivo y `--ap FND-nnnn` existente en `gestion.backlog`; sin ello el override no se aplica | `BLOCK` | `GATE:OVERRIDE_AP` | enforced |
+| `G-OVERRIDE-AP` | `--accept-alarms` exige motivo y `--ap FND-nnnn` existente en `gestion.backlog` y VERIFICADO allí (un ticket que no se puede comprobar porque el backlog no responde también se rechaza: fail-closed, decisión del propietario 2026-11-19, FND-0433); sin ello el override no se aplica | `BLOCK` | `GATE:OVERRIDE_AP` | enforced |
 | `G-COMPLETENESS` | cada comprobación obligatoria produjo resultado; una entrada `MISSING` (o una obligatoria `EMPTY` en corrida FULL) hace la corrida `INCOMPLETE`, código de salida 2, nunca un pase; el estado se escribe en `control.audit_run` con las filas de la corrida, en una sola transacción (§7) | `BLOCK` | `CODE:shared.statistical_audit.completeness.run_status` | enforced |
 | `G-EVIDENCE-RUN` | la corrida que lee la puerta es la última cabecera de `control.audit_run` de ámbito FULL y estado distinto de `INCOMPLETE`, posterior al DRAFT; una corrida FAIL cuenta (D4); una `_sample` nunca (siempre activo: `gating.SAMPLE_RUN_SUFFIX`) | `BLOCK` | `CODE:shared.statistical_audit.gating.select_evidence_run` | enforced |
 | `G-COST` | los defectos duros abiertos de la auditoría de evidencia de `cost_attributes` sobre fondos de la cartera rechazan como los de `p2_metrics` (D8: `scripts/audit/stat/cost_gate_replay.py` sobre las corridas pasadas, un ciclo en sombra, luego el interruptor) | `BLOCK` | `GATE:COST` | dormant:COST_DOMAIN_GATE_ENABLED |

@@ -95,15 +95,16 @@ def _scope(**over):
 
 
 def _ok(**over):
+    # ap_exists=True by default since FND-0433 (2026-11-19): an override applies only when the owning ticket was VERIFIED; a test that wants the unverifiable case passes None.
     base = dict(status="DRAFT", n_funds=30, weight_sum=1.0, stale_checks=[], exposure_non_eur=0.2, budget=0.3,
-                audit=_scope(), built_at=BUILT_AT)
+                audit=_scope(), built_at=BUILT_AT, ap_exists=True)
     base.update(over)
     return lc.promotion_blockers(**base)
 
 
 def _verdict(**over):
     base = dict(status="DRAFT", n_funds=30, weight_sum=1.0, stale_checks=[], exposure_non_eur=0.2, budget=0.3,
-                audit=_scope(), built_at=BUILT_AT)
+                audit=_scope(), built_at=BUILT_AT, ap_exists=True)
     base.update(over)
     return lc.evaluate_promotion(**base)
 
@@ -168,12 +169,31 @@ def test_an_unplaceable_defect_is_assumed_to_touch_the_scenario():
 def test_the_override_needs_a_reason_and_a_ticket_and_the_ticket_must_exist():
     scope = _scope(on_scenario=[_defect()])
     assert _ok(audit=scope, accept_alarms="congelados RU/EE", accept_ap="FND-0250") == []
-    assert _ok(audit=scope, accept_alarms="congelados RU/EE", accept_ap="FND-0250", ap_exists=None) == []     # backlog unreachable: warn only
     for reason, ap, exists, code in [("", "FND-0250", True, "DATA_SCENARIO"), ("   ", "FND-0250", True, "DATA_SCENARIO"),
                                      ("why", None, None, "OVERRIDE_AP"), ("why", "0250", None, "OVERRIDE_AP"),
-                                     ("why", "FND-0250", False, "OVERRIDE_AP")]:
+                                     ("why", "FND-0250", False, "OVERRIDE_AP"),
+                                     ("why", "FND-0250", None, "OVERRIDE_AP")]:                    # FND-0433: a ticket that could not be checked is refused too
         out = _ok(audit=scope, accept_alarms=reason, accept_ap=ap, ap_exists=exists)
         assert out and out[0].startswith("[GATE:DATA_SCENARIO]") and any(f"[GATE:{code}]" in b for b in out), (reason, ap, exists)
+
+
+def test_an_override_whose_owning_ticket_cannot_be_verified_is_refused_fail_closed():
+    """FND-0433 (owner ruling 2026-11-19): with gestion.backlog unreachable (ap_exists None) the override does not apply, and the refusal says why in its own stable code."""
+    scope = _scope(on_scenario=[_defect()])
+    v = _verdict(audit=scope, accept_alarms="congelados RU/EE", accept_ap="FND-0250", ap_exists=None)
+    assert v.overridden == [] and v.blockers[0].startswith("[GATE:DATA_SCENARIO]")
+    unverifiable = [b for b in v.blockers if b.startswith("[GATE:OVERRIDE_AP]")]
+    assert len(unverifiable) == 1 and "FND-0250" in unverifiable[0] and "no se pudo comprobar" in unverifiable[0] and "fail-closed" in unverifiable[0]
+    assert _verdict(audit=scope, accept_alarms="congelados RU/EE", accept_ap="FND-0250", ap_exists=True).blockers == []        # verified: the override applies
+
+
+def test_an_unchecked_ticket_changes_nothing_when_no_override_is_requested():
+    """The hard gates and a promotion with nothing to override are untouched: ap_exists is read only when there is something to override and an override was asked for."""
+    assert _ok(ap_exists=None) == []
+    out = _ok(audit=_scope(on_scenario=[_defect()]), ap_exists=None)                                 # a defect, no override requested: the old refusal, no OVERRIDE_AP line
+    assert out and out[0].startswith("[GATE:DATA_SCENARIO]") and not any("[GATE:OVERRIDE_AP]" in b for b in out)
+    out = _ok(exposure_non_eur=0.79, accept_alarms="un motivo", accept_ap="FND-0251", ap_exists=None)  # a hard gate (exposure) is never covered by any override
+    assert any("[GATE:FX" in b or "exposicion" in b.lower() for b in out)
 
 
 def test_the_verdict_lists_what_the_override_covered():
@@ -420,14 +440,23 @@ def test_cli_blocks_a_defect_on_a_scenario_fund_and_the_override_needs_the_ticke
     assert "[OVERRIDE:DATA_SCENARIO] FND-0234: falso positivo FND-0234" in promoted[0][1]
 
 
-def test_cli_refuses_an_override_whose_ticket_is_not_in_the_backlog_but_only_warns_when_it_cannot_ask(monkeypatch, capsys):
+def test_cli_refuses_an_override_whose_ticket_is_not_in_the_backlog_and_also_when_it_cannot_ask(monkeypatch, capsys):
+    """FND-0433 (owner ruling 2026-11-19): fail-closed. A ticket that does not exist AND a ticket that could not be checked (backlog unreachable) both refuse the override."""
     conn = _CliConn({"d": "DRAFT"}, {"A": 0.5, "B": 0.5}, ccy="EUR")
     scope = _scope(on_scenario=[_defect(("A",))])
     argv = ["d", "--accept-alarms", "motivo", "--ap", "FND-9999"]
     rc, promoted = _run_cli(monkeypatch, conn, argv, scope=scope, ap_status="NOT_FOUND")
     assert rc == 1 and not promoted and "no existe en gestion.backlog" in capsys.readouterr().out
     rc, promoted = _run_cli(monkeypatch, conn, argv, scope=scope, ap_status="LOOKUP_FAILED")
-    assert rc == 0 and promoted and "no se pudo comprobar FND-9999" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert rc == 1 and not promoted and "no se pudo comprobar FND-9999" in out and "[GATE:OVERRIDE_AP]" in out and "fail-closed" in out
+    rc, promoted = _run_cli(monkeypatch, conn, argv, scope=scope, ap_status="OPEN")                # the ticket verified: the override applies
+    assert rc == 0 and promoted
+
+
+def test_cli_a_promotion_that_asks_for_no_override_does_not_need_the_backlog(monkeypatch, capsys):
+    rc, promoted = _run_cli(monkeypatch, _CliConn({"d": "DRAFT"}, {"A": 1.0}, ccy="EUR"), ["d"], scope=_scope(), ap_status="LOOKUP_FAILED")
+    assert rc == 0 and promoted
 
 
 def test_cli_universe_only_defect_blocks_even_with_an_override_and_names_the_way_out(monkeypatch, capsys):

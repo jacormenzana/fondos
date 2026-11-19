@@ -249,8 +249,9 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                           scripts/audit/stat/accept_audit_residual.py (AP + expiry), which is its own audited step.
     Statistical anomalies on the scenario's funds are information (the selection picks score extremes), never a blocker.
 
-    `accept_alarms` is the reason and `accept_ap` the owning ticket (FND-nnnn); `ap_exists` is the backlog lookup (None = could not be
-    checked: a warning for the caller, not a blocker; False = the ticket does not exist: the override is refused).
+    `accept_alarms` is the reason and `accept_ap` the owning ticket (FND-nnnn); `ap_exists` is the backlog lookup (True = the ticket exists: the override applies;
+    False = it does not exist: refused; None = it could not be checked: refused too, FAIL-CLOSED since 2026-11-19, owner ruling, FND-0433. Before that None was "a warning, not a blocker").
+    It is read only when an override is asked for AND there is something soft to override: hard gates and a promotion with nothing to override are unaffected.
 
     `exceptions_problem` (FND-0263, only with shared.config.AUDIT_EXCEPTION_EVENTS_ENABLED): why the accepted-residual history cannot be
     trusted (unreadable, or the projection disagrees with it). EXCEPTIONS is hard, no override: the residuals the gate just read may be
@@ -358,7 +359,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
         return verdict
     reason = (accept_alarms or "").strip()
     ap = (accept_ap or "").strip().upper()
-    if reason and AP_RE.match(ap) and ap_exists is not False:
+    if reason and AP_RE.match(ap) and ap_exists is True:           # FND-0433: fail-closed, only a VERIFIED ticket covers an override (None = could not be checked)
         verdict.overridden = list(soft)
     else:
         verdict.blockers.extend(text for _code, text in soft)
@@ -367,6 +368,10 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                                       "el override no se aplica"))
         elif reason and ap_exists is False:
             verdict.blockers.append(g(GATE_OVERRIDE_AP, f"--ap {ap} no existe en gestion.backlog: el override no se aplica"))
+        elif reason and ap_exists is None:
+            verdict.blockers.append(g(GATE_OVERRIDE_AP, f"--ap {ap} no se pudo comprobar en gestion.backlog (FONDOS_BACKLOG_PG_DSN no definida o sin conexion): "
+                                      "el override no se aplica; con la comprobacion caida la promocion se rechaza (fail-closed, decision del propietario "
+                                      "2026-11-19, FND-0433). Restablezca la conexion y repita"))
         else:
             verdict.blockers.append("(--accept-alarms \"motivo\" --ap FND-nnnn cubre los defectos y huecos de cobertura de la CARTERA "
                                     "y la vigilancia de alarmas)")

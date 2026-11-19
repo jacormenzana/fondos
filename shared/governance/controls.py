@@ -221,7 +221,7 @@ CONTROLS = (
             BLOCK, SOURCE_GATE + "EXCEPTIONS", STATUS_ENFORCED),
     # ---- ORCHESTRATION ---------------------------------------------------------------------------------------------------------
     Control("G-OVERRIDE-AP", PILLAR_ORCHESTRATION, "An override names its ticket", _OWNER_PROMOTION,
-            "--accept-alarms needs a reason and --ap FND-nnnn that exists in gestion.backlog; without it the override does not apply",
+            "--accept-alarms needs a reason and --ap FND-nnnn that exists in gestion.backlog and was VERIFIED there (a ticket that cannot be checked because the backlog is unreachable refuses too: fail-closed, owner ruling 2026-11-19, FND-0433); without it the override does not apply",
             BLOCK, SOURCE_GATE + "OVERRIDE_AP", STATUS_ENFORCED),
     Control("G-COMPLETENESS", PILLAR_ORCHESTRATION, "The audit ran everything it was required to", "owner (statistical audit)",
             "every required check produced a result; a MISSING input (or an EMPTY required check in a FULL run) makes the run INCOMPLETE, "

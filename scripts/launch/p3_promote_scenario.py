@@ -187,7 +187,8 @@ def _built_at(conn, scenario_id: str):
 
 
 def _ap_exists(ap: str):
-    """True / False when gestion.backlog answers; None when it cannot be asked (no DSN, outage): a warning, never a blocker."""
+    """True / False when gestion.backlog answers; None when it cannot be asked (no DSN, outage). None REFUSES the override (fail-closed, owner ruling 2026-11-19, FND-0433);
+    a promotion that asks for no override is not affected."""
     from shared import backlog_client
     status = backlog_client.get_action_point_status(ap)
     if status == "LOOKUP_FAILED":
@@ -284,7 +285,7 @@ def main(argv=None) -> int:
         ap_exists = _ap_exists(ap_id) if reason and lc.AP_RE.match(ap_id) else None
         if reason and lc.AP_RE.match(ap_id) and ap_exists is None:
             print(f"AVISO: no se pudo comprobar {ap_id} en gestion.backlog (FONDOS_BACKLOG_PG_DSN no definida o sin conexion): "
-                  "se acepta por formato")
+                  "el override NO se aplica (fail-closed, FND-0433); restablezca la conexion y repita")
 
         watch, watch_problem = _alarm_watch(conn, args.scenario_id)
         rising = lc.alarm_watch_increases(watch, ALARM_WATCH_WEIGHT_TOLERANCE)
