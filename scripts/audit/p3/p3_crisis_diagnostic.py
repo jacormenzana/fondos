@@ -96,15 +96,16 @@ def _ipc_from_database():
     return ipc, f"{len(ipc)} rows {ipc['date'].min().date()}..{ipc['date'].max().date()} sha256:{digest}"
 
 
-def stage_d1d2(args, scores, inputs, hist, dates_wanted, top, bottom, desc):
-    """Rescore the wanted dates on the sealed inputs plus the IPC series, REFUSE unless the rescored score_base equals the sealed one, then D1 and D2. Returns (report lines, {name: DataFrame}, rc)."""
+def rescore_validated(cache_dir, scores, inputs, hist, dates_wanted):
+    """Rescore the wanted dates on the sealed inputs plus the IPC series (the one input the seal lacks) and check the rescored score_base against the sealed one. Shared by D1 / D2, C2 and C3 / C4
+    of Package L so that every stage that reads rescored metric frames passes the same gate. Returns (ok, coverage, max |diff|, ipc, ipc_id, frames {date: metric frame}, rescored run)."""
     from proyecto3.src.pit_cache import ParquetCache
     from proyecto3.src.pit_run import compute_pit_scores
     ipc, ipc_id = _ipc_from_database()
     print(f"[IPC] {ipc_id}")
     inputs2 = dataclasses.replace(inputs, ipc=ipc)
     frames = {}
-    run2 = compute_pit_scores(inputs2, pd.DatetimeIndex(dates_wanted), hist["regime"], ParquetCache(args.cache_dir), max_stale_days=60, frames_out=frames)
+    run2 = compute_pit_scores(inputs2, pd.DatetimeIndex(dates_wanted), hist["regime"], ParquetCache(cache_dir), max_stale_days=60, frames_out=frames)
     print(f"[RESCORE] {len(dates_wanted)} dates, timings (s): {', '.join(f'{k}={v:.1f}' for k, v in run2.timings.items())}")
 
     key = ["as_of", "subportfolio", "isin"]
@@ -114,6 +115,12 @@ def stage_d1d2(args, scores, inputs, hist, dates_wanted, top, bottom, desc):
     diff = float((m["score_base_sealed"] - m["score_base_rescored"]).abs().max())
     ok = coverage >= MIN_COVERAGE and diff <= SCORE_BASE_TOL
     print(f"[VALIDATE] score_base rescored vs sealed: coverage {coverage:.4f}, max |diff| {diff:.6f} -> {'VALIDATED' if ok else 'REFUSED'}")
+    return ok, coverage, diff, ipc, ipc_id, frames, run2
+
+
+def stage_d1d2(args, scores, inputs, hist, dates_wanted, top, bottom, desc):
+    """Rescore the wanted dates on the sealed inputs plus the IPC series, REFUSE unless the rescored score_base equals the sealed one, then D1 and D2. Returns (report lines, {name: DataFrame}, rc)."""
+    ok, coverage, diff, ipc, ipc_id, frames, _run2 = rescore_validated(args.cache_dir, scores, inputs, hist, dates_wanted)
     lines = ["## Validation of the IPC read (score_base reproduced at the design dates)", "",
              f"IPC series read from the database (read-only, not part of the seal): {ipc_id}.",
              f"Rescored {len(dates_wanted)} dates; rows of the sealed run found again: {coverage:.2%}; max |score_base difference| {diff:.6f} (tolerance {SCORE_BASE_TOL}). "

@@ -265,6 +265,38 @@ def test_the_rolling_drawdown_forgets_an_old_crash_and_the_since_inception_one_d
     assert np.isnan(short["X"])
 
 
+def test_a_stray_mid_month_row_is_not_a_month_of_the_window():
+    """The PIT NAV panel keeps a NAV that is not within 5 days of a month-end on its real date (shared.nav_month_end): a row with one fund on 2020-05-13. It must neither shorten the 60-month
+    window nor leave every other fund with a hole (found on the first run of C2: no fund had a full window from 2020 to 2024)."""
+    idx = pd.date_range("2000-01-31", periods=90, freq="ME")
+    nav = pd.DataFrame({"X": 100.0, "Y": 100.0}, index=idx)
+    nav.loc[idx[50:], "X"] = 80.0                                                          # a -20 % fall at month 50, inside the last 60 months (30..89)
+    stray = pd.DataFrame({"X": [90.0], "Y": [np.nan]}, index=pd.DatetimeIndex(["2005-05-13"]))
+    dirty = pd.concat([nav, stray]).sort_index()
+    t = idx[-1]
+    clean = P.rolling_max_dd(nav, t, 60)
+    got = P.rolling_max_dd(dirty, t, 60)
+    assert got["X"] == pytest.approx(clean["X"]) and got["Y"] == pytest.approx(0.0) and not got.isna().any()
+    assert P.rolling_max_dd(dirty, t, None)["Y"] == pytest.approx(0.0)
+    age_clean, age_dirty = P.trough_age_months(nav, t), P.trough_age_months(dirty, t)
+    assert age_dirty["X"] == age_clean["X"] == 89 - 50                                      # the stray row is not a month in the count either
+
+
+def test_the_trough_age_counts_months_since_the_since_inception_low_and_is_nan_for_a_short_history():
+    idx = pd.date_range("2000-01-31", periods=90, freq="ME")
+    crash = pd.Series(100.0, index=idx)
+    crash.iloc[10:20] = np.linspace(100, 50, 10)                                            # the trough is the row 19
+    crash.iloc[20:] = 50.0
+    late = pd.Series(100.0, index=idx)
+    late.iloc[80:] = 70.0                                                                    # first row at 70 is the trough: row 80 (the drawdown stays -30 % from there)
+    young = pd.Series(np.nan, index=idx)
+    young.iloc[85:] = 100.0                                                                  # 5 points only
+    df = pd.DataFrame({"crash": crash, "late": late, "young": young})
+    age = P.trough_age_months(df, idx[-1])
+    assert age["crash"] == 89 - 19 and age["late"] == 89 - 80 and np.isnan(age["young"])
+    assert P.trough_age_months(df, idx[40])["crash"] == 40 - 19                              # nothing after t is read
+
+
 # ---- the D6 attribute loader never touches the cache-key frame ----------------------------------------------------------------------------------------------
 def test_the_d6_loader_is_outside_pit_inputs_and_the_attribute_frame_columns_are_unchanged():
     from proyecto3.src import pit_inputs
@@ -277,4 +309,6 @@ def test_the_d6_loader_is_outside_pit_inputs_and_the_attribute_frame_columns_are
     d6 = pd.DataFrame({c: ["g", "h"] for c in P.D6_ATTRIBUTES}, index=pd.Index(["A", "B"], name="isin"))
     _ = d6.join(attrs[["Fund_Nature"]])                                                           # what the diagnostic does with it: a NEW frame
     assert content_hash(attrs) == before
-    assert "load_attributes" not in inspect.getsource(P.load_d6_attributes)
+    src = inspect.getsource(P.load_d6_attributes)
+    assert "load_attributes" not in src
+    assert all(c in src for c in P.D6_ATTRIBUTES)                                                   # the literal SQL and the tuple name the same six columns

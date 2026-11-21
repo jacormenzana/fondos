@@ -225,7 +225,9 @@ def attribute_mix_within_nature(sel_w: pd.Series, pool_w: pd.Series, ret: pd.Ser
 def holding_spells(W: pd.DataFrame) -> dict:
     """Spell lengths (months held without a break) of a weights frame (dates x funds, NaN or 0 = not held). A spell still open on the last date is right-censored (counted in `mean_months`,
     excluded from `completed_mean_months`); a spell that starts on the first date is left-censored (kept, the run cannot see before it)."""
-    held = (W.fillna(0.0).to_numpy(dtype=float) > 0)
+    arr = W.to_numpy(dtype=float)
+    with np.errstate(invalid="ignore"):
+        held = np.isfinite(arr) & (arr > 0)                       # NaN = not held
     ended, open_ = [], []
     for j in range(held.shape[1]):
         run = 0
@@ -253,7 +255,7 @@ def penalty_scale(ret_real: pd.Series, fees_total: pd.Series, h_years: float) ->
     r, f = r[keep], f[keep]
     pen_known = f / h_years
     fill = float(pen_known.dropna().median()) if pen_known.notna().any() else float("nan")
-    pen = pen_known.fillna(fill)
+    pen = pen_known.where(pen_known.notna(), fill)               # the cell median of the SAME date's known penalties (no time dimension, so no look-ahead); counted in n_unknown_fee below
     iqr = float(r.quantile(0.75) - r.quantile(0.25)) if len(r) else float("nan")
     charging = pen_known[pen_known > 0]
     med = float(charging.median()) if len(charging) else float("nan")
@@ -265,19 +267,34 @@ def penalty_scale(ret_real: pd.Series, fees_total: pd.Series, h_years: float) ->
             "rank_change_share": float((shift >= 0.10 - 1e-12).mean()) if len(shift) else float("nan")}
 
 
+def _month_end_rows(nav_m: pd.DataFrame, t) -> pd.DataFrame:
+    """The rows of the panel up to `t` that are month-ends. The PIT NAV panel keeps a NAV that is not within 5 days of a month-end on its real date (a stray mid-month row), and such a row is
+    not a month: counting it would shorten every window and leave the other funds with a hole."""
+    w = nav_m.loc[:pd.Timestamp(t)]
+    return w[w.index.is_month_end]
+
+
 def rolling_max_dd(nav_m: pd.DataFrame, t, months: "int | None") -> pd.Series:
     """Maximum drawdown of each fund over the last `months` month-end points up to `t` (NaN unless the window is full and complete: a hole is never filled), or since inception when `months` is
     None (needs at least 12 observed points). `nav_m`: month-end dates x ISIN."""
-    w = nav_m.loc[:pd.Timestamp(t)]
+    w = _month_end_rows(nav_m, t)
     if months is not None:
-        w = w.iloc[-months:]
-        if len(w) < months:
-            return pd.Series(np.nan, index=nav_m.columns, dtype=float)
+        w = w.reindex(pd.date_range(end=pd.Timestamp(t), periods=months, freq="ME"))         # a month with no row is a NaN row, never filled
         ok = w.notna().all()
     else:
         ok = w.notna().sum() >= 12
     dd = (w / w.cummax() - 1.0).min()
     return dd.where(ok)
+
+
+def trough_age_months(nav_m: pd.DataFrame, t) -> pd.Series:
+    """Months between `t` and the FIRST month-end at which each fund reached its since-inception maximum-drawdown low (positions in the monthly panel, so consecutive months). NaN with fewer than
+    12 observed points. Nothing after `t` is read. It tells whether a fund that fails the since-inception drawdown filter is still hurt by a crash that is years old."""
+    w = _month_end_rows(nav_m, t)
+    dd = (w / w.cummax() - 1.0).to_numpy(dtype=float)
+    pos = np.where(np.isnan(dd), np.inf, dd).argmin(axis=0)
+    age = pd.Series((len(w) - 1 - pos).astype(float), index=nav_m.columns)
+    return age.where(w.notna().sum() >= 12)
 
 
 # ============================================================================================================================================================
@@ -289,8 +306,7 @@ D6_ATTRIBUTES = ("Geography", "Asset_Currency", "Hedging_Policy", "Style_Profile
 def load_d6_attributes(conn) -> pd.DataFrame:
     """fund_master attributes used by the D6 attribution only (today's values: a documented look-ahead), read-only, ISIN index. Separate from the PIT attribute loader on purpose: that frame is
     hashed into the score cache keys, and a column added there would silently change every cached score."""
-    cols = ", ".join(D6_ATTRIBUTES)
-    rows = conn.execute(f"SELECT ISIN, {cols} FROM fund_master").fetchall()
+    rows = conn.execute("SELECT ISIN, Geography, Asset_Currency, Hedging_Policy, Style_Profile, Sector_Focus, Benchmark_Type FROM fund_master").fetchall()     # a literal: the EXPLAIN sweep must resolve it
     df = pd.DataFrame([tuple(r) for r in rows], columns=["ISIN", *D6_ATTRIBUTES]).set_index("ISIN")
     df.index.name = "isin"
     return df
