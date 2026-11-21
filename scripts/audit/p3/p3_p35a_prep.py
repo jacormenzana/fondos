@@ -42,7 +42,7 @@ from proyecto3.src.pit_cost_check import fee_cost_series, net_series  # noqa: E4
 from proyecto3.src.pit_oos import load_saved_run  # noqa: E402
 from proyecto3.src.pit_seal import RUN_STAMP, SealMismatch, verify_seal  # noqa: E402
 
-DRAFT_REL = "doc/decisiones/PREREG_P3_5A_DRAFT.md"
+DRAFT_REL = "doc/decisiones/PREREG_P3_5A.md"        # the former draft, moved with git mv on 2026-11-21 (the L3 freeze line of its section 9.4 is kept in it)
 COLS = ["Fund_Nature", "return_ann_real", "sharpe", "max_dd", "alpha_persistence", "capture_ratio", "momentum_rank", "srri_nav", "Credit_Quality"]
 GRID_VARIANTS = ("band_0.05", "band_0.1", "band_0.2", "cadence_3m", "cadence_6m", "cadence_12m")
 P35A_TRIALS, AMENDMENT5_GRID, FROZEN_COUNTERFACTUALS = 11, 16, 12        # planned P3-5a runs, the grid of Amendment 5 (conservative), the frozen counterfactuals of FND-0435
