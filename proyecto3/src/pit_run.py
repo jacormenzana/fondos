@@ -83,6 +83,18 @@ def lever_key_parts(levers: "RL.LeverConfig", fees: "pd.DataFrame | None") -> li
     return [{"levers": levers.key(), "fees": content_hash(fees) if (levers.l4_h_years is not None and fees is not None) else None}]
 
 
+def fee_aware_key_parts(fee_aware: "bool | None", fee_tolerance: "float | None") -> list:
+    """What the fee-aware class choice (P3-7, arm B) adds to the score cache key: NOTHING while it is OFF (None = the switch P3_FEE_AWARE_CLASS_ENABLED; the warm caches stay valid, byte for byte), otherwise its
+    tolerance. The choice happens inside the scorer's family de-duplication, so it changes which class represents a family and a stale cache hit would be wrong (FND-0192's rule). The fee frame it reads is
+    part of the key through `lever_key_parts` only when L4 is on; here it is added whenever the choice is."""
+    from shared import config as _config
+    on = _config.P3_FEE_AWARE_CLASS_ENABLED if fee_aware is None else bool(fee_aware)
+    if not on:
+        return []
+    tol = _config.P3_FEE_AWARE_CLASS_SCORE_TOLERANCE if fee_tolerance is None else float(fee_tolerance)
+    return [{"fee_aware_class": True, "tolerance": tol}]
+
+
 def compute_pit_scores(
     inputs: PitInputs,
     at: pd.DatetimeIndex,
@@ -97,10 +109,14 @@ def compute_pit_scores(
     macro_workers: int = 1,
     frames_out: "dict | None" = None,
     levers: "RL.LeverConfig | None" = None,
+    fee_aware: "bool | None" = None,
+    fee_tolerance: "float | None" = None,
 ) -> PitRun:
     """Run the whole PIT scoring chain for the dates `at`. ipc_lag_months defaults to the regime IPC lag.
     levers (Package L step F, PREREG_P3_5A): the ranking levers that are on (None = the configuration's switches, all OFF by default; an explicit `LeverConfig()` = none). The trailing 60 / 36-month
     frames they read are cached like the other risk frames; L4 needs `inputs.fees`; the lever values enter the score cache key only when a lever is on.
+    fee_aware / fee_tolerance (P3-7, arm B): the fee-aware class choice of the scorer's family de-duplication for THIS run (None = the switch P3_FEE_AWARE_CLASS_ENABLED); ON needs `inputs.fees`; the tolerance
+    enters the score cache key only when the choice is ON (`fee_aware_key_parts`).
     frames_out (FND-0435): a dict that receives the metric frame each date is scored on; it bypasses the scoring-block cache (a cache hit would never build the frames), nothing else changes."""
     at = pd.DatetimeIndex(at)
     lag = REGIME_PUBLICATION_LAG_MONTHS.get("ipc_index", 0) if ipc_lag_months is None else ipc_lag_months
@@ -155,6 +171,11 @@ def compute_pit_scores(
     # ---- Package L step F: the inputs of the ranking levers that are ON (nothing is computed while they are all OFF) ----
     levers = levers if levers is not None else RL.LeverConfig.from_config()
     lever_inputs = None
+    fee_on = (fee_aware if fee_aware is not None else _config.P3_FEE_AWARE_CLASS_ENABLED)
+    if fee_on and inputs.fees is None:
+        raise ValueError("compute_pit_scores: the fee-aware class choice is ON but inputs.fees (the entry and exit fee frame) is missing")
+    if fee_on and not levers.any_on:
+        lever_inputs = RL.LeverInputs(dd60=None, ret36=None, fees=inputs.fees, nav_m=None)          # only the one-off fees: no lever reads anything else
     if levers.any_on:
         dd60 = ret36 = None
         if levers.l1_q is not None:
@@ -243,7 +264,9 @@ def compute_pit_scores(
                              CODE_VERSION, *macro_key,          # macro_key empty without group B
                              *([{"nav_continuity": elig_params}] if elig_on else []),     # FND-0254: part of the key only when the rule is ON
                              *([{"data_suspect": suspect_params}] if suspect_on else []),  # FND-0394: idem
-                             *lever_key_parts(levers, inputs.fees))                        # Package L: idem; nothing while every lever is off
+                             *lever_key_parts(levers, inputs.fees),                        # Package L: idem; nothing while every lever is off
+                             *fee_aware_key_parts(fee_aware, fee_tolerance),                # P3-7 arm B: idem; nothing while the class choice is off
+                             *([{"fees": content_hash(inputs.fees)}] if (fee_on and not (levers.any_on and levers.l4_h_years is not None)) else []))      # the fee frame it reads
 
     # FND-0193 (resumable runs): the dominant cost is scored in blocks of SCORE_BLOCK_DATES evaluation dates and each block is cached as it
     # finishes, so a run killed by the memory guard (or the owner) loses at most one block. The score of a date uses only information at that
@@ -269,7 +292,7 @@ def compute_pit_scores(
                 block, risk_scored, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
                 max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
                 keep_detail=keep_detail, macro=macro, nav_gap=_nav_gap_for(block), log_universe=False, data_suspect=suspect_run,
-                frames_out=frames_out, levers=levers, lever_inputs=lever_inputs,
+                frames_out=frames_out, levers=levers, lever_inputs=lever_inputs, fee_aware=fee_aware, fee_tolerance=fee_tolerance,
             )
             out = {"scores": s.drop(columns=["detail"]) if (keep_detail and "detail" in s.columns) else s, "universe": u}
             if keep_detail:

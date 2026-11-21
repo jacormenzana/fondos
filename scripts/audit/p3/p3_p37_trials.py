@@ -130,6 +130,29 @@ def reevaluate_identity(base_dir: Path, run_dir: Path) -> dict:
     return gate
 
 
+def class_swap_integrity(sealed: pd.DataFrame, rerun: pd.DataFrame) -> dict:
+    """What an arm may change in the score rows against the sealed run: NOTHING (A1, A2) or WHICH CLASS of a family represents it (the fee penalty re-ranks the classes of a family; the fee-aware choice picks
+    one by its fees): the number of rows per (date, sub-portfolio, family) is the same, a fund with no family is its own family, and the matched rows keep their eligibility. `n_swapped_rows` = sealed rows
+    whose key is absent from the re-run (a swap makes one in each direction)."""
+    key = ["as_of", "subportfolio", "isin"]
+    m = sealed[key + ["eligible"]].merge(rerun[key + ["eligible"]], on=key, how="outer", indicator=True, suffixes=("_s", "_r"))
+    both = m[m["_merge"] == "both"]
+
+    def family_counts(d: pd.DataFrame) -> pd.Series:
+        f = d["fund_family_id"]
+        own = f.isna() | (f.astype(str).str.strip() == "")
+        fam = f.astype(object).where(~own, "isin:" + d["isin"].astype(str))
+        return d.assign(_fam=fam).groupby(["as_of", "subportfolio", "_fam"]).size().sort_index()
+    return {"rows_equal": bool(len(sealed) == len(rerun)), "family_counts_equal": bool(family_counts(sealed).equals(family_counts(rerun))),
+            "n_swapped_rows": int((m["_merge"] == "left_only").sum()),
+            "eligible_agreement_matched": float((both["eligible_s"] == both["eligible_r"]).mean()) if len(both) else float("nan")}
+
+
+def arm_integrity_ok(r: dict, spec: dict) -> bool:
+    """An arm without a score lever (A1, A2) reproduces the sealed score rows exactly; an arm with the fee penalty or the class choice may only swap classes inside families (and keeps every matched row's eligibility)."""
+    return bool(r["rows_equal"] and r["family_counts_equal"] and r["eligible_agreement_matched"] == 1.0 and (r["n_swapped_rows"] == 0 or spec["cls"] or spec["pen"]))
+
+
 def gate_open(base_dir: Path) -> "tuple[bool, str]":
     f = base_dir / "identity.json"
     if not f.exists():
@@ -164,7 +187,9 @@ def build_arm(args, name: str, spec: dict, out: Path, base_dir: Path) -> None:
         inputs2 = dataclasses.replace(inputs, ipc=ipc, fees=fees_df, daily_chunks=daily)
         cfg = levers_of(spec)
         print(f"[{name}] spec {spec} | levers {cfg} | snapshot {snap_id[:16]}")
-        run_t = compute_pit_scores(inputs2, at, hist["regime"], ParquetCache(args.cache_dir), max_stale_days=60, levers=cfg)
+        import shared.config as C
+        run_t = compute_pit_scores(inputs2, at, hist["regime"], ParquetCache(args.cache_dir), max_stale_days=60, levers=cfg, fee_aware=bool(spec["cls"]),
+                                   fee_tolerance=float(C.P3_FEE_AWARE_CLASS_SCORE_TOLERANCE) if spec["cls"] else None)       # explicit False: the global switch never leaks into an arm
         print(f"[{name}] scored: {len(run_t.scores)} rows | timings {{{', '.join(f'{k}={v:.0f}s' for k, v in run_t.timings.items())}}} | cache {run_t.cache_hits.get('scoring_blocks')}")
     finally:
         if conn is not None:
@@ -182,10 +207,7 @@ def build_arm(args, name: str, spec: dict, out: Path, base_dir: Path) -> None:
     if spec["band"] > 0:
         kw.update(constraints=dataclasses.replace(DEFAULT_CONSTRAINTS, hysteresis_band=spec["band"]), use_incumbents=True)
     if spec["cls"]:
-        from proyecto3.src.pit_class_choice import ClassChoice
-        import shared.config as C
-        kw["class_choice"] = ClassChoice(fees=fees_df, ongoing=attrs["Ongoing_Charge"], tolerance=float(C.P3_FEE_AWARE_CLASS_SCORE_TOLERANCE))
-        meta["class_choice_tolerance"] = kw["class_choice"].tolerance
+        meta["class_choice_tolerance"] = float(C.P3_FEE_AWARE_CLASS_SCORE_TOLERANCE)
     prep = prepare_pit_backtest(run_t, inputs2, hist, at, windows=(1,), **kw)
     R1, cash = prep.R[1], prep.cash_ret[1]
     gross, _ = portfolio_returns(prep.W, R1, cash)
@@ -211,8 +233,10 @@ def build_arm(args, name: str, spec: dict, out: Path, base_dir: Path) -> None:
         meta["identity"] = gate
         (base_dir / "identity.json").write_text(json.dumps(gate, indent=2, default=str), encoding="utf-8")
         print(f"[IDENTITY GATE] {'PASSED' if gate['ok'] else 'FAILED'}: {gate['checks']} | max |gross diff| {gate['max_abs_gross_diff']:.3e} | max |turnover diff| {gate['max_abs_turnover_diff']:.3e}")
-    elif sample_keep is None and name != "T0_baseline":                      # a trial never changes the eligible set: the check is also an integrity check of the live inputs it read
-        meta["eligible_same_as_baseline"] = bool(meta["baseline_vs_sealed"]["eligible_agreement"] == 1.0 and meta["baseline_vs_sealed"]["coverage"] == 1.0)
+    if sample_keep is None:
+        meta["score_integrity"] = class_swap_integrity(scores0, scores)
+        meta["integrity_ok"] = arm_integrity_ok(meta["score_integrity"], spec)
+        print(f"[{name}] score rows against the sealed run: {meta['score_integrity']} -> {'OK' if meta['integrity_ok'] else 'NOT OK'}")
     (out / "meta.json").write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
     print(f"[{name}] done in {meta['elapsed_s']} s -> {out}")
 
@@ -294,7 +318,8 @@ def run_report(args, base_dir: Path) -> None:
     for n, t in runs.items():
         pools = _pool_stats(base_dir, ARMS[n]["band"]) if n != "T0_baseline" else None
         r = V.evaluate_arm(n, t, base, target, pools, episodes=T.EPISODES, design=T.DESIGN, crisis_windows=T.CRISIS_WINDOWS, holm_level=HOLM_LEVEL)
-        r["eligible_same_as_baseline"] = t["meta"].get("eligible_same_as_baseline", True if n == "T0_baseline" else None)
+        r["integrity_ok"] = t["meta"].get("integrity_ok")
+        r["n_swapped_rows"] = t["meta"].get("score_integrity", {}).get("n_swapped_rows")
         r["snapshot_id"] = t["meta"].get("snapshot_id", "")[:12]
         rows.append(r)
         if n in ("A1", "A2"):

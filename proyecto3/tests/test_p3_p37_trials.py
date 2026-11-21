@@ -187,3 +187,50 @@ def make_series_tail(seed=1, turnover=0.30):
     idx = pd.date_range("2010-01-31", periods=120, freq="ME")
     gross = pd.Series(0.004 + rng.normal(0, 0.01, 120), index=idx)
     return pd.DataFrame({"gross": gross, "turnover": pd.Series(turnover, index=idx), "cash": 0.0005, "net25": gross - 0.0025 * turnover, "netfee": gross - 0.002})
+
+
+# ================================================================ the integrity check of an arm: class swaps only ======================================================================
+def _scores(rows):
+    return pd.DataFrame(rows, columns=["as_of", "subportfolio", "isin", "fund_family_id", "eligible"])
+
+
+T0 = pd.Timestamp("2020-01-31")
+
+
+def test_identical_scores_have_no_swapped_rows():
+    s = _scores([(T0, "Equilibrada", "A1", "F1", True), (T0, "Equilibrada", "A2", "F1", True), (T0, "Equilibrada", "B1", None, True)])
+    r = R.class_swap_integrity(s, s.copy())
+    assert r == {"rows_equal": True, "family_counts_equal": True, "n_swapped_rows": 0, "eligible_agreement_matched": 1.0}
+
+
+def test_a_class_swap_inside_a_family_is_recognised_and_is_not_a_defect():
+    sealed = _scores([(T0, "Equilibrada", "A_exp", "F1", True), (T0, "Equilibrada", "B1", None, True)])
+    rerun = _scores([(T0, "Equilibrada", "A_cheap", "F1", True), (T0, "Equilibrada", "B1", None, True)])
+    r = R.class_swap_integrity(sealed, rerun)
+    assert r["n_swapped_rows"] == 1 and r["family_counts_equal"] and r["rows_equal"] and r["eligible_agreement_matched"] == 1.0
+
+
+def test_a_lost_family_or_a_fund_that_changed_eligibility_is_a_defect():
+    sealed = _scores([(T0, "Equilibrada", "A", "F1", True), (T0, "Equilibrada", "C", "F2", True)])
+    lost_family = _scores([(T0, "Equilibrada", "A", "F1", True), (T0, "Equilibrada", "D", "F3", True)])      # F2 disappeared and F3 appeared: not a class swap
+    assert not R.class_swap_integrity(sealed, lost_family)["family_counts_equal"]
+    flipped = _scores([(T0, "Equilibrada", "A", "F1", False), (T0, "Equilibrada", "C", "F2", True)])
+    assert R.class_swap_integrity(sealed, flipped)["eligible_agreement_matched"] == 0.5
+    fewer = _scores([(T0, "Equilibrada", "A", "F1", True)])
+    assert not R.class_swap_integrity(sealed, fewer)["rows_equal"]
+
+
+def test_a_fund_with_no_family_is_its_own_family_in_the_check():
+    sealed = _scores([(T0, "Equilibrada", "X", None, True), (T0, "Equilibrada", "Y", "", True)])
+    rerun = _scores([(T0, "Equilibrada", "X", None, True), (T0, "Equilibrada", "Z", "", True)])              # Y replaced by Z, both without a family: those are two different funds
+    assert not R.class_swap_integrity(sealed, rerun)["family_counts_equal"]
+
+
+def test_an_arm_without_a_score_lever_must_reproduce_the_scores_exactly_and_the_others_only_swap_classes():
+    ok = {"rows_equal": True, "family_counts_equal": True, "n_swapped_rows": 0, "eligible_agreement_matched": 1.0}
+    swapped = dict(ok, n_swapped_rows=5)
+    assert R.arm_integrity_ok(ok, {"band": 0.1, "cls": False, "pen": False})
+    assert not R.arm_integrity_ok(swapped, {"band": 0.1, "cls": False, "pen": False})              # A1 / A2 change nothing in the scores
+    assert R.arm_integrity_ok(swapped, {"band": 0.0, "cls": True, "pen": False}) and R.arm_integrity_ok(swapped, {"band": 0.0, "cls": False, "pen": True})
+    assert not R.arm_integrity_ok(dict(swapped, family_counts_equal=False), {"band": 0.0, "cls": True, "pen": False})
+    assert not R.arm_integrity_ok(dict(swapped, eligible_agreement_matched=0.99), {"band": 0.0, "cls": False, "pen": True})

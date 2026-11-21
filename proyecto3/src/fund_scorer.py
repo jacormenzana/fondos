@@ -1078,12 +1078,15 @@ def lever_metric_requests(levers: "RL.LeverConfig") -> list:
 
 
 def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True,
-                        levers: "RL.LeverConfig | None" = None, recovery_k: "float | None" = None) -> pd.DataFrame:
+                        levers: "RL.LeverConfig | None" = None, recovery_k: "float | None" = None,
+                        fee_aware: "bool | None" = None, fee_tolerance: "float | None" = None) -> pd.DataFrame:
     """
     Nucleo PURO del scoring (sin DB, sin persistencia): puntua un frame de metricas ya cargado.
 
     Package L step F (PREREG_P3_5A): `levers` = the preregistered ranking levers that are on (None = the configuration's switches, all OFF by default; an explicit `LeverConfig()` = none);
     `recovery_k` = the L3 factor when the pool is in the recovery state (the caller computes the state from the pool series). With every lever off the function is exactly what it was.
+    P3-7 (PREREG_P3_7, arm B): `fee_aware` / `fee_tolerance` = the fee-aware class choice of `deduplicate_by_family` for THIS call (None = the switch P3_FEE_AWARE_CLASS_ENABLED and its tolerance, as in live);
+    the PIT passes them per trial because it keeps one class per family HERE, before the engine sees a candidate.
 
     df: una fila por fondo (indice isin) con las columnas que devuelve
         load_fund_metrics_for_scoring (metricas + atributos de fund_master). Las columnas ausentes
@@ -1168,7 +1171,7 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True,
     df_results = pd.DataFrame(results)
 
     if not df_results.empty:
-        df_results = deduplicate_by_family(df_results, verbose=verbose)
+        df_results = deduplicate_by_family(df_results, verbose=verbose, fee_aware=fee_aware, tolerance=fee_tolerance)
         df_results = df_results.drop(columns=[c for c in FEE_AWARE_COLUMNS if c in df_results.columns])      # FND-0436: never part of the result
     return df_results
 

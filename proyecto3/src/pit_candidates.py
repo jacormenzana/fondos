@@ -39,6 +39,7 @@ if str(_ROOT) not in sys.path:
 
 from proyecto3.src import ranking_levers as RL                 # the PIT reaches the levers through the module (a test spies on it) and the scorer applies them
 from proyecto3.src.fund_scorer import baseline_eligible_isins, score_funds_from_df
+from shared import config as _config                           # read at call time: the fee-aware switch (P3-7) and tests that patch it
 from shared.config import MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS
 
 logger = logging.getLogger(__name__)
@@ -98,12 +99,16 @@ def pit_scores(
     frames_out: "dict | None" = None,
     levers: "RL.LeverConfig | None" = None,
     lever_inputs: "RL.LeverInputs | None" = None,
+    fee_aware: "bool | None" = None,
+    fee_tolerance: "float | None" = None,
 ) -> "tuple[pd.DataFrame, pd.DataFrame]":
     """Score the universe as of every date in `at`.
 
     levers / lever_inputs (Package L step F, PREREG_P3_5A): the ranking levers that are on (None = the configuration's switches, all OFF by default) and what they read: the trailing 60-month
     drawdown and 36-month nominal return frames (L1, L2), the fee frame (L4) and the month-end NAV panel (L3's pool). A lever that is ON without its input is an ERROR, never a silent no-op.
     The levers act inside `score_funds_from_df`, the function production runs; this only builds the same frame columns the live loader reads from P2 and the state of L3.
+    fee_aware / fee_tolerance (P3-7, arm B): the fee-aware class choice of the scorer's family de-duplication for this run (None = the switch P3_FEE_AWARE_CLASS_ENABLED, as in live). ON needs the one-off fee
+    frame (`lever_inputs.fees`): without it the choice could never fire, so it is an ERROR, never a silent no-op.
 
     risk:    pit_metrics.expanding_risk_metrics output (needs n_obs, max_dd, return_ann_real, sharpe, srri_nav).
     peers:   {'alpha_persistence': DataFrame, 'capture_ratio': DataFrame} from pit_peer_metrics (raw-date index).
@@ -143,6 +148,9 @@ def pit_scores(
     vol_snap = asof_snapshot(risk["vol_ann"], at, max_stale_days)[0] if (data_suspect is not None and "vol_ann" in risk) else None   # the denominator of the Sharpe (degenerate-ratio rule)
 
     cfg = levers if levers is not None else RL.LeverConfig.from_config()
+    fee_on = _config.P3_FEE_AWARE_CLASS_ENABLED if fee_aware is None else bool(fee_aware)
+    if fee_on and (lever_inputs is None or lever_inputs.fees is None):
+        raise ValueError("pit_scores: the fee-aware class choice is ON but lever_inputs.fees (the entry and exit fee frame) is missing")
     lever_snaps = {}
     if cfg.any_on:
         li = lever_inputs
@@ -218,9 +226,13 @@ def pit_scores(
                 l3_state = RL.pool_state(RL.pool_returns_from_nav(lever_inputs.nav_m, pool, t))
                 recovery_k = float(cfg.l3_k) if l3_state == "recovery" else None
 
+        if fee_on and len(frame) and cfg.l4_h_years is None:         # the one-off fees the class choice compares (L4 already added them when it is on)
+            for c in RL.FEE_COLUMNS:
+                frame[c] = lever_inputs.fees[c].reindex(isins) if c in lever_inputs.fees.columns else np.nan
         if frames_out is not None:
             frames_out[t] = frame.copy()
-        res = score_funds_from_df(frame, regime, verbose=False, levers=cfg, recovery_k=recovery_k) if len(frame) else pd.DataFrame()
+        res = (score_funds_from_df(frame, regime, verbose=False, levers=cfg, recovery_k=recovery_k, fee_aware=fee_aware, fee_tolerance=fee_tolerance)
+               if len(frame) else pd.DataFrame())
         n_scored = len(res)
         n_elig = int(res["eligible"].sum()) if n_scored else 0
         retired = _retired_isins(frame.index, in_universe)
