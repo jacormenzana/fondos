@@ -28,6 +28,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `pit_macro.py` | `proyecto3/src` |
 | `pit_metrics.py` | `proyecto3/src` |
 | `pit_oos.py` | `proyecto3/src` |
+| `pit_p35a_eval.py` | `proyecto3/src` |
 | `pit_p35a_prep.py` | `proyecto3/src` |
 | `pit_peer_metrics.py` | `proyecto3/src` |
 | `pit_run.py` | `proyecto3/src` |

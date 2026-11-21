@@ -203,7 +203,7 @@ def pit_scores(
                                           vol=vol_snap.iloc[i] if vol_snap is not None else None)
             frame["data_suspect_reason"] = pd.Series(reasons, dtype=object).reindex(frame.index)
 
-        recovery_k = None
+        recovery_k, l3_state = None, None
         if cfg.any_on and len(frame):
             # the lever columns, named as the live loader names them (P2: max_dd at rolling_5y, return_ann at rolling_3y; fund_master: the fees)
             if cfg.l1_q is not None:
@@ -215,8 +215,8 @@ def pit_scores(
                     frame[c] = lever_inputs.fees[c].reindex(isins) if c in lever_inputs.fees.columns else np.nan
             if cfg.l3_k is not None:
                 pool = baseline_eligible_isins(frame)          # the BASELINE eligible set: no circularity with L1, the same pool as the live build
-                state = RL.pool_state(RL.pool_returns_from_nav(lever_inputs.nav_m, pool, t))
-                recovery_k = float(cfg.l3_k) if state == "recovery" else None
+                l3_state = RL.pool_state(RL.pool_returns_from_nav(lever_inputs.nav_m, pool, t))
+                recovery_k = float(cfg.l3_k) if l3_state == "recovery" else None
 
         if frames_out is not None:
             frames_out[t] = frame.copy()
@@ -230,7 +230,8 @@ def pit_scores(
             n_elig_retired = int(res["eligible"][res_isin.isin(retired).to_numpy()].sum())
         rows.append(dict(as_of=t, regime=regime, entered=len(frame), stale=n_stale, young=n_young,
                          scored=n_scored, eligible=n_elig, entered_retired=len(retired),
-                         eligible_retired=n_elig_retired))
+                         eligible_retired=n_elig_retired,
+                         **({"l3_state": l3_state} if cfg.l3_k is not None else {})))      # L3 only: the pool state of the date (cached with the block; an all-off run keeps today's columns)
         if n_scored:
             if not keep_detail:
                 res = res.drop(columns=["detail"])

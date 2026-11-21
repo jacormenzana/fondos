@@ -452,6 +452,17 @@ def test_pit_l3_reads_the_pool_state_per_date_and_applies_k_only_in_recovery(wor
     assert (rec["score_base"].to_numpy() != base["score_base"].to_numpy()).any() and (rec["eligible"] == base["eligible"]).all()
 
 
+def test_pit_universe_records_the_l3_state_per_date_only_when_l3_is_on(world, monkeypatch):
+    _s, u_off = _pit(world)
+    assert "l3_state" not in u_off.columns                                          # an all-off run keeps today's frame, column for column
+    _s, u_l1 = _pit(world, levers=L.LeverConfig(l1_q=0.3), lever_inputs=_lever_inputs(world))
+    assert "l3_state" not in u_l1.columns
+    states = iter(["normal", "stress", "recovery", "normal", "recovery", "stress"])
+    monkeypatch.setattr(L, "pool_state", lambda returns: next(states))
+    _s, u_on = _pit(world, levers=L.LeverConfig(l3_k=0.5), lever_inputs=_lever_inputs(world))
+    assert list(u_on["l3_state"]) == ["normal", "stress", "recovery", "normal", "recovery", "stress"]
+
+
 def test_pit_l3_pool_is_the_baseline_eligible_set_and_never_reads_a_lever(world, monkeypatch):
     seen = []
     real = L.pool_returns_from_nav
