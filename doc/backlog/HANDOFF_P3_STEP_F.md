@@ -1,3 +1,12 @@
+# Handoff: Package L, P3-7 RESULTS READ (2026-11-22); below it step F (P3-5A) and the plan that was executed
+
+## State after P3-7 (read this first)
+- **Done:** the eight cost trials ran on the final code and were read once: `doc/audit/P3_7_TRIALS_REPORT.md` (run `out/reports/p3_p37_trials/20261121_p37/`). Seven of eight arms are forward-shadow CANDIDATES (B is not: +0.04 pp). History never adopts (R7). Amendment 5 applied as written: A1 and A2 PASS.
+- **Waiting on the owner (decisions in the results file):** (1) which candidate goes to the forward shadow (recommended AC = band 0.10 + fee penalty H 7 months; the penalty has no shadow stream yet, a new one needs his order); (2) retire arm B; (3) whether to open the GROSS-return question: gross 4.0-4.7 % against the IPC+M3 target of 6.94 %, no cost lever fixes that.
+- **Defects found and fixed in P3-7 (all test-first, PREREG_P3_7.md section 12):** arm B was a no-op in the first build (the PIT scorer already keeps one class per family; the class choice now goes through `score_funds_from_df(fee_aware=, fee_tolerance=)`, in the cache key only when ON); the identity gate wrongly required a forward return on the last date; two trailing-NaN defects in the pool statistics and the Amendment 5 verdict.
+- **NOT done:** the ONE full receipt (`delivery_attest.py --scope full`, WSL keepalive first; the keepalive session started 2026-11-21 is still running in the background) and the closing of FND-0435. The scorer loader and `pit_run` / `pit_candidates` changed in P3-7 (new optional parameters, default None): the hermetic PG tests belong to that receipt. FND-0437 (P3-6) is open and not worked.
+- **Traps from P3-7:** the PIT scorer de-duplicates families itself (do not add a second pass in the engine); the last evaluation date has NaN returns (drop it before annualising); `PitInputs.fees` also feeds the class choice; pools are built on the BASELINE's eligible set (no arm changes eligibility; the penalty and the class choice only swap classes inside families); the sealed table prints the turnover with two decimals.
+
 # Handoff: Package L, step F DONE (updated 2026-11-21 after the 11 trials); the older text below is the plan that was executed
 
 ## State after step F (read this first)
