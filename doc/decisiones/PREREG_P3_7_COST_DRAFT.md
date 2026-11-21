@@ -17,6 +17,8 @@ The finding of P3-5A that matters is not a lever: at the stated fees the baselin
 - The effects here (about 2 pp) are well above the minimum detectable effect of the history (0.6-1.2 pp), unlike the effects of P3-5A: this study CAN be tested on the history, for what an in-sample test is worth.
 
 ## 3. The dependency that only the owner can resolve (D1)
+**ANSWERED 2026-11-21 (owner: "I pay commissions reflected in KIID").** The fees he pays are the ones the KIID states, which are the stated fees of `fund_master` / `fund_cost_schedule` the model already uses. The primary regime of every number below is therefore the **stated fees, fund by fund**; the flat 25 / 50 / 100 bp stay as cross-checks. The paragraph below is kept as written before the answer. Residual caveats, to test rather than ask: a KIID entry/exit fee is a maximum (a platform may charge less, never more is assumed), and funds whose fees are missing keep the rule of the draft (an unknown fee never wins a tie).
+
 Every cost number rests on one unverified assumption: that the stated fee of a fund is what the owner pays (PKG_L section 1, 2026-11-19). If his platform lets him buy a zero-entry-fee class, or rebates the entry fee, the cost problem shrinks to the exit fee (zero for 94 % of the funds) and a spread, and the study changes from "fight the fees" to "the rotation is almost free". **The study does not start before D1 is answered.** Needed from him: the platform or platforms, the entry / exit / custody / transaction charges he actually faces, and whether zero-entry classes are available for the funds the model selects. The primary regime of every number below is whatever he states; the stated fees and the flat 25 / 50 / 100 bp are reported next to it.
 
 ## 4. Design
@@ -58,7 +60,7 @@ Fees in the PIT frame for C (the PIT carries them only for L4 today); a per-tria
 | Comparator draws | 20 | the assistant | before |
 
 ## 10. What the owner must decide before this can be committed
-- **D1 (blocks everything):** the fees he actually pays (section 3).
+- **D1 (CLOSED 2026-11-21):** he pays the commissions reflected in the KIID, i.e. the stated fees; primary regime = stated fees fund by fund (section 3).
 - **D2:** the comparator of Q2: both the persistent and the redraw pools must be beaten (recommended), or one of them.
 - **D3:** the changed drawdown condition (section 5, item 1), or another way to handle a baseline that fails the cap under the stress.
 - **D4:** whether this study folds in the P3-2' re-sync of R8 and so replaces Amendment 5's separate re-run, or runs next to it.
