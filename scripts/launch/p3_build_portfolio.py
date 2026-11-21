@@ -125,11 +125,41 @@ def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: boo
     print(("AVISO: " if cash > MAX_PORTFOLIO_CASH_WEIGHT else "")
           + f"Liquidez estructural declarada: {cash:.1%} (tope de promocion {MAX_PORTFOLIO_CASH_WEIGHT:.0%})"
           + (" -- el escenario NO sera promovible" if cash > MAX_PORTFOLIO_CASH_WEIGHT else ""))
+    _selection_health(conn, scores, portfolio, reg)
     if not dry_run:
         print(f"Escenario '{scenario_id}' creado como DRAFT. No se promueve solo: p3_promote_scenario.py {scenario_id}")
         _hysteresis_shadow(conn, builder, reg, scenario_id, portfolio)
 
     return 0
+
+
+def _selection_health(conn, scores, portfolio, reg) -> None:
+    """FND-0430 / P3-1.6: the live selection_health block (report-only). Fail-soft by construction: it returns nothing, so it can never change the DRAFT, the RC or a gate; every read runs in its own
+    savepoint, so a failed query cannot leave the build's transaction aborted for what follows (the hysteresis shadow)."""
+    try:
+        import datetime as dt
+        from shared.config import P3_SELECTION_HEALTH_ENABLED, P3_SELECTION_HEALTH_LIMITS, SHORT_HORIZON_SCORING_ENABLED
+        from proyecto3.src import fund_scorer
+        from proyecto3.src import selection_health as health
+
+        def own_savepoint(read):
+            def run(c, *args):
+                with c.transaction():
+                    return read(c, *args)
+            return run
+
+        weights = {}
+        for sub, w in fund_scorer.SUBPORTFOLIO_WEIGHTS.items():          # the base-score weights compute_base_scores applies, short-horizon ones included when that switch is on
+            weights[sub] = {**dict(w), **(dict(fund_scorer.SHORT_HORIZON_WEIGHTS.get(sub, {})) if SHORT_HORIZON_SCORING_ENABLED else {})}
+        line = health.run_live(
+            conn, scores, portfolio, enabled=P3_SELECTION_HEALTH_ENABLED, limits=P3_SELECTION_HEALTH_LIMITS, today=dt.date.today(), weights=weights,
+            load_previous=own_savepoint(health.load_previous_run), load_managers=own_savepoint(health.load_managers),
+            load_metrics=own_savepoint(lambda c: fund_scorer.load_fund_metrics_for_scoring(c, regime=reg.regime)))
+        if line:
+            print()
+            print(line)
+    except Exception as exc:                                  # noqa: BLE001 -- the monitors report; they never refuse a build
+        print(f"AVISO: selection_health not run ({type(exc).__name__}: {str(exc)[:160]})")
 
 
 def _hysteresis_shadow(conn, builder, reg, scenario_id, portfolio) -> None:

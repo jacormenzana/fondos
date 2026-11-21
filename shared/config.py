@@ -260,6 +260,20 @@ PORTFOLIO_HYSTERESIS_BAND: float = 0.10
 # incumbents (band above; one-step from PRODUCTION and a chain from the previous ON portfolio) and append ONE `P3_HYSTERESIS_SHADOW` row to ingestion_log. It never changes the DRAFT or the build's
 # return code and never reads PORTFOLIO_HYSTERESIS_ENABLED (which stays OFF until the owner rules on the evidence). Ships ON: it only appends a log row and cannot refuse anything. Rollback = False.
 P3_HYSTERESIS_SHADOW_ENABLED: bool = True
+# FND-0430 / P3-1.6 (Package L): the live `selection_health` block of p3_build_portfolio.py: after the build it prints ONE compact block (eligible set and its change against the latest
+# persisted run before today, top-10 turnover, concentration of the CONSTRUCTED portfolio, share of score weight on a missing metric, counts of funds under a data hold / suspicion flag) and
+# flags the monitors above their limit. REPORT-ONLY and fail-soft: it never changes the DRAFT, the return code or a gate, and an error prints one AVISO line. Ships ON because it can
+# refuse nothing. Rollback = False. Limits below: the 95 % empirical quantile of each monitor over the point-in-time history of the sealed evidence run.
+P3_SELECTION_HEALTH_ENABLED: bool = True
+P3_SELECTION_HEALTH_LIMITS_PROVENANCE: str = ("p95 of each monitor per sub-portfolio over 262 monthly dates, run out/reports/pit_backtest/20261119_202509, calibration "
+                                              "out/reports/p3_selection_health/20261119_210053 (generated 2026-11-19, top set = best 10 eligible)")
+# (sub-portfolio, monitor) -> limit. Left out because they cannot fire (their p95 equals the largest value ever seen): top_nature_max of every sub-portfolio (the RAW top list is one nature by
+# design) and top_manager_max of Equilibrada. Known weak spot: a partial run (E-7) must drop about a third of the eligible set to stand out against these limits.
+P3_SELECTION_HEALTH_LIMITS: dict = {
+    ("Defensiva", "eligible_change"): 0.179, ("Dinamica", "eligible_change"): 0.341, ("Equilibrada", "eligible_change"): 0.297,
+    ("Defensiva", "top_turnover"): 0.30, ("Dinamica", "top_turnover"): 0.40, ("Equilibrada", "top_turnover"): 0.40,
+    ("Defensiva", "top_manager_max"): 3.0, ("Dinamica", "top_manager_max"): 3.0,
+}
 # FND-0193 SIMPLIFY (verdict of record 2026-10-19, doc/decisiones/SIMPLIFY_RUNBOOK_FND-0193.md): weights inside a sub-portfolio are EQUAL among
 # the selected funds; score-proportional weighting did not earn its place out of sample (Sharpe -0.023 without it, 90% CI -0.005..+0.053, max DD
 # not worse). The score still ranks and selects (hysteresis included). ONE source for the live builder (portfolio_builder.WEIGHT_METHOD) and the

@@ -15,8 +15,11 @@ Monitors (each per date and sub-portfolio; top set = the `n` best eligible funds
   top_turnover        1 - |top_t intersect top_t-1| / n_t          (how much of the top changed)
   top_nature_max      the largest number of top funds of one Fund_Nature
   top_manager_max     the largest number of top funds of one manager (needs the manager of each fund)
-Not here, because the PIT scores do not carry them: the share of score weight sitting on a missing metric (`nan_weight_share` below works on the metrics frame the live scorer loads) and the
-counts of funds under a data hold or a data-suspicion flag (live only). PURE: pandas / numpy, no database.
+Live only, because the PIT scores do not carry them: the share of score weight sitting on a missing metric (`nan_weight_share` works on the metrics frame the live scorer loads) and the
+counts of funds under a data hold or a data-suspicion flag. THE LIVE BLOCK IS WIRED (FND-0430, `run_live`, called by scripts/launch/p3_build_portfolio.py after the build, kill switch
+`P3_SELECTION_HEALTH_ENABLED`, limits `P3_SELECTION_HEALTH_LIMITS` with their provenance in shared/config.py): report-only and fail-soft; the change monitors compare the current run with
+the latest persisted run strictly before today; concentration is measured on the CONSTRUCTED portfolio. Weak spot: a partial run (E-7) must drop about a third of the eligible set to stand out.
+Pure except the three loaders, which reach the database only through `conn.execute` of a literal statement.
 """
 from __future__ import annotations
 
@@ -98,3 +101,152 @@ def nan_weight_share(metrics: pd.DataFrame, weights: dict) -> pd.Series:
     w = pd.Series(weights, dtype=float)
     present = pd.DataFrame({m: metrics[m].notna() if m in metrics.columns else pd.Series(False, index=metrics.index) for m in w.index})
     return 1.0 - present.mul(w, axis=1).sum(axis=1) / w.sum()
+
+
+# ============================================================
+# The LIVE block (P3-1.6 step 2): report-only, fail-soft, wired in scripts/launch/p3_build_portfolio.py after the build.
+# Pure at its top: the database is reached only through `conn.execute` of the three loaders, and `run_live` takes the loaders as arguments so stubs drive it (R-7).
+# ============================================================
+_FRAME_COLUMNS = ["subportfolio", "isin", "fund_nature", "eligible", "score_final"]
+_EXCLUSION_PREFIXES = ("data_hold", "data_suspect")
+
+
+def _normalized(frame: "pd.DataFrame | None") -> pd.DataFrame:
+    """The monitor columns of a scores frame, with `eligible` as bool and a blank nature when the frame has none (the persisted `fund_scores` rows carry no nature)."""
+    out = frame.copy() if frame is not None else pd.DataFrame()
+    if out.empty:
+        return pd.DataFrame(columns=_FRAME_COLUMNS)
+    if "fund_nature" not in out.columns:
+        out["fund_nature"] = ""
+    out["eligible"] = out["eligible"].astype(bool)
+    return out[_FRAME_COLUMNS]
+
+
+def live_monitors(current: pd.DataFrame, previous: "pd.DataFrame | None" = None, manager: "pd.Series | None" = None, n: int = 10) -> pd.DataFrame:
+    """The monitors of the CURRENT run per sub-portfolio (index `subportfolio`), the change monitors computed against `previous` (the latest persisted run before today) when there is
+    one, NaN otherwise. Same code path as the calibration (`health_series`), so a live value and a calibrated threshold mean the same thing."""
+    cur, prev = _normalized(current), _normalized(previous)
+    stacked = pd.concat([prev.assign(as_of=0), cur.assign(as_of=1)], ignore_index=True) if not prev.empty else cur.assign(as_of=1)
+    h = health_series(stacked, manager, n)
+    return h.xs(1, level="as_of")
+
+
+def exclusion_counts(current: pd.DataFrame) -> dict:
+    """Funds under a data hold / a data-suspicion flag, counted once per ISIN by the prefix of `exclusion_reason` (the live scorer writes `data_hold: ...` / `data_suspect: ...`)."""
+    out = {p: 0 for p in _EXCLUSION_PREFIXES}
+    if current is None or current.empty or "exclusion_reason" not in current.columns:
+        return out
+    reason = current["exclusion_reason"].astype(object).where(current["exclusion_reason"].notna(), "").astype(str)
+    for p in _EXCLUSION_PREFIXES:
+        out[p] = int(current.loc[reason.str.startswith(p), "isin"].nunique())
+    return out
+
+
+def constructed_concentration(funds: list) -> dict:
+    """{subportfolio: {funds, nature_max, manager_max}} of the CONSTRUCTED portfolio (`portfolio.all_funds`: dicts with subportfolio, fund_nature, gestora). The raw top list is one nature
+    by design (see `degenerate`); the diversification that matters happens in the constrained selection, so it is measured here."""
+    out = {}
+    for sub in sorted({f["subportfolio"] for f in funds}):
+        fs = [f for f in funds if f["subportfolio"] == sub]
+        nat = pd.Series([f.get("fund_nature") for f in fs]).value_counts()
+        mgr = pd.Series([f.get("gestora") for f in fs]).value_counts()
+        out[sub] = {"funds": len(fs), "nature_max": int(nat.max()) if len(nat) else 0, "manager_max": int(mgr.max()) if len(mgr) else 0}
+    return out
+
+
+def nan_weight_by_subportfolio(metrics: pd.DataFrame, current: pd.DataFrame, weights: dict) -> dict:
+    """{subportfolio: {mean, funds_with_gap}}: for the ELIGIBLE funds of each sub-portfolio, the mean share of base-score weight sitting on a missing metric (E-5) and the number of funds
+    with any. `metrics`: one row per fund, indexed by ISIN; `weights`: {subportfolio: {metric: weight}}."""
+    out = {}
+    for sub, w in weights.items():
+        isins = current.loc[(current["subportfolio"] == sub) & current["eligible"].astype(bool), "isin"]
+        if isins.empty or not w:
+            continue
+        share = nan_weight_share(metrics.reindex(isins.unique()), w)
+        out[sub] = {"mean": float(share.mean()), "funds_with_gap": int((share > 1e-12).sum())}
+    return out
+
+
+def live_report(current: pd.DataFrame, previous: "pd.DataFrame | None", limits: dict, manager: "pd.Series | None" = None, funds: "list | None" = None,
+                nan_weight: "dict | None" = None, holds: "dict | None" = None, n: int = 10) -> dict:
+    """Everything the block prints, as data: monitors, alerts [(subportfolio, monitor, value, limit)], constructed concentration, E-5 share, hold counts, whether a previous run existed."""
+    mon = live_monitors(current, previous, manager, n)
+    alerts = [(sub, m, v, t) for sub in mon.index for (m, v, t) in evaluate(mon.loc[sub], sub, limits)]
+    return {"monitors": mon, "alerts": alerts, "has_previous": previous is not None and not previous.empty, "constructed": constructed_concentration(funds or []),
+            "nan_weight": nan_weight, "holds": holds if holds is not None else exclusion_counts(current)}
+
+
+def format_block(rep: dict, previous_as_of=None) -> str:
+    """The compact text block (about ten lines). Report-only: an alert is a line, never a refusal."""
+    if not rep["has_previous"]:
+        prev_txt = "no previous run: change monitors n/a"
+    else:
+        prev_txt = f"previous run: {previous_as_of}" if previous_as_of is not None else "previous run available"
+    lines = [f"selection_health (report-only, never blocks) | {prev_txt}"]
+    for sub, r in rep["monitors"].iterrows():
+        chg = f"{r['eligible_change']:.1%}" if np.isfinite(r["eligible_change"]) else "n/a"
+        tt = f"{r['top_turnover']:.0%}" if np.isfinite(r["top_turnover"]) else "n/a"
+        mg = f"{int(r['top_manager_max'])}" if np.isfinite(r["top_manager_max"]) else "n/a"
+        built = rep["constructed"].get(sub)
+        built_txt = f"built {built['funds']} funds, same-nature max {built['nature_max']}, same-manager max {built['manager_max']}" if built else "built n/a"
+        nw = (rep["nan_weight"] or {}).get(sub)
+        nw_txt = f"nan_weight {nw['mean']:.1%} ({nw['funds_with_gap']} funds)" if nw else "nan_weight n/a"
+        lines.append(f"  {sub:<12} eligible {int(r['eligible'])} (change {chg}) | top-10 turnover {tt}, same-manager max {mg} | {built_txt} | {nw_txt}")
+    lines.append(f"  under data_hold: {rep['holds'].get('data_hold', 0)} | under data_suspect: {rep['holds'].get('data_suspect', 0)}")
+    lines += [f"  ALERT {s} {m} {v:.3f} > {t:.3f}" for (s, m, v, t) in rep["alerts"]] or ["  no monitor above its limit"]
+    return "\n".join(lines)
+
+
+def load_previous_run(conn, score_version: str, before) -> pd.DataFrame:
+    """The latest PERSISTED scoring run of each block strictly BEFORE `before` (a date), WITHOUT the regime filter (a regime change is part of what the monitors watch). A real build has
+    just persisted today's rows, so 'the latest persisted run' would be the run itself. The latest `as_of_date` is chosen in a `runs` CTE joined back: a correlated MAX took > 40 s."""
+    rows = conn.execute("""
+        WITH runs AS (
+            SELECT DISTINCT ON (block) block, as_of_date, regime
+            FROM fund_scores
+            WHERE score_version = %s AND as_of_date < %s
+            ORDER BY block, as_of_date DESC, calculated_at DESC
+        )
+        SELECT fs.block, fs.isin, fs.score_total, fs.eligible, fs.as_of_date
+        FROM fund_scores fs
+        JOIN runs r ON r.block = fs.block AND r.as_of_date = fs.as_of_date AND r.regime = fs.regime
+        WHERE fs.score_version = %s
+    """, (score_version, before, score_version)).fetchall()
+    out = pd.DataFrame([(r[0], r[1], "", bool(r[3]), float(r[2] or 0.0)) for r in rows], columns=_FRAME_COLUMNS)
+    out.attrs["as_of"] = max((r[4] for r in rows), default=None)
+    return out
+
+
+def load_managers(conn, isins) -> pd.Series:
+    """{ISIN: Management_Company} of the given ISINs (the raw top lists), for `top_manager_max`."""
+    isins = list(isins)
+    if not isins:
+        return pd.Series(dtype=object)
+    rows = conn.execute("SELECT ISIN, Management_Company FROM fund_master WHERE ISIN = ANY(%s)", (isins,)).fetchall()
+    return pd.Series({r[0]: r[1] for r in rows if r[1]}, dtype=object)
+
+
+def run_live(conn, current: pd.DataFrame, portfolio, *, enabled: bool, limits: dict, today, weights: dict, load_previous, load_managers, load_metrics,
+             score_version: str = "v1", n: int = 10) -> "str | None":
+    """The wired entry point: None when the kill switch is off (nothing is read), the block text otherwise, ONE `AVISO: selection_health not run (...)` line when anything essential fails.
+    Never raises, never mutates `current`, returns text only: it cannot change the DRAFT, the return code or a gate. The manager read and the E-5 read degrade their own monitor only.
+    Known weak spot (stated in the limits' provenance): a partial run (E-7) must drop about a third of the eligible set to stand out."""
+    if not enabled:
+        return None
+    try:
+        cur = _normalized(current)
+        prev = load_previous(conn, score_version, today)
+        top = [i for _, g in cur.groupby("subportfolio") for i in _top_set(g, n)]
+        try:
+            manager = load_managers(conn, top)
+        except Exception:                                    # noqa: BLE001 -- only top_manager_max is lost
+            manager = None
+        try:
+            metrics = load_metrics(conn)
+            nan_weight = nan_weight_by_subportfolio(metrics, cur, weights) if metrics is not None and weights else None
+        except Exception:                                    # noqa: BLE001 -- only the E-5 line is lost
+            nan_weight = None
+        rep = live_report(current, prev, limits, manager=manager, funds=portfolio.all_funds, nan_weight=nan_weight, holds=exclusion_counts(current), n=n)
+        return format_block(rep, prev.attrs.get("as_of") if prev is not None else None)
+    except Exception as exc:                                 # noqa: BLE001 -- a monitor never refuses a build
+        return f"AVISO: selection_health not run ({type(exc).__name__}: {str(exc)[:160]})".replace("\n", " ")
