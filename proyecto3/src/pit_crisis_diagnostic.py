@@ -56,6 +56,28 @@ def assert_dates_allowed(dates, prereg_committed: bool) -> None:
         raise LockedEpisode(f"{PREREG_NAME} is not in git HEAD: locked stress episodes cannot be read: " + ", ".join(bad))
 
 
+# Package L step C0 (plan rev. 3.1, issue I6): the lock above covers the DRAWDOWN windows, which is enough for a baseline read. A LEVER (the relative drawdown filter, the recovery
+# modulation) acts in the months AFTER the trough, so any lever output over the recovery would read the confirmation evidence. A lever output is therefore locked for
+# LEVER_RECOVERY_MONTHS after the end of each episode (a superset of trough + 12 months: the trough lies inside the episode, so no trough has to be located, which would itself be a read).
+# Baseline reads keep `assert_dates_allowed`; the lever runner (step F) must call `assert_lever_dates_allowed`.
+LEVER_RECOVERY_MONTHS = 12
+
+
+def lever_locked_episodes(date) -> list:
+    """Names of every locked episode whose window, extended by LEVER_RECOVERY_MONTHS after its last day (inclusive), contains `date` (the windows overlap: more than one can match)."""
+    d = pd.Timestamp(date)
+    return [name for name, (lo, hi) in LOCKED_EPISODES.items() if pd.Timestamp(lo) <= d <= pd.Timestamp(hi) + pd.DateOffset(months=LEVER_RECOVERY_MONTHS)]
+
+
+def assert_lever_dates_allowed(dates, prereg_committed: bool) -> None:
+    """Like `assert_dates_allowed` for the output of a LEVER: refuses every date inside a locked episode or its recovery (LEVER_RECOVERY_MONTHS after it) while the preregistration is not committed."""
+    if prereg_committed:
+        return
+    bad = sorted({f"{pd.Timestamp(d).date()} ({', '.join(eps)})" for d in dates for eps in [lever_locked_episodes(d)] if eps})
+    if bad:
+        raise LockedEpisode(f"{PREREG_NAME} is not in git HEAD: a lever output cannot be read over locked stress episodes or their {LEVER_RECOVERY_MONTHS}-month recovery: " + ", ".join(bad))
+
+
 def prereg_in_git_head(root) -> bool:
     """True when a file named PREREG_P3_5A.md exists in the tree of git HEAD (a working-tree copy that is not committed does not count)."""
     try:

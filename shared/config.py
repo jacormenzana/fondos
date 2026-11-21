@@ -260,6 +260,13 @@ PORTFOLIO_HYSTERESIS_BAND: float = 0.10
 # incumbents (band above; one-step from PRODUCTION and a chain from the previous ON portfolio) and append ONE `P3_HYSTERESIS_SHADOW` row to ingestion_log. It never changes the DRAFT or the build's
 # return code and never reads PORTFOLIO_HYSTERESIS_ENABLED (which stays OFF until the owner rules on the evidence). Ships ON: it only appends a log row and cannot refuse anything. Rollback = False.
 P3_HYSTERESIS_SHADOW_ENABLED: bool = True
+# FND-0436 / Package L Track 1 (plan rev. 3.1, owner decision 2026-11-21): fee-aware choice among the classes of ONE family. `fund_scorer.deduplicate_by_family` keeps the class with the best
+# `score_final`; that score already carries the recurring charge (the NAV is net of it) but ignores the one-off entry and exit fees. With the switch ON, within a (family, sub-portfolio) the class
+# with the lowest Entry_Fee_Pct + Exit_Fee_Pct replaces the best one only if: both are eligible, its score_final is at least the best's minus the tolerance below, its Ongoing_Charge is not above the
+# best's, and its one-off fees are strictly lower. An unknown fee (NULL / NaN / negative) in either class keeps the best one. Same portfolio, so no predictive claim and no R9 lock. Ships OFF (R2): with it
+# OFF the output is exactly what it was and only a counter is printed (`[Scorer] fee-aware class shadow`). The 0.02 tolerance is the reviewer's value (provenance table of PREREG_P3_5A_DRAFT).
+P3_FEE_AWARE_CLASS_ENABLED: bool = False
+P3_FEE_AWARE_CLASS_SCORE_TOLERANCE: float = 0.02
 # FND-0430 / P3-1.6 (Package L): the live `selection_health` block of p3_build_portfolio.py: after the build it prints ONE compact block (eligible set and its change against the latest
 # persisted run before today, top-10 turnover, concentration of the CONSTRUCTED portfolio, share of score weight on a missing metric, counts of funds under a data hold / suspicion flag) and
 # flags the monitors above their limit. REPORT-ONLY and fail-soft: it never changes the DRAFT, the return code or a gate, and an error prints one AVISO line. Ships ON because it can

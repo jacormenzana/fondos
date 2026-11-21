@@ -356,19 +356,76 @@ def _required(m2: dict, key: str, what: str) -> float:
     return m2[key]
 
 
-def attrition_adjusted(m2: dict, rates=ATTRITION_RATES, alpha: float = 0.05) -> list:
+MAX_ATTRITION_SHARE = 0.5                 # a * k above one half would make the dead funds the majority of the selection: the adjustment is then meaningless, so it is refused
+
+
+def attrition_adjusted(m2: dict, rates=ATTRITION_RATES, alpha: float = 0.05, k: float = 1.0) -> list:
     """Survivorship bound (plan 5.5, pre-registered rule of the draft: the loss given death is the worst-decile outcome of the fund's own peer cell). A fraction `a` of the funds that
     would have been in the sample died unobserved and is selected at the base rate (the scores cannot know it), so the top-quintile mean becomes (1 - a) * M2 + a * (worst-decile gap).
     The expectation replaces the 1,000 simulated paths: the pooled mean is deterministic in `a`. Returns one dict per rate with the adjusted estimate, its lower bound and whether the
-    adjustment flips the sign of the unadjusted estimate."""
+    adjustment flips the sign of the unadjusted estimate.
+    FND-0436 (Package L): `k` is the selection propensity of the dead funds (k = 1: selected at the base rate, today's rule; k > 1: over-represented among the selected, e.g. the funds that
+    ran hottest before a crisis). The share that enters the formula is `a * k` (reported as "share"), refused above MAX_ATTRITION_SHARE. k = 1 gives exactly the unadjusted rows."""
+    if not k > 0:
+        raise ValueError(f"k must be positive, not {k!r}")
     est, se = m2["estimate"], m2["se"]
     gap = _required(m2, "q10_gap_mean", "the panel has no worst-decile gap; build the outcomes with the peer cells (build_panel computes it)")
     z = z_of(1 - alpha)
     rows = []
     for a in rates:
-        adj = (1 - a) * est + a * gap
-        rows.append({"rate": a, "estimate_adjusted": float(adj), "lower_bound_adjusted": float(adj - z * (1 - a) * se), "flips_sign": bool((adj > 0) != (est > 0))})
+        share = a * k
+        if not 0 <= share <= MAX_ATTRITION_SHARE + 1e-12:
+            raise ValueError(f"attrition share a * k = {share:g} is outside [0, {MAX_ATTRITION_SHARE}] (a = {a}, k = {k})")
+        adj = (1 - share) * est + share * gap
+        rows.append({"rate": a, "k": float(k), "share": float(share), "estimate_adjusted": float(adj), "lower_bound_adjusted": float(adj - z * (1 - share) * se),
+                     "flips_sign": bool((adj > 0) != (est > 0))})
     return rows
+
+
+def survivorship_breakdown(m2: dict, alpha: float = 0.05) -> dict:
+    """FND-0436: the BREAKDOWN POINT of the survivorship adjustment, the share a * k at which the adjusted estimate (`estimate_flip`) and the adjusted one-sided lower bound
+    (`lower_bound_flip`) reach zero. A verdict is only as strong as the distance between this share and the plausible attrition: a rate nobody can measure (the PIT panel has no dead
+    funds) is reported as the point where the conclusion changes, not assumed. Closed form of `attrition_adjusted`: (1 - x) * v + x * gap = 0 with v the unadjusted estimate or lower
+    bound, so x = v / (v - gap). 0.0 when v is already not positive; inf when the dead funds would have done at least as well (gap >= v): nothing flips."""
+    est, se = m2["estimate"], m2["se"]
+    gap = _required(m2, "q10_gap_mean", "the panel has no worst-decile gap; build the outcomes with the peer cells (build_panel computes it)")
+    lower = est - z_of(1 - alpha) * se
+
+    def flip(v: float) -> float:
+        if v <= 0:
+            return 0.0
+        return float("inf") if gap >= v else float(v / (v - gap))
+    return {"estimate_flip": flip(est), "lower_bound_flip": flip(lower)}
+
+
+def realised_quantile_path(paths: pd.DataFrame, q: float = 0.10) -> pd.Series:
+    """FND-0436: the stressed path of the survivorship tail stress is the REALISED monthly return path of one fund, the one whose cumulative return over the window is the q-quantile
+    (lower: the fund at sorted position floor(q * (n - 1))), never a pointwise percentile of the paths (that series belongs to no fund). `paths`: months x funds of one peer cell over one
+    window. A fund with a missing month is dropped (a hole is never filled); no fund left is an error."""
+    full = paths.dropna(axis=1, how="any")
+    if full.shape[1] == 0:
+        raise ValueError("no fund of the cell has a complete path over the window")
+    if not 0.0 <= q <= 1.0:
+        raise ValueError(f"q must be in [0, 1], not {q!r}")
+    cum = (1.0 + full).prod() - 1.0
+    order = cum.sort_values(kind="mergesort").index
+    return full[order[int(math.floor(q * (len(order) - 1)))]]
+
+
+def tail_stress_max_dd(port_ret: pd.Series, stress_ret: pd.Series, share: float) -> float:
+    """FND-0436: maximum drawdown (a negative number, the starting capital counts as the first peak) of the WHOLE portfolio trajectory when the fraction `share` = a * k of its positions is
+    replaced by the stressed fund (`realised_quantile_path`): monthly return (1 - share) * port + share * stress, one window at a time (the stressed fraction is re-drawn at each
+    window, so the stress does not compound across windows). Same standard for the baseline and every variant. Refuses a share outside [0, MAX_ATTRITION_SHARE], two series on
+    different indexes and non-finite values (never filled)."""
+    if not 0.0 <= share <= MAX_ATTRITION_SHARE + 1e-12:
+        raise ValueError(f"share {share!r} is outside [0, {MAX_ATTRITION_SHARE}]")
+    if not port_ret.index.equals(stress_ret.index):
+        raise ValueError("portfolio and stress series must share the same index")
+    if not (np.isfinite(port_ret.to_numpy(dtype=float)).all() and np.isfinite(stress_ret.to_numpy(dtype=float)).all()):
+        raise ValueError("portfolio and stress returns must be finite (a missing month is never filled)")
+    mixed = (1.0 - share) * port_ret.to_numpy(dtype=float) + share * stress_ret.to_numpy(dtype=float)
+    cum = np.concatenate(([1.0], np.cumprod(1.0 + mixed)))
+    return float((cum / np.maximum.accumulate(cum) - 1.0).min())
 
 
 def _klass(m2: dict, dd_margin: float) -> str:

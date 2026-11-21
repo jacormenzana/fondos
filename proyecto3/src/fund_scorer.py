@@ -386,12 +386,14 @@ def load_fund_metrics_for_scoring(
     # breaking .set_index("ISIN") outright. Same root cause as db_readers.py::
     # load_fund_attributes() and nav_discovery.py's dict(row) fixes earlier this migration.
     _fm_cols = ["ISIN", "Fund_Name", "Fund_Nature", "srri_kiid", "Investment_Focus",
-                "Credit_Quality", "Ongoing_Charge", "SRRI_Quality_Flag", "fund_family_id"]
+                "Credit_Quality", "Ongoing_Charge", "SRRI_Quality_Flag", "fund_family_id",
+                "Entry_Fee_Pct", "Exit_Fee_Pct"]        # FND-0436: one-off fees (ratios), read by the fee-aware class rule / its shadow only; no other code reads them from this frame
     _fm_rows = conn.execute("""
         SELECT ISIN, Fund_Name, Fund_Nature, SRRI as srri_kiid,
                Investment_Focus, Credit_Quality,
                Ongoing_Charge_Recurrent AS Ongoing_Charge,
-               SRRI_Quality_Flag, fund_family_id
+               SRRI_Quality_Flag, fund_family_id,
+               Entry_Fee_Pct, Exit_Fee_Pct
         FROM fund_master
         WHERE In_Current_Universe = 1
     """).fetchall()
@@ -857,12 +859,65 @@ def check_hard_filters(
 # Deduplicación por familia
 # ============================================================
 
-def deduplicate_by_family(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+# FND-0436 / Package L Track 1: fee-aware choice among the classes of one family (switch P3_FEE_AWARE_CLASS_ENABLED, ships OFF; the rule and its rationale: shared/config.py).
+# These private columns carry a class's recurring charge and one-off fees from `score_funds_from_df` into the deduplication; it removes them right after, so no result ever shows them.
+FEE_AWARE_COLUMNS = ("_fee_ongoing", "_fee_entry", "_fee_exit")
+
+
+def _fee(value) -> "float | None":
+    """A usable fee: a finite number >= 0 (a RATIO, 0.05 = 5 %). None for NULL, NaN, negative or unparsable: an unknown fee never wins a tie."""
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return None
+    return x if np.isfinite(x) and x >= 0 else None
+
+
+def _fee_aware_pick(group: pd.DataFrame, best_idx, tolerance: float):
+    """Index of the class the fee-aware rule would keep in one (family, sub-portfolio) group whose best-score class is `best_idx`: the candidate with the lowest Entry + Exit fees among those that
+    are eligible, score_final >= best - tolerance, Ongoing_Charge <= the best's and one-off fees strictly lower than the best's (ties: the higher score, then the earlier row). The best class
+    itself when no candidate qualifies, when it is not eligible, or when any of its three fees, or the candidate's, is unknown (the fee columns absent counts as unknown)."""
+    if not all(c in group.columns for c in FEE_AWARE_COLUMNS):
+        return best_idx
+
+    def fees(idx):
+        oc, entry, exit_ = (_fee(group.at[idx, c]) for c in FEE_AWARE_COLUMNS)
+        return None if oc is None or entry is None or exit_ is None else (oc, entry + exit_)
+
+    def eligible(idx) -> bool:
+        if "eligible" not in group.columns:
+            return True
+        v = group.at[idx, "eligible"]
+        return bool(v) and not pd.isna(v)
+
+    best_fees = fees(best_idx)
+    if best_fees is None or not eligible(best_idx):
+        return best_idx
+    best_score = float(group.at[best_idx, "score_final"])
+    candidates = []
+    for pos, idx in enumerate(group.index):
+        if idx == best_idx or not eligible(idx):
+            continue
+        cand_fees = fees(idx)
+        if cand_fees is None:
+            continue
+        cand_score = float(group.at[idx, "score_final"])
+        if cand_score < best_score - tolerance - 1e-9 or cand_fees[0] > best_fees[0] or not cand_fees[1] < best_fees[1]:
+            continue
+        candidates.append((cand_fees[1], -cand_score, pos, idx))
+    return min(candidates)[3] if candidates else best_idx
+
+
+def deduplicate_by_family(df: pd.DataFrame, verbose: bool = True, fee_aware: "bool | None" = None, tolerance: "float | None" = None) -> pd.DataFrame:
     """
     Cuando un fondo tiene múltiples clases en el universo de scoring,
     conserva solo la clase con mejor score_final por familia.
 
     Aplica DESPUÉS de compute_base_scores y ANTES de _persist_scores.
+
+    FND-0436 (Package L Track 1): `fee_aware` (None = the switch P3_FEE_AWARE_CLASS_ENABLED, ships OFF) lets `_fee_aware_pick` choose a class with lower one-off fees among near-equal ones
+    (`tolerance` None = P3_FEE_AWARE_CLASS_SCORE_TOLERANCE). With it OFF the representatives are exactly the best-score ones; the would-be switches are still counted (shadow) in
+    `result.attrs["fee_aware_shadow"] = {"enabled", "families", "would_switch"}` (families = those with more than one class) and printed when `verbose`.
     """
     if "fund_family_id" not in df.columns or df["fund_family_id"].isna().all():
         df["family_representative"] = True
@@ -870,6 +925,9 @@ def deduplicate_by_family(df: pd.DataFrame, verbose: bool = True) -> pd.DataFram
 
     df = df.copy()
     df["family_representative"] = False
+    enabled = _shared_config.P3_FEE_AWARE_CLASS_ENABLED if fee_aware is None else bool(fee_aware)
+    tol = _shared_config.P3_FEE_AWARE_CLASS_SCORE_TOLERANCE if tolerance is None else float(tolerance)
+    n_multi = n_switch = 0
 
     mask_no_fam = df["fund_family_id"].isna() | (df["fund_family_id"].astype(str) == "")
     df.loc[mask_no_fam, "family_representative"] = True
@@ -887,7 +945,10 @@ def deduplicate_by_family(df: pd.DataFrame, verbose: bool = True) -> pd.DataFram
                      if "nav_count" in group.columns
                      else ["score_final"])
         best_idx = group.sort_values(sort_cols, ascending=False).index[0]
-        df.loc[best_idx, "family_representative"] = True
+        pick = _fee_aware_pick(group, best_idx, tol)
+        n_multi += 1
+        n_switch += int(pick != best_idx)
+        df.loc[pick if enabled else best_idx, "family_representative"] = True
 
     n_total = len(df)
     n_repr  = df["family_representative"].sum()
@@ -896,8 +957,13 @@ def deduplicate_by_family(df: pd.DataFrame, verbose: bool = True) -> pd.DataFram
         print(f"  [Scorer] Deduplicación por familia: "
               f"{n_repr}/{n_total} clases representantes "
               f"({n_dedup} clases secundarias excluidas)")
+        if all(c in df.columns for c in FEE_AWARE_COLUMNS):
+            print(f"  [Scorer] fee-aware class shadow ({'ON' if enabled else 'OFF'}): {n_switch} of {n_multi} multi-class families "
+                  f"{'switched to' if enabled else 'would switch to'} a class with lower one-off fees")
 
-    return df[df["family_representative"]].drop(columns=["family_representative"])
+    out = df[df["family_representative"]].drop(columns=["family_representative"])
+    out.attrs["fee_aware_shadow"] = {"enabled": enabled, "families": n_multi, "would_switch": n_switch}
+    return out
 
 
 # ============================================================
@@ -1013,6 +1079,10 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
                 "eligible":         excl is None,
                 "exclusion_reason": excl,
                 "detail":           detail,
+                # FND-0436: private, removed right after the family deduplication (the PIT frames carry no one-off fee columns: row.get gives None = unknown)
+                FEE_AWARE_COLUMNS[0]: row.get("Ongoing_Charge"),
+                FEE_AWARE_COLUMNS[1]: row.get("Entry_Fee_Pct"),
+                FEE_AWARE_COLUMNS[2]: row.get("Exit_Fee_Pct"),
             }
             if grace:
                 result_row["exemption_grace"] = grace           # a column of the result only when a fund is in grace: with no grace the frame is exactly what it was
@@ -1022,6 +1092,7 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
 
     if not df_results.empty:
         df_results = deduplicate_by_family(df_results, verbose=verbose)
+        df_results = df_results.drop(columns=[c for c in FEE_AWARE_COLUMNS if c in df_results.columns])      # FND-0436: never part of the result
     return df_results
 
 

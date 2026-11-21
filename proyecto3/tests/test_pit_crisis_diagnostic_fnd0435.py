@@ -58,6 +58,33 @@ def test_unreadable_git_means_locked(tmp_path):
     assert D.prereg_in_git_head(tmp_path) is False                          # not a repository
 
 
+# ---- lever lock: the recovery months (Package L step C0, FND-0436 plan rev. 3.1, issue I6) -----------------------------------------------------------
+# The baseline lock covers the drawdown windows only. A LEVER (relative drawdown filter, recovery modulation) acts in the months after the trough, so a lever output is also locked for
+# `LEVER_RECOVERY_MONTHS` after the end of each episode (a superset of trough + 12 months: the trough lies inside the episode). Baseline reads keep the narrower lock.
+
+@pytest.mark.parametrize("date,episode", [("2016-06-30", "2015-07/08"), ("2019-11-30", "2018-11"), ("2023-06-30", "2022-01..2023-01"), ("2025-09-30", "2025-03"), ("2026-12-31", "2026-02")])
+def test_a_recovery_month_is_open_to_the_baseline_but_locked_to_a_lever(date, episode):
+    assert D.locked_episode(date) is None                                        # the baseline lock does not cover the recovery
+    assert episode in D.lever_locked_episodes(date)
+    with pytest.raises(D.LockedEpisode, match="lever"):
+        D.assert_lever_dates_allowed(["2008-06-30", date], prereg_committed=False)
+    D.assert_lever_dates_allowed(["2008-06-30", date], prereg_committed=True)
+
+
+def test_the_lever_lock_ends_twelve_months_after_the_episode_and_contains_the_baseline_lock():
+    assert D.LEVER_RECOVERY_MONTHS == 12
+    assert D.lever_locked_episodes("2019-11-30") == ["2018-11"] and D.lever_locked_episodes("2019-12-31") == []        # inclusive end, then open
+    for name, (lo, hi) in D.LOCKED_EPISODES.items():
+        for d in (lo, hi):
+            assert name in D.lever_locked_episodes(d)                              # every date the baseline refuses, the lever lock refuses too
+
+
+def test_design_and_descriptive_dates_are_never_lever_locked():
+    for d in D.DESIGN_TOP + D.DESIGN_BOTTOM + D.DESCRIPTIVE_2020:
+        assert D.lever_locked_episodes(d) == []
+    D.assert_lever_dates_allowed(list(D.DESIGN_TOP) + list(D.DESIGN_BOTTOM) + list(D.DESCRIPTIVE_2020), prereg_committed=False)
+
+
 # ---- D0 hindsight bounds -----------------------------------------------------------------------------------------------------
 
 def test_best_static_mix_under_the_drawdown_limit_is_hand_computed():
