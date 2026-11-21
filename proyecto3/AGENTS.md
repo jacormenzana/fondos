@@ -37,6 +37,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `pit_value.py` | `proyecto3/src` |
 | `portfolio_builder.py` | `proyecto3/src` |
 | `portfolio_engine.py` | `proyecto3/src` |
+| `ranking_levers.py` | `proyecto3/src` |
 | `regime_classifier.py` | `proyecto3/src` |
 | `scenario_lifecycle.py` | `proyecto3/src` |
 | `score_candidates.py` | `proyecto3/src` |

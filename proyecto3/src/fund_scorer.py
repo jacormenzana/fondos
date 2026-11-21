@@ -72,6 +72,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
+from proyecto3.src import ranking_levers as RL                     # Package L step F: the four preregistered levers, one implementation for the live build and the PIT (R3)
 from shared import config as _shared_config
 from shared.config import (
     METRIC_VERSION_SHORT,
@@ -366,6 +367,17 @@ def load_fund_metrics_for_scoring(
         for isin, value in result:
             rows.append({"isin": isin, "metric": col, "value": float(value)})
 
+    # -- Package L step F: the P2 metrics of the levers that are ON (none while they ship OFF: the query list and the frame are then exactly what they were) -------------
+    for metric, horizon, real_flag in lever_metric_requests(RL.LeverConfig.from_config()):
+        result = conn.execute(f"""
+            SELECT isin, value
+            FROM fund_metrics
+            WHERE metric={ph} AND horizon={ph} AND real_flag={ph}
+              AND value IS NOT NULL
+        """, (metric, horizon, real_flag)).fetchall()
+        for isin, value in result:
+            rows.append({"isin": isin, "metric": f"{metric}__{horizon}", "value": float(value)})
+
     if not rows:
         return pd.DataFrame()
 
@@ -493,6 +505,8 @@ def _normalize_metric(series: pd.Series, invert: bool = False) -> pd.Series:
 def compute_base_scores(
     df: pd.DataFrame,
     subportfolio: str = "Equilibrada",
+    levers: "RL.LeverConfig | None" = None,
+    recovery_k: "float | None" = None,
 ) -> pd.Series:
     """
     Calcula el score base [0,1] para cada fondo usando pesos diferenciados
@@ -500,6 +514,10 @@ def compute_base_scores(
 
     Normalización por naturaleza: cada tipo de fondo compite contra sus iguales
     antes de recibir el bonus de naturaleza para escalar entre tipos.
+
+    Package L step F (PREREG_P3_5A), both default to "nothing happens": `recovery_k` (L3) is the factor to apply in the recovery state of the pool (None = not in recovery): the nature bonus
+    b becomes 1 + (b - 1) k and the max_dd weight w k, the other weights rescaled proportionally; `levers.l4_h_years` (L4) deducts (entry + exit) / H from the return metric BEFORE its
+    within-nature percentile normalisation (an unknown fee takes the median penalty of the nature cell; the persisted metric stays the raw one).
     """
     weights      = dict(SUBPORTFOLIO_WEIGHTS.get(subportfolio, BASE_WEIGHTS))
     nature_bonus = NATURE_PROFILE_BONUS.get(subportfolio, {})
@@ -509,6 +527,9 @@ def compute_base_scores(
     # Las métricas de retorno corto son señales de tendencia secundarias.
     if SHORT_HORIZON_SCORING_ENABLED:
         weights.update(SHORT_HORIZON_WEIGHTS.get(subportfolio, {}))
+    if recovery_k is not None:                                       # L3: only in the recovery state of the pool; k = 1 is the identity
+        weights, nature_bonus = RL.modulate_weights(weights, recovery_k), RL.modulate_bonus(nature_bonus, recovery_k)
+    l4_h = levers.l4_h_years if levers is not None else None
 
     # Métricas que deben invertirse (menor RAW = mejor), para
     # _normalize_metric(invert=True) -- Fase 1a (P3 optimization plan):
@@ -522,6 +543,12 @@ def compute_base_scores(
     # shared/statistical_audit/catalog_metric_bounds.py para los bounds que
     # documentan la convención de signo de cada métrica (Fase 1b).
     _INVERTED_METRICS: set[str] = set()
+
+    def _l4_net_return(cell: pd.DataFrame, col: pd.Series, h_years: float) -> pd.Series:
+        """L4: the return metric net of the one-off fees amortised over H years, inside one normalisation cell. A cell with no known fee is left raw (no adjustment)."""
+        pen, _n_unknown = RL.l4_penalty(cell, h_years)
+        pen = pen.reindex(col.index)
+        return col - pen.where(pen.notna(), 0.0)
 
     scores_by_nature = pd.Series(0.0, index=df.index)
 
@@ -537,6 +564,8 @@ def compute_base_scores(
                 col = subset_n[metric].dropna()
                 if col.empty:
                     continue
+                if l4_h is not None and metric == "return_ann_real":
+                    col = _l4_net_return(subset_n, col, l4_h)
                 invert     = metric in _INVERTED_METRICS
                 normalized = _normalize_metric(col, invert=invert)
                 scores_n   = scores_n.add(normalized * weight, fill_value=0)
@@ -550,6 +579,8 @@ def compute_base_scores(
             col = df[metric].dropna()
             if col.empty:
                 continue
+            if l4_h is not None and metric == "return_ann_real":
+                col = _l4_net_return(df, col, l4_h)
             invert     = metric in _INVERTED_METRICS
             normalized = _normalize_metric(col, invert=invert)
             scores_by_nature = scores_by_nature.add(normalized * weight, fill_value=0)
@@ -803,15 +834,23 @@ def check_hard_filters(
         if isinstance(gap, str) and gap:
             return gap
 
-    dd = row.get("max_dd", np.nan)
-    dd_limit = MAX_DRAWDOWN_BY_SUB.get(subportfolio, MAX_DRAWDOWN_LIMIT)
-    if not np.isnan(dd) and dd < dd_limit:
-        return f"max_drawdown={dd:.2f} < {dd_limit} ({subportfolio})"
+    l1_on = row.get("l1_on")
+    if l1_on is not None and not pd.isna(l1_on) and bool(l1_on):
+        # Package L L1 (PREREG_P3_5A): for the sub-portfolios of RL.L1_SUBS the absolute since-inception drawdown and real-return filters are REPLACED by the peer-relative ones, whose reason
+        # `score_funds_from_df` computed per (sub-portfolio, nature) cell from the RAW metrics (return_ann_real is never the L4 net return). Every other filter keeps its place.
+        l1_reason = row.get("l1_reason")
+        if isinstance(l1_reason, str) and l1_reason:
+            return l1_reason
+    else:
+        dd = row.get("max_dd", np.nan)
+        dd_limit = MAX_DRAWDOWN_BY_SUB.get(subportfolio, MAX_DRAWDOWN_LIMIT)
+        if not np.isnan(dd) and dd < dd_limit:
+            return f"max_drawdown={dd:.2f} < {dd_limit} ({subportfolio})"
 
-    ret = row.get("return_ann_real", np.nan)
-    ret_limit = MIN_REAL_RETURN_BY_SUB.get(subportfolio, MIN_REAL_RETURN)
-    if not np.isnan(ret) and ret < ret_limit:
-        return f"return_ann_real={ret:.3f} < {ret_limit} ({subportfolio})"
+        ret = row.get("return_ann_real", np.nan)
+        ret_limit = MIN_REAL_RETURN_BY_SUB.get(subportfolio, MIN_REAL_RETURN)
+        if not np.isnan(ret) and ret < ret_limit:
+            return f"return_ann_real={ret:.3f} < {ret_limit} ({subportfolio})"
 
     if subportfolio == "Defensiva":
         srri = row.get("srri_nav", np.nan)
@@ -1016,9 +1055,35 @@ def compute_regime_percentiles(df: pd.DataFrame, regime: str, verbose: bool = Tr
     return pct
 
 
-def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> pd.DataFrame:
+def baseline_eligible_isins(df: pd.DataFrame) -> list:
+    """ISINs eligible in at least one sub-portfolio under the BASELINE hard filters (no lever applied; the frame carries no lever column). It is the pool of lever L3: the equal-weight pool of
+    the funds eligible at the date (unique ISIN, before the family deduplication), the same definition in the live build and in the PIT."""
+    out = set()
+    for sub, natures in SUBPORTFOLIO_MAPPING.items():
+        for isin, row in df[df["Fund_Nature"].isin(natures)].iterrows():
+            if isin not in out and check_hard_filters(row, sub) is None:
+                out.add(isin)
+    return sorted(out)
+
+
+def lever_metric_requests(levers: "RL.LeverConfig") -> list:
+    """(metric, horizon, real_flag) triples the live loader must read from P2 for the levers that are ON (pure: no DB; empty with all levers off): L1 the stored 60-month drawdown, L2 the stored
+    annualised 3-year nominal return. L4 reads fund_master fees (already part of the frame) and L3 reads NAVs, not metrics. Both are P2 metrics that are already stored (verified 2026-11-21)."""
+    out = []
+    if levers.l1_q is not None:
+        out.append(("max_dd", "rolling_5y", 0))
+    if levers.l2_z0 is not None:
+        out.append(("return_ann", "rolling_3y", 0))
+    return out
+
+
+def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True,
+                        levers: "RL.LeverConfig | None" = None, recovery_k: "float | None" = None) -> pd.DataFrame:
     """
     Nucleo PURO del scoring (sin DB, sin persistencia): puntua un frame de metricas ya cargado.
+
+    Package L step F (PREREG_P3_5A): `levers` = the preregistered ranking levers that are on (None = the configuration's switches, all OFF by default; an explicit `LeverConfig()` = none);
+    `recovery_k` = the L3 factor when the pool is in the recovery state (the caller computes the state from the pool series). With every lever off the function is exactly what it was.
 
     df: una fila por fondo (indice isin) con las columnas que devuelve
         load_fund_metrics_for_scoring (metricas + atributos de fund_master). Las columnas ausentes
@@ -1031,6 +1096,7 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
     que construye el frame de cada fecha solo con datos observables en ella.
     """
     regime_pct = compute_regime_percentiles(df, regime, verbose=verbose)
+    cfg = levers if levers is not None else RL.LeverConfig.from_config()
 
     results = []
 
@@ -1038,7 +1104,16 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
         mask   = df["Fund_Nature"].isin(sub_list)
         subset = df[mask]
 
-        sub_scores = compute_base_scores(subset, subportfolio=nature)
+        l2_mult = None
+        if cfg.l1_q is not None and nature in RL.L1_SUBS:
+            # L1: the peer-relative reasons of this sub-portfolio's cells, handed to check_hard_filters through two columns of the SUBSET only (the result never carries them)
+            subset = subset.copy()
+            subset["l1_reason"] = RL.l1_peer_reasons(subset, nature, cfg.l1_q, MAX_DRAWDOWN_BY_SUB.get(nature, MAX_DRAWDOWN_LIMIT), MIN_REAL_RETURN_BY_SUB.get(nature, MIN_REAL_RETURN))
+            subset["l1_on"] = True
+        if cfg.l2_z0 is not None:
+            l2_mult = RL.l2_multiplier(subset, nature, cfg.l2_z0)
+
+        sub_scores = compute_base_scores(subset, subportfolio=nature, levers=cfg, recovery_k=recovery_k)
 
         for isin, row in subset.iterrows():
             score_base = float(sub_scores.get(isin, 0.0))
@@ -1050,6 +1125,8 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
             mult, mult_detail = compute_regime_multiplier(row, regime, **regime_pct)
 
             score_final = score_base * mult if excl is None else 0.0
+            if l2_mult is not None and excl is None:             # L2: the over-extension penalty of Equilibrada (1.0 elsewhere)
+                score_final = score_final * float(l2_mult.get(isin, 1.0))
 
             detail = {
                 "score_base":  round(score_base, 4),
@@ -1096,6 +1173,21 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
     return df_results
 
 
+def live_recovery_k(conn: "psycopg.Connection", df: pd.DataFrame, levers: "RL.LeverConfig") -> "float | None":
+    """L3 in the live build: the state of the equal-weight pool of the baseline-eligible funds from their month-end NAVs (`ranking_levers.pool_state`), and the factor k when it is `recovery`
+    (None otherwise). The month is the latest month-end at which at least half of the pool has a NAV. The PIT reads the same pool from the same function at each date. Prints the state."""
+    from proyecto3.src.pit_inputs import load_nav_panel            # local import: pit_inputs does not depend on the scorer, but the scorer must stay importable without the PIT stack
+    pool = baseline_eligible_isins(df)
+    nav_m = RL.month_end_rows(load_nav_panel(conn, pool)) if pool else pd.DataFrame()
+    t = RL.latest_complete_month_end(nav_m, pool)
+    if t is None:
+        print("  [L3] no month-end with enough NAVs: no modulation")
+        return None
+    state = RL.pool_state(RL.pool_returns_from_nav(nav_m, pool, t))
+    print(f"  [L3] pool of {len(pool)} eligible funds, state at {t.date()}: {state}" + (f" -> k = {levers.l3_k}" if state == "recovery" else ""))
+    return float(levers.l3_k) if state == "recovery" else None
+
+
 def score_funds(
     conn: "psycopg.Connection",
     regime_result: RegimeResult,
@@ -1124,7 +1216,9 @@ def score_funds(
 
     print(f"Fondos con métricas: {len(df)}")
 
-    df_results = score_funds_from_df(df, regime)
+    cfg = RL.LeverConfig.from_config()
+    recovery_k = live_recovery_k(conn, df, cfg) if cfg.l3_k is not None else None
+    df_results = score_funds_from_df(df, regime, levers=cfg, recovery_k=recovery_k)
 
     if not dry_run and not df_results.empty:
         _persist_scores(conn, df_results, regime, score_version)

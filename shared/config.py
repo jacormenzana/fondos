@@ -267,6 +267,22 @@ P3_HYSTERESIS_SHADOW_ENABLED: bool = True
 # OFF the output is exactly what it was and only a counter is printed (`[Scorer] fee-aware class shadow`). The 0.02 tolerance is the reviewer's value (provenance table of PREREG_P3_5A_DRAFT).
 P3_FEE_AWARE_CLASS_ENABLED: bool = False
 P3_FEE_AWARE_CLASS_SCORE_TOLERANCE: float = 0.02
+# FND-0436 / Package L step F (doc/decisiones/PREREG_P3_5A.md, signed off 2026-11-21): the four ranking-layer levers of `proyecto3/src/ranking_levers.py`, one function for the live build and the PIT (R3).
+# Each ships OFF (R2): with all four OFF the scorer and every PIT cache key are exactly what they were. The values below are the FIRST (less intrusive) preregistered value of each lever; the 11 preregistered
+# trials run with explicit `LeverConfig`s and do not read them. Adoption is the owner's order after the forward shadow (R7); turning a switch ON live also needs the P2 metrics the lever reads
+# (L1: max_dd at rolling_5y, L2: return_ann at rolling_3y, both already stored; L4: Entry_Fee_Pct / Exit_Fee_Pct of fund_master).
+# L1 peer-relative hard filters (Equilibrada, Dinamica): exclude the worst share P3_L1_PEER_CUT of each nature cell on the rolling 60-month drawdown or the since-inception real return (values 0.20, 0.35).
+P3_L1_PEER_FILTER_ENABLED: bool = False
+P3_L1_PEER_CUT: float = 0.20
+# L2 overextension (Equilibrada): the final score x0.80 when the robust z of the trailing 3-year nominal return in its cell exceeds P3_L2_Z0 (values 2.0, 1.5).
+P3_L2_OVEREXTENSION_ENABLED: bool = False
+P3_L2_Z0: float = 2.0
+# L3 recovery modulation: in a recovery state of the eligible pool the nature bonus and the max_dd weight are scaled by P3_L3_RECOVERY_K (values 0.5, 0).
+P3_L3_RECOVERY_MODULATION_ENABLED: bool = False
+P3_L3_RECOVERY_K: float = 0.5
+# L4 one-off fee penalty: return_ann_real - (entry + exit) / P3_L4_H_YEARS before the within-nature normalisation (values 3.0, 2.0 years).
+P3_L4_FEE_PENALTY_ENABLED: bool = False
+P3_L4_H_YEARS: float = 3.0
 # FND-0430 / P3-1.6 (Package L): the live `selection_health` block of p3_build_portfolio.py: after the build it prints ONE compact block (eligible set and its change against the latest
 # persisted run before today, top-10 turnover, concentration of the CONSTRUCTED portfolio, share of score weight on a missing metric, counts of funds under a data hold / suspicion flag) and
 # flags the monitors above their limit. REPORT-ONLY and fail-soft: it never changes the DRAFT, the return code or a gate, and an error prints one AVISO line. Ships ON because it can

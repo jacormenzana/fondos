@@ -37,7 +37,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from proyecto3.src.fund_scorer import score_funds_from_df
+from proyecto3.src import ranking_levers as RL                 # the PIT reaches the levers through the module (a test spies on it) and the scorer applies them
+from proyecto3.src.fund_scorer import baseline_eligible_isins, score_funds_from_df
 from shared.config import MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS
 
 logger = logging.getLogger(__name__)
@@ -95,8 +96,14 @@ def pit_scores(
     log_universe: bool = True,
     data_suspect: "dict | None" = None,
     frames_out: "dict | None" = None,
+    levers: "RL.LeverConfig | None" = None,
+    lever_inputs: "RL.LeverInputs | None" = None,
 ) -> "tuple[pd.DataFrame, pd.DataFrame]":
     """Score the universe as of every date in `at`.
+
+    levers / lever_inputs (Package L step F, PREREG_P3_5A): the ranking levers that are on (None = the configuration's switches, all OFF by default) and what they read: the trailing 60-month
+    drawdown and 36-month nominal return frames (L1, L2), the fee frame (L4) and the month-end NAV panel (L3's pool). A lever that is ON without its input is an ERROR, never a silent no-op.
+    The levers act inside `score_funds_from_df`, the function production runs; this only builds the same frame columns the live loader reads from P2 and the state of L3.
 
     risk:    pit_metrics.expanding_risk_metrics output (needs n_obs, max_dd, return_ann_real, sharpe, srri_nav).
     peers:   {'alpha_persistence': DataFrame, 'capture_ratio': DataFrame} from pit_peer_metrics (raw-date index).
@@ -134,6 +141,22 @@ def pit_scores(
             macro_snaps[name], _ = asof_snapshot(frame_m, at, macro_max_stale_days)
 
     vol_snap = asof_snapshot(risk["vol_ann"], at, max_stale_days)[0] if (data_suspect is not None and "vol_ann" in risk) else None   # the denominator of the Sharpe (degenerate-ratio rule)
+
+    cfg = levers if levers is not None else RL.LeverConfig.from_config()
+    lever_snaps = {}
+    if cfg.any_on:
+        li = lever_inputs
+        need = [(cfg.l1_q is not None, "dd60", "L1 (the trailing 60-month drawdown frame)"), (cfg.l2_z0 is not None, "ret36", "L2 (the trailing 36-month return frame)"),
+                (cfg.l4_h_years is not None, "fees", "L4 (lever_inputs.fees: the entry and exit fee frame)"), (cfg.l3_k is not None, "nav_m", "L3 (the month-end NAV panel)")]
+        if li is None:
+            raise ValueError("pit_scores: a lever is ON but lever_inputs is None: " + ", ".join(n for on, _a, n in need if on))
+        for on, attr, name in need:
+            if on and getattr(li, attr) is None:
+                raise ValueError(f"pit_scores: lever {name} is ON but its input is missing")
+        if cfg.l1_q is not None:
+            lever_snaps["dd60"], _ = asof_snapshot(li.dd60, at, max_stale_days)
+        if cfg.l2_z0 is not None:
+            lever_snaps["ret36"], _ = asof_snapshot(li.ret36, at, max_stale_days)
 
     attrs = attrs.copy()
     in_universe = attrs["In_Current_Universe"] if "In_Current_Universe" in attrs.columns else None
@@ -180,9 +203,24 @@ def pit_scores(
                                           vol=vol_snap.iloc[i] if vol_snap is not None else None)
             frame["data_suspect_reason"] = pd.Series(reasons, dtype=object).reindex(frame.index)
 
+        recovery_k = None
+        if cfg.any_on and len(frame):
+            # the lever columns, named as the live loader names them (P2: max_dd at rolling_5y, return_ann at rolling_3y; fund_master: the fees)
+            if cfg.l1_q is not None:
+                frame[RL.DD60_COLUMN] = lever_snaps["dd60"].iloc[i].reindex(isins)
+            if cfg.l2_z0 is not None:
+                frame[RL.RET36_COLUMN] = lever_snaps["ret36"].iloc[i].reindex(isins)
+            if cfg.l4_h_years is not None:
+                for c in RL.FEE_COLUMNS:
+                    frame[c] = lever_inputs.fees[c].reindex(isins) if c in lever_inputs.fees.columns else np.nan
+            if cfg.l3_k is not None:
+                pool = baseline_eligible_isins(frame)          # the BASELINE eligible set: no circularity with L1, the same pool as the live build
+                state = RL.pool_state(RL.pool_returns_from_nav(lever_inputs.nav_m, pool, t))
+                recovery_k = float(cfg.l3_k) if state == "recovery" else None
+
         if frames_out is not None:
             frames_out[t] = frame.copy()
-        res = score_funds_from_df(frame, regime, verbose=False) if len(frame) else pd.DataFrame()
+        res = score_funds_from_df(frame, regime, verbose=False, levers=cfg, recovery_k=recovery_k) if len(frame) else pd.DataFrame()
         n_scored = len(res)
         n_elig = int(res["eligible"].sum()) if n_scored else 0
         retired = _retired_isins(frame.index, in_universe)

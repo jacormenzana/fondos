@@ -23,6 +23,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from proyecto3.src import ranking_levers as RL
 from proyecto3.src.pit_cache import CODE_VERSION, ParquetCache, cached_frames, content_hash
 from proyecto3.src.pit_baselines import flatten_score_detail
 from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, log_universe_summary, pit_scores
@@ -48,6 +49,8 @@ class PitInputs:
     macro: "pd.DataFrame | None" = None      # macro_sensitivity.load_macro_factors(); None = no group B (PIT v1)
     fund_geo: "pd.DataFrame | None" = None   # index isin; geography / development_status (pit_macro.load_macro_fund_attrs)
     fx_exposed: "pd.Series | None" = None    # index isin, bool: counts against the non-EUR budget (pit_inputs.load_fx_exposed); None = no limit
+    fees: "pd.DataFrame | None" = None       # Package L lever L4: index isin, columns Entry_Fee_Pct / Exit_Fee_Pct (fund_master, ratios; today's values, a documented look-ahead). Deliberately NOT a
+                                             # column of `attrs`, which feeds every score cache key: it enters a key only when L4 is ON (lever_key_parts)
 
 
 @dataclass
@@ -72,6 +75,14 @@ def risk_cache_flags(_config) -> dict:
     return flags
 
 
+def lever_key_parts(levers: "RL.LeverConfig", fees: "pd.DataFrame | None") -> list:
+    """What the ranking levers add to the score cache key: NOTHING when they are all off (the warm caches stay valid, byte for byte), otherwise every value that can change a score through a lever
+    (and the fee frame when L4 is on). A changed lever value can never hit a stale cache (FND-0192's rule)."""
+    if not levers.any_on:
+        return []
+    return [{"levers": levers.key(), "fees": content_hash(fees) if (levers.l4_h_years is not None and fees is not None) else None}]
+
+
 def compute_pit_scores(
     inputs: PitInputs,
     at: pd.DatetimeIndex,
@@ -85,8 +96,11 @@ def compute_pit_scores(
     macro_variant: "str | None" = None,
     macro_workers: int = 1,
     frames_out: "dict | None" = None,
+    levers: "RL.LeverConfig | None" = None,
 ) -> PitRun:
     """Run the whole PIT scoring chain for the dates `at`. ipc_lag_months defaults to the regime IPC lag.
+    levers (Package L step F, PREREG_P3_5A): the ranking levers that are on (None = the configuration's switches, all OFF by default; an explicit `LeverConfig()` = none). The trailing 60 / 36-month
+    frames they read are cached like the other risk frames; L4 needs `inputs.fees`; the lever values enter the score cache key only when a lever is on.
     frames_out (FND-0435): a dict that receives the metric frame each date is scored on; it bypasses the scoring-block cache (a cache hit would never build the frames), nothing else changes."""
     at = pd.DatetimeIndex(at)
     lag = REGIME_PUBLICATION_LAG_MONTHS.get("ipc_index", 0) if ipc_lag_months is None else ipc_lag_months
@@ -137,6 +151,22 @@ def compute_pit_scores(
         # momentum (above) keeps the expanding return_ann and srri_nav stays expanding: the PREREG replaces only the listed metrics
         risk_scored = {**risk, **{k: win[k] for k in TRAILING_KEYS}, "n_obs": win["n_obs"]}
         min_obs = max(min_obs, COMMON_WINDOW_MONTHS)           # a fund without a full window is ineligible (the young filter)
+
+    # ---- Package L step F: the inputs of the ranking levers that are ON (nothing is computed while they are all OFF) ----
+    levers = levers if levers is not None else RL.LeverConfig.from_config()
+    lever_inputs = None
+    if levers.any_on:
+        dd60 = ret36 = None
+        if levers.l1_q is not None:
+            win, hit, secs = cached_frames(cache, "lever_win60", content_hash(risk_key, {"window": 60, "kind": "p35a_v1"}), lambda: trailing_risk_metrics(
+                inputs.nav, inputs.ipc, inputs.rate, ipc_lag_months=lag, window_months=60))
+            dd60, timings["lever_win60"], hits["lever_win60"] = win["max_dd"], secs, hit
+        if levers.l2_z0 is not None:
+            win, hit, secs = cached_frames(cache, "lever_win36", content_hash(risk_key, {"window": 36, "kind": "p35a_v1"}), lambda: trailing_risk_metrics(
+                inputs.nav, inputs.ipc, inputs.rate, ipc_lag_months=lag, window_months=36))
+            ret36, timings["lever_win36"], hits["lever_win36"] = win["return_ann"], secs, hit
+        lever_inputs = RL.LeverInputs(dd60=dd60, ret36=ret36, fees=inputs.fees,
+                                      nav_m=RL.month_end_rows(inputs.nav) if levers.l3_k is not None else None)
 
     # ---- d1c: short gates from daily NAV, in ISIN chunks ----
     short = None
@@ -212,7 +242,8 @@ def compute_pit_scores(
                               "scorer_cfg": SCORER_CONFIG_HASH, "universe_cols": 2},          # FND-0192: a changed scorer value can never hit a stale cache
                              CODE_VERSION, *macro_key,          # macro_key empty without group B
                              *([{"nav_continuity": elig_params}] if elig_on else []),     # FND-0254: part of the key only when the rule is ON
-                             *([{"data_suspect": suspect_params}] if suspect_on else []))  # FND-0394: idem
+                             *([{"data_suspect": suspect_params}] if suspect_on else []),  # FND-0394: idem
+                             *lever_key_parts(levers, inputs.fees))                        # Package L: idem; nothing while every lever is off
 
     # FND-0193 (resumable runs): the dominant cost is scored in blocks of SCORE_BLOCK_DATES evaluation dates and each block is cached as it
     # finishes, so a run killed by the memory guard (or the owner) loses at most one block. The score of a date uses only information at that
@@ -238,7 +269,7 @@ def compute_pit_scores(
                 block, risk_scored, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
                 max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
                 keep_detail=keep_detail, macro=macro, nav_gap=_nav_gap_for(block), log_universe=False, data_suspect=suspect_run,
-                frames_out=frames_out,
+                frames_out=frames_out, levers=levers, lever_inputs=lever_inputs,
             )
             out = {"scores": s.drop(columns=["detail"]) if (keep_detail and "detail" in s.columns) else s, "universe": u}
             if keep_detail:
