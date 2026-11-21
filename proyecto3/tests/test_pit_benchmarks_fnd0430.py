@@ -159,3 +159,48 @@ def test_the_sharpe_gap_and_the_draw_average():
     assert g["n_draws"] == 2 and g["point"] > 0 and g["draw_sd"] > 0 and g["ci_low"] < g["point"] < g["ci_high"]
     with pytest.raises(ValueError):
         B.bootstrap_gap(draws, b, "median")
+
+
+# ---------------------------------------------------------------- P3-7: the persistent pool at the band of its champion arm (PREREG_P3_7 section 4 and section 11 item 1)
+def _late_world():
+    scores, attrs, hist, at = world(n_dates=12)
+    late = scores["isin"].str[3:].astype(int) % 2 == 1                                          # half of the funds are not eligible until month 6
+    return scores.assign(eligible=~(late & (scores["as_of"] < at[6]))), attrs, hist, at
+
+
+def test_the_band_parameter_defaults_to_the_shipped_hold_band():
+    s2, attrs, hist, at = _late_world()
+    a = B.random_selection_weights(s2, attrs, hist, at, seed=3, persistent=True)[0]
+    b = B.random_selection_weights(s2, attrs, hist, at, seed=3, persistent=True, band=None)[0]
+    c = B.random_selection_weights(s2, attrs, hist, at, seed=3, persistent=True, band=B.HOLD_BAND)[0]
+    pd.testing.assert_frame_equal(a, b)
+    pd.testing.assert_frame_equal(a, c)
+
+
+def test_a_band_of_zero_is_a_fixed_random_score_with_no_bonus_and_it_churns():
+    s2, attrs, hist, at = _late_world()
+    W0 = B.random_selection_weights(s2, attrs, hist, at, seed=3, persistent=True, band=0.0)[0]
+    assert set(W0.iloc[5].dropna().index) != set(W0.iloc[6].dropna().index)
+
+
+def test_a_larger_band_means_a_stickier_pool_on_average():
+    s2, attrs, hist, at = _late_world()
+
+    def turnover(band):
+        return float(np.mean([B.monthly_turnover(B.random_selection_weights(s2, attrs, hist, at, seed=k, persistent=True, band=band)[0]).iloc[1:].mean() for k in range(1, 7)]))
+    t0, t10, t20, thold = turnover(0.0), turnover(0.10), turnover(0.20), turnover(B.HOLD_BAND)
+    assert t0 > thold and t0 >= t10 >= t20 >= thold - 1e-12
+
+
+def test_the_pool_band_is_the_incumbent_bonus_of_the_production_engine(monkeypatch):
+    seen = {}
+
+    def spy(scores, attrs, hist, at, constraints, use_incumbents=False, **kw):
+        seen["band"], seen["inc"] = constraints.hysteresis_band, use_incumbents
+        return pd.DataFrame(), pd.Series(dtype=float)
+    monkeypatch.setattr(B, "build_weights", spy)
+    s2, attrs, hist, at = _late_world()
+    B.random_selection_weights(s2, attrs, hist, at, seed=1, persistent=True, band=0.10)
+    assert seen == {"band": 0.10, "inc": True}
+    B.random_selection_weights(s2, attrs, hist, at, seed=1, persistent=False, band=0.10)          # the redraw has no incumbents: the band is ignored
+    assert seen["inc"] is False

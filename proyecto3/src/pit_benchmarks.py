@@ -79,17 +79,19 @@ def pool_weights(scores: pd.DataFrame, regime_hist: pd.DataFrame, at: pd.Datetim
 
 
 def random_selection_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.DataFrame, at: pd.DatetimeIndex, seed: int, persistent: bool,
-                             constraints=DEFAULT_CONSTRAINTS, fx_exposed: "pd.Series | None" = None) -> "tuple[pd.DataFrame, pd.Series]":
+                             constraints=DEFAULT_CONSTRAINTS, fx_exposed: "pd.Series | None" = None, band: "float | None" = None) -> "tuple[pd.DataFrame, pd.Series]":
     """Master weights and cash of the random-selection benchmark, built by the production engine (pit_backtest.build_weights) with `score_final` replaced.
     persistent=True (R1): ONE random score per fund for the whole history and the incumbent bonus at HOLD_BAND, so a holding changes only when it stops being
-    eligible or a construction rule removes it. persistent=False (R2): a fresh random score per (date, fund, sub-portfolio) row, no incumbents."""
+    eligible or a construction rule removes it. persistent=False (R2): a fresh random score per (date, fund, sub-portfolio) row, no incumbents.
+    `band` (P3-7, PREREG_P3_7 section 4: the matched pool at the SAME band as its champion arm): the incumbent bonus of the persistent pool when it is not the shipped HOLD_BAND
+    (None = HOLD_BAND, unchanged; 0 = a fixed random score with no bonus). Ignored by the redraw, which has no incumbents."""
     rng = np.random.default_rng(seed)
     tiny = 1e-9                                                    # a score of exactly 0 would fail the engine's score > 0 candidate rule
     if persistent:
         isins = scores["isin"].unique()
         fixed = pd.Series(rng.random(len(isins)) + tiny, index=isins)
         s = scores.assign(score_final=scores["isin"].map(fixed).to_numpy())
-        return build_weights(s, attrs, regime_hist, at, dataclasses.replace(constraints, hysteresis_band=HOLD_BAND), use_incumbents=True, fx_exposed=fx_exposed)
+        return build_weights(s, attrs, regime_hist, at, dataclasses.replace(constraints, hysteresis_band=HOLD_BAND if band is None else float(band)), use_incumbents=True, fx_exposed=fx_exposed)
     s = scores.assign(score_final=rng.random(len(scores)) + tiny)
     return build_weights(s, attrs, regime_hist, at, constraints, use_incumbents=False, fx_exposed=fx_exposed)
 

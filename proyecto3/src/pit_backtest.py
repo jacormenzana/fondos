@@ -38,6 +38,7 @@ if str(_ROOT) not in sys.path:
 
 from proyecto3.src.backtesting import FORWARD_WINDOWS, _blend_to_master
 from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, asof_snapshot
+from proyecto3.src.pit_class_choice import apply_class_choice
 from proyecto3.src.portfolio_engine import DEFAULT_CONSTRAINTS, cash_weight, select_and_weight
 from proyecto3.src.score_candidates import exposure_constrained
 from shared.nav_month_end import MONTH_CLOSE_TOLERANCE_DAYS   # FND-0300: one "this NAV closes its month" tolerance
@@ -66,11 +67,12 @@ def last_complete_month_end(last_nav: pd.Timestamp, tolerance_days: int = MONTH_
 # Selection over time
 # ============================================================
 
-def candidates_by_sub(scores_t: pd.DataFrame, attrs: pd.DataFrame, fx_exposed: "pd.Series | None" = None) -> dict:
+def candidates_by_sub(scores_t: pd.DataFrame, attrs: pd.DataFrame, fx_exposed: "pd.Series | None" = None, class_choice=None) -> dict:
     """Candidate frames per sub-portfolio from one date's scores: eligible and score > 0 (same rule as
     score_candidates.load_current_candidates; the PIT universe already holds one row per fund and block).
     `fx_exposed` (bool Series by isin) adds the `fx_exposed` column the engine's exposure constraint reads; a fund absent from it is
-    treated as not exposed, as in the live gate."""
+    treated as not exposed, as in the live gate.
+    `class_choice` (P3-7, `pit_class_choice.ClassChoice`; None = the shipped behaviour, unchanged): keep ONE class per family, the fee-aware pick of the live scorer's rule, before the engine runs."""
     out = {}
     ok = scores_t[scores_t["eligible"] & (scores_t["score_final"] > 0)]
     for sub in SUB_NAMES:
@@ -90,12 +92,12 @@ def candidates_by_sub(scores_t: pd.DataFrame, attrs: pd.DataFrame, fx_exposed: "
             data["fx_exposed"] = fx_exposed.reindex(block["isin"], fill_value=False).to_numpy(dtype=bool)
         frame = pd.DataFrame(data).sort_values("score_total", ascending=False).reset_index(drop=True)
         out[sub] = frame
-    return out
+    return apply_class_choice(out, class_choice)
 
 
 def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
                   constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False, rebalance_every: int = 1,
-                  phase: int = 0, regime_trigger=False, fx_exposed: "pd.Series | None" = None) -> "tuple[pd.DataFrame, pd.Series]":
+                  phase: int = 0, regime_trigger=False, fx_exposed: "pd.Series | None" = None, class_choice=None) -> "tuple[pd.DataFrame, pd.Series]":
     """Master weights per date: (W [dates x isin], cash [dates]). regime_hist has weight_defensive/balanced/dynamic
     (the lagged classifier's classify_historical()); dates without scores or regime row give an empty portfolio.
 
@@ -138,7 +140,7 @@ def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.Dat
             rows[t], cash[t] = held_master, held_cash                  # between rebalances: hold
             continue
         sub_w = dict(zip(SUB_NAMES, (h["weight_defensive"], h["weight_balanced"], h["weight_dynamic"])))
-        selection = select_and_weight(candidates_by_sub(by_date[t], attrs, fx_exposed), sub_w, constraints,
+        selection = select_and_weight(candidates_by_sub(by_date[t], attrs, fx_exposed, class_choice), sub_w, constraints,
                                       incumbents if use_incumbents else None)
         if use_incumbents:
             incumbents = {sub: frozenset(df["isin"]) for sub, df in selection.items() if not df.empty}
@@ -269,11 +271,11 @@ class PreparedBacktest:
 def prepare_pit_backtest(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
                          windows=FORWARD_WINDOWS, max_stale_days: int = DEFAULT_MAX_STALE_DAYS,
                          constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False, rebalance_every: int = 1,
-                         phase: int = 0, regime_trigger=False) -> PreparedBacktest:
+                         phase: int = 0, regime_trigger=False, class_choice=None) -> PreparedBacktest:
     at = pd.DatetimeIndex(at)
     windows = tuple(windows)
     W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, at, constraints, use_incumbents,
-                              rebalance_every, phase, regime_trigger, fx_exposed=getattr(inputs, "fx_exposed", None))
+                              rebalance_every, phase, regime_trigger, fx_exposed=getattr(inputs, "fx_exposed", None), class_choice=class_choice)
     grid = pd.date_range(at.min(), at.max() + pd.offsets.MonthEnd(max(windows)), freq=pd.offsets.MonthEnd())
     cidx = cash_index(inputs.rate, grid)
     hist = regime_hist.sort_index()
