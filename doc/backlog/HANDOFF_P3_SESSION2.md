@@ -1,5 +1,7 @@
 # Handoff: Package L, session 2 of roadmap v5 (written 2026-11-21, after session 1)
 
+**SUPERSEDED 2026-11-21 by `HANDOFF_P3_STEP_F.md`: session 2 is done. Kept for its record of the plan.**
+
 Start with `python scripts/gov/repo/preflight_check.py --mine <your files>`; the untracked `SKILL.md` belongs to another session, never touch it. Plan of record: `doc/backlog/PKG_L_p3_alignment.md` (sections 2-4 carry the levers, the adoption rule, the checkpoint and the sequence). Standing rules: English, ultra-short, lead with the decision needed; live runs only on the owner's order; never record a derived value as his decision; policy scanners after the LAST edit (`shared.delivery_receipt.POLICY_TESTS`, last run 207 passed, 3 skipped); `Refs:` in the last paragraph with Co-Authored-By; ONE full receipt at package delivery (`python scripts/gov/delivery/delivery_attest.py --scope full`), none per commit; write patch scripts with the Write tool, not heredocs; commit with explicit paths (`git commit -F <file> -- <paths>`) so another session's staged files are never swept in.
 
 ## Done in session 1 (HEAD b2c8be7)
