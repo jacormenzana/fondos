@@ -84,8 +84,10 @@ def compute_pit_scores(
     keep_detail: bool = False,
     macro_variant: "str | None" = None,
     macro_workers: int = 1,
+    frames_out: "dict | None" = None,
 ) -> PitRun:
-    """Run the whole PIT scoring chain for the dates `at`. ipc_lag_months defaults to the regime IPC lag."""
+    """Run the whole PIT scoring chain for the dates `at`. ipc_lag_months defaults to the regime IPC lag.
+    frames_out (FND-0435): a dict that receives the metric frame each date is scored on; it bypasses the scoring-block cache (a cache hit would never build the frames), nothing else changes."""
     at = pd.DatetimeIndex(at)
     lag = REGIME_PUBLICATION_LAG_MONTHS.get("ipc_index", 0) if ipc_lag_months is None else ipc_lag_months
     assert_series_cover(at, inputs.rate, inputs.ipc, lag)                  # FND-0228: bfill cannot reach an evaluation date
@@ -236,6 +238,7 @@ def compute_pit_scores(
                 block, risk_scored, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
                 max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
                 keep_detail=keep_detail, macro=macro, nav_gap=_nav_gap_for(block), log_universe=False, data_suspect=suspect_run,
+                frames_out=frames_out,
             )
             out = {"scores": s.drop(columns=["detail"]) if (keep_detail and "detail" in s.columns) else s, "universe": u}
             if keep_detail:
@@ -243,7 +246,7 @@ def compute_pit_scores(
             return out
 
         block_key = content_hash(score_key, {"block": [str(block[0]), str(block[-1])], "detail": bool(keep_detail)})
-        frames, hit, _ = cached_frames(cache, "scores", block_key, _score_block)
+        frames, hit, _ = (_score_block(), False, 0.0) if frames_out is not None else cached_frames(cache, "scores", block_key, _score_block)
         n_hit += bool(hit)
         parts_s.append(frames["scores"])
         parts_u.append(frames["universe"])

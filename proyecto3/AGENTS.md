@@ -21,6 +21,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `pit_cache.py` | `proyecto3/src` |
 | `pit_candidates.py` | `proyecto3/src` |
 | `pit_cost_check.py` | `proyecto3/src` |
+| `pit_crisis_decompose.py` | `proyecto3/src` |
 | `pit_crisis_diagnostic.py` | `proyecto3/src` |
 | `pit_crisis_variants.py` | `proyecto3/src` |
 | `pit_inputs.py` | `proyecto3/src` |

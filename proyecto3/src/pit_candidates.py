@@ -94,6 +94,7 @@ def pit_scores(
     nav_gap: "pd.DataFrame | None" = None,
     log_universe: bool = True,
     data_suspect: "dict | None" = None,
+    frames_out: "dict | None" = None,
 ) -> "tuple[pd.DataFrame, pd.DataFrame]":
     """Score the universe as of every date in `at`.
 
@@ -112,6 +113,8 @@ def pit_scores(
              at EACH date the shared suspicion predicate (shared.data_suspect.pit_suspect_reasons) judges the metrics observable then, with the months of
              NAV of each fund as the sample size, and feeds its reason to the scorer's own `check_hard_filters` through the `data_suspect_reason` column
              (the live rule, not a second one: plan G-02, no look-ahead). Only the exemption registry is today's decision, as for the accepted residuals.
+    frames_out: FND-0435, a dict that receives {date: a COPY of the metric frame that date is scored on} (read-only diagnostics, e.g. which metric carried a selected fund). None = nothing is
+             kept and the behaviour is exactly what it was.
     Returns (scores, universe): scores is long (as_of, regime, isin, subportfolio, ..., score_final, eligible,
     exclusion_reason[, detail]); universe has per-date counts (entered, stale, young, scored, eligible)."""
     at = pd.DatetimeIndex(at)
@@ -177,6 +180,8 @@ def pit_scores(
                                           vol=vol_snap.iloc[i] if vol_snap is not None else None)
             frame["data_suspect_reason"] = pd.Series(reasons, dtype=object).reindex(frame.index)
 
+        if frames_out is not None:
+            frames_out[t] = frame.copy()
         res = score_funds_from_df(frame, regime, verbose=False) if len(frame) else pd.DataFrame()
         n_scored = len(res)
         n_elig = int(res["eligible"].sum()) if n_scored else 0

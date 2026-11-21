@@ -107,6 +107,10 @@ def test_first_reason_and_eligibility_by_nature_are_hand_computed():
                        "isin": list("ABCDEF"), "eligible": [True, False, False, False, True, False],
                        "exclusion_reason": [None, "max_drawdown: -20% below -15%", "nav_stale: 70 days", "max_drawdown: x", None, "return_ann_real: y"]})
     assert list(D.first_reason(sc)) == ["eligible", "max_drawdown", "nav_stale", "max_drawdown", "eligible", "return_ann_real"]
+    hy = sc.assign(exclusion_reason=[None, None, "Credit_Quality=High Yield excluido de Defensiva", None, None, None], eligible=[True, True, False, True, True, True])
+    assert D.first_reason(hy).iloc[2] == "Credit_Quality"                       # a capitalised reason is a reason, not 'eligible' (the first version of this module got this wrong)
+    out_hy = D.eligibility_by_nature(hy, [t], "Defensiva", ["Monetario"]).iloc[0]
+    assert out_hy["eligible"] == 0.75 and out_hy["other"] == 0.25 and out_hy["max_drawdown"] == 0.0     # the share comes from the `eligible` column
     out = D.eligibility_by_nature(sc, [t], "Defensiva", ["Monetario", "Mixtos", "Alternativo"]).set_index("nature")
     assert out.loc["Monetario", ["n", "eligible", "max_drawdown", "other"]].tolist() == [4, 0.25, 0.5, 0.25]
     assert out.loc["Mixtos", ["n", "eligible", "max_drawdown", "other"]].tolist() == [2, 0.5, 0.0, 0.5]

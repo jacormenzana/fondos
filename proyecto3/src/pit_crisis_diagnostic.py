@@ -132,23 +132,25 @@ def ceiling_variants(S: pd.DataFrame, dd_limit: float = -0.15, window=CRASH_WIND
 # ---------------------------------------------------------------- D0 / D2: eligibility by nature ----------------------
 
 def first_reason(scores: pd.DataFrame) -> pd.Series:
-    """The category of the FIRST hard filter that excluded a row (the leading lowercase word of `exclusion_reason`), 'eligible' when none. The scorer reports only the first failing filter."""
-    lead = scores["exclusion_reason"].astype("string").str.extract(r"^([a-z_]+)", expand=False)
+    """The category of the FIRST hard filter that excluded a row (the leading word of `exclusion_reason`, e.g. max_drawdown, return_ann_real, srri, Credit_Quality, short_max_drawdown_6m, nav_stale, data_suspect), 'eligible' when none. The scorer reports only the first failing filter."""
+    lead = scores["exclusion_reason"].astype("string").str.extract(r"^([A-Za-z_]+)", expand=False)
     return pd.Series(np.where(lead.notna(), lead.astype(object), "eligible"), index=scores.index)
 
 
 def eligibility_by_nature(scores: pd.DataFrame, dates, sub: str, natures) -> pd.DataFrame:
-    """Per date and nature of one sub-portfolio: funds scored, share eligible, share excluded by the since-inception `max_drawdown` filter, share excluded by any other first filter."""
+    """Per date and nature of one sub-portfolio: funds scored, share eligible (the sealed `eligible` column itself, never inferred from the reason text: a first version inferred it and counted the
+    capitalised `Credit_Quality=...` reasons as eligible), share whose FIRST failing filter is the since-inception `max_drawdown`, share excluded by any other first filter."""
     why = first_reason(scores)
     rows = []
     for t in dates:
         g = scores[(scores["as_of"] == pd.Timestamp(t)) & (scores["subportfolio"] == sub)]
         for nat in natures:
             x = g[g["fund_nature"] == nat]
-            w = why.loc[x.index]
+            ok = x["eligible"].astype(bool)
+            dd = (why.loc[x.index] == "max_drawdown") & ~ok
             n = len(x)
             rows.append({"date": pd.Timestamp(t), "nature": nat, "n": n,
-                         "eligible": float((w == "eligible").mean()) if n else float("nan"),
-                         "max_drawdown": float((w == "max_drawdown").mean()) if n else float("nan"),
-                         "other": float(((w != "eligible") & (w != "max_drawdown")).mean()) if n else float("nan")})
+                         "eligible": float(ok.mean()) if n else float("nan"),
+                         "max_drawdown": float(dd.mean()) if n else float("nan"),
+                         "other": float((~ok & ~dd).mean()) if n else float("nan")})
     return pd.DataFrame(rows)

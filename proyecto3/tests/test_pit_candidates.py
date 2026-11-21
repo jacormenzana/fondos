@@ -272,3 +272,24 @@ def test_data_suspect_excludes_through_the_scorers_own_filter_and_an_exemption_l
     lifted, _ = _run(world, data_suspect={"family_of": {}, "exemptions": {i: quantities for i in hit["isin"].unique()}})
     still = lifted[lifted["exclusion_reason"].fillna("").str.startswith("data_suspect:") & lifted["isin"].isin(hit["isin"].unique())]
     assert len(still) < len(hit)                                               # a verified-genuine exemption (today's registry) stops counting in the past too
+
+
+# ---------------- FND-0435: frames_out (read-only diagnostic hook) ----------------
+
+def test_frames_out_keeps_the_scored_metric_frame_and_changes_nothing(world):
+    plain, plain_u = _run(world)
+    kept = {}
+    scores, universe = _run(world, frames_out=kept)
+    pd.testing.assert_frame_equal(scores, plain)                                # the hook alters no score, no eligibility, no universe count
+    pd.testing.assert_frame_equal(universe, plain_u)
+    assert set(kept) == set(AT)
+    for t in AT:
+        fr = kept[t]
+        assert set(fr.index) == set(scores[scores["as_of"] == t]["isin"]) | set(fr.index) and "return_ann_real" in fr.columns and "momentum_rank" in fr.columns
+        rescored = fs.score_funds_from_df(fr, scores[scores["as_of"] == t]["regime"].iloc[0], verbose=False)
+        left = rescored.set_index(["subportfolio", "isin"])["score_base"]
+        right = scores[scores["as_of"] == t].set_index(["subportfolio", "isin"])["score_base"]
+        pd.testing.assert_series_equal(left.sort_index(), right.sort_index())      # the kept frame IS what the date was scored on
+    kept[AT[0]].loc[:, "sharpe"] = 99.0                                         # a copy: mutating it cannot reach the scorer's inputs
+    again, _ = _run(world)
+    pd.testing.assert_frame_equal(again, plain)
