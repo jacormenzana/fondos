@@ -51,7 +51,8 @@ def test_load_fund_metrics_for_scoring_returns_mixed_case_columns(
         CREATE TABLE fund_master (
             isin text PRIMARY KEY, fund_name text, fund_nature text, srri smallint,
             investment_focus text, credit_quality text, ongoing_charge_recurrent double precision,
-            srri_quality_flag text, fund_family_id text, in_current_universe smallint
+            srri_quality_flag text, fund_family_id text, in_current_universe smallint,
+            entry_fee_pct double precision, exit_fee_pct double precision   -- read by load_fund_metrics_for_scoring since FND-0436; NULL (unknown) here
         )
     """)
     conn.execute("""

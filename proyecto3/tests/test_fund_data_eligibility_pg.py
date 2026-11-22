@@ -37,7 +37,7 @@ def _world(conn, schema, with_residuals=True):
     conn.execute(f"SET search_path = {schema}")
     conn.execute("""CREATE TABLE fund_master (isin text PRIMARY KEY, fund_name text, fund_nature text, srri smallint, investment_focus text,
                     credit_quality text, ongoing_charge_recurrent double precision, srri_quality_flag text, fund_family_id text,
-                    in_current_universe smallint)""")
+                    in_current_universe smallint, entry_fee_pct double precision, exit_fee_pct double precision)""")      # the fee columns the loader reads since FND-0436 (NULL = unknown)
     conn.execute("""CREATE TABLE fund_metrics (isin text NOT NULL, metric text NOT NULL, horizon text NOT NULL, value double precision,
                     real_flag smallint NOT NULL DEFAULT 0, metric_version text NOT NULL DEFAULT 'v1',
                     PRIMARY KEY (isin, metric, horizon, real_flag, metric_version))""")
