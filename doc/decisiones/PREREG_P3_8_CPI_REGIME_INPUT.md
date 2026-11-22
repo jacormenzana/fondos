@@ -36,3 +36,8 @@ An ACCEPTABLE trial is reported as **BENEFICIAL** if, in addition, its net retur
 
 ## 5. Out of scope
 Lag 0, a Spain-only input, recalibrating the 3 % / 4 % thresholds, the M2 / M3 inputs, the target, and any production change.
+
+## 6. Log of what was read and what went wrong (2026-11-22, written after the runs; nothing here changes a value of sections 1-5)
+- The regime histories of the four arms were frozen from one read of the classifier's inputs before the first run (snapshot `04aa54682f9b`); the reconstruction of the reference input equalled the classifier's own series and R0 equalled the sealed history exactly.
+- Before this preregistration, a first counterfactual of the labels returned "no change" because `classify_historical()` caches its first result; it was caught by a sanity check (forcing the CPI to 10 % changed 182 months) and the study script clears the cache and refuses to continue if an override changes no label. The first tests of the CPI input were too weak (constant growth hid the lag and the aggregator) and were strengthened after a mutation check.
+- The identity gate (R0 against the sealed run) passed. The trial table was read once, after all four arms were built. Result and reading: `doc/audit/P3_8_REGIME_CPI_REPORT.md`. R1 and R3 carry the label HARMFUL only because their non-inferiority bound cannot be shown (the minimum detectable effect, 0.25 and 0.19 pp, exceeds the 0.10 pp margin); R2 is NEUTRAL.
