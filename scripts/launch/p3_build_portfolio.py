@@ -129,6 +129,7 @@ def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: boo
     if not dry_run:
         print(f"Escenario '{scenario_id}' creado como DRAFT. No se promueve solo: p3_promote_scenario.py {scenario_id}")
         _hysteresis_shadow(conn, builder, reg, scenario_id, portfolio)
+        _fee_penalty_shadow(conn, builder, reg, scenario_id, portfolio)
 
     return 0
 
@@ -178,6 +179,29 @@ def _hysteresis_shadow(conn, builder, reg, scenario_id, portfolio) -> None:
             print(line)
     except Exception as exc:                                  # noqa: BLE001 -- the shadow measures; it never refuses a build
         print(f"AVISO: hysteresis shadow not run ({type(exc).__name__}: {str(exc)[:160]})")
+
+
+def _fee_penalty_shadow(conn, builder, reg, scenario_id, portfolio) -> None:
+    """P3-7: the monthly forward SHADOW of the AC arm (band + one-off fee penalty), after the DRAFT is persisted and after the hysteresis shadow. Fail-soft by construction: nothing here can change the
+    DRAFT or the RC, and nothing is persisted but one ingestion_log row (the penalty scores are recomputed in memory)."""
+    try:
+        from shared.config import P3_FEE_PENALTY_SHADOW_ENABLED, P3_FEE_PENALTY_SHADOW_H_YEARS, ROTATION_COST_GATE_ENABLED
+        from proyecto3.src import fee_penalty_shadow as penalty
+        from proyecto3.src import fund_scorer
+        from proyecto3.src import ranking_levers as RL
+        from proyecto3.src.portfolio_builder import HYSTERESIS_BAND, estimate_rotation_cost
+        ident = portfolio.macro_context.get("build_identity") or {}
+        line = penalty.shadow_after_build(
+            conn, builder, reg, scenario_id, portfolio, enabled=P3_FEE_PENALTY_SHADOW_ENABLED, band=HYSTERESIS_BAND, h_years=P3_FEE_PENALTY_SHADOW_H_YEARS,
+            rescore=lambda: penalty.rescore_candidates(
+                conn, reg.regime, P3_FEE_PENALTY_SHADOW_H_YEARS, load_metrics=fund_scorer.load_fund_metrics_for_scoring,
+                score_from_df=fund_scorer.score_funds_from_df, base_levers=RL.LeverConfig.from_config(), count_unknown_fees=RL.l4_penalty),
+            cost_fn=lambda out, into: estimate_rotation_cost(conn, out, into), identity=dict(ident), rotation_gate_enabled=ROTATION_COST_GATE_ENABLED)
+        if line:
+            print()
+            print(line)
+    except Exception as exc:                                  # noqa: BLE001 -- the shadow measures; it never refuses a build
+        print(f"AVISO: fee-penalty shadow not run ({type(exc).__name__}: {str(exc)[:160]})")
 
 
 if __name__ == "__main__":

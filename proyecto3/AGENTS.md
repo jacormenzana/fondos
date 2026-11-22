@@ -12,6 +12,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `backtest_inference.py` | `proyecto3/src` |
 | `backtesting.py` | `proyecto3/src` |
 | `data_freshness.py` | `proyecto3/src` |
+| `fee_penalty_shadow.py` | `proyecto3/src` |
 | `fund_scorer.py` | `proyecto3/src` |
 | `hysteresis_shadow.py` | `proyecto3/src` |
 | `monthly_report.py` | `proyecto3/src` |

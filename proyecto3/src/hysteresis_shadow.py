@@ -182,9 +182,9 @@ def _as_incumbent_portfolio(rows: list, scenario_id: str):
                                  sub_portfolios=[types.SimpleNamespace(name=n, funds=f, regime_weight=1.0) for n, f in sorted(subs.items(), key=lambda kv: str(kv[0]))])
 
 
-def read_rows(conn, limit: int = 120) -> list:
-    """The stored rows, oldest first; a row that does not parse is skipped (it is only history)."""
-    cur = conn.execute("SELECT id, message FROM ingestion_log WHERE step = %s ORDER BY id DESC LIMIT %s", (STEP, int(limit)))
+def read_rows(conn, limit: int = 120, step: str = STEP) -> list:
+    """The stored rows of `step` (this stream's by default; the fee-penalty stream reuses the helper with its own), oldest first; a row that does not parse is skipped (it is only history)."""
+    cur = conn.execute("SELECT id, message FROM ingestion_log WHERE step = %s ORDER BY id DESC LIMIT %s", (step, int(limit)))
     out = []
     for _id, message in reversed(cur.fetchall()):
         try:
@@ -194,8 +194,8 @@ def read_rows(conn, limit: int = 120) -> list:
     return out
 
 
-def _last_row(conn):
-    cur = conn.execute("SELECT message FROM ingestion_log WHERE step = %s ORDER BY id DESC LIMIT 1", (STEP,))
+def _last_row(conn, step: str = STEP):
+    cur = conn.execute("SELECT message FROM ingestion_log WHERE step = %s ORDER BY id DESC LIMIT 1", (step,))
     row = cur.fetchone()
     if not row:
         return None

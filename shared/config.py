@@ -260,6 +260,12 @@ PORTFOLIO_HYSTERESIS_BAND: float = 0.10
 # incumbents (band above; one-step from PRODUCTION and a chain from the previous ON portfolio) and append ONE `P3_HYSTERESIS_SHADOW` row to ingestion_log. It never changes the DRAFT or the build's
 # return code and never reads PORTFOLIO_HYSTERESIS_ENABLED (which stays OFF until the owner rules on the evidence). Ships ON: it only appends a log row and cannot refuse anything. Rollback = False.
 P3_HYSTERESIS_SHADOW_ENABLED: bool = True
+# P3-7 (owner decision 2026-11-22, doc/decisiones/PREREG_P3_7.md): the forward shadow of the AC arm = band (PORTFOLIO_HYSTERESIS_BAND) + one-off fee penalty at H years. After a real build persisted its DRAFT, the
+# scores are recomputed IN MEMORY with the L4 penalty (never persisted), the same selection runs with incumbents (one-step from PRODUCTION, a chain from the previous AC row) and ONE `P3_FEE_PENALTY_SHADOW`
+# row is appended to ingestion_log. It never changes the DRAFT or the build's return code, never reads P3_L4_FEE_PENALTY_ENABLED / PORTFOLIO_HYSTERESIS_ENABLED (both stay OFF until the owner rules on the
+# evidence). H is the preregistered 0.58 years (7 months), deliberately not P3_L4_H_YEARS (the OFF live lever). Ships ON like the hysteresis shadow: it only appends a log row. Rollback = False.
+P3_FEE_PENALTY_SHADOW_ENABLED: bool = True
+P3_FEE_PENALTY_SHADOW_H_YEARS: float = 0.58
 # FND-0436 / Package L Track 1 (plan rev. 3.1, owner decision 2026-11-21): fee-aware choice among the classes of ONE family. `fund_scorer.deduplicate_by_family` keeps the class with the best
 # `score_final`; that score already carries the recurring charge (the NAV is net of it) but ignores the one-off entry and exit fees. With the switch ON, within a (family, sub-portfolio) the class
 # with the lowest Entry_Fee_Pct + Exit_Fee_Pct replaces the best one only if: both are eligible, its score_final is at least the best's minus the tolerance below, its Ongoing_Charge is not above the

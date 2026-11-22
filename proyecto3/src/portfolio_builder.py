@@ -169,10 +169,15 @@ def _select_funds_for_subportfolio(
     exclude_names: set | None = None,
     mgr_global: dict | None = None,
     incumbent_isins: frozenset | None = None,
+    candidates: "pd.DataFrame | None" = None,
 ) -> pd.DataFrame:
     """
     Selecciona los mejores fondos para una sub-cartera aplicando
     restricciones de diversificacion.
+    candidates:      P3-7 (forward shadow of the fee penalty): an explicit candidate frame in
+                     score_candidates.CANDIDATE_COLUMNS (all blocks; only this sub-portfolio's rows count)
+                     in place of the fund_scores query. None (the default, and what every live build
+                     passes) keeps the query: nothing changes while the parameter is not used.
     exclude_isins:   ISINs ya usados globalmente.
     exclude_names:   nombres base ya usados globalmente.
     mgr_global:      conteo global de fondos por gestora.
@@ -204,7 +209,10 @@ def _select_funds_for_subportfolio(
     # (bloque, version, regimen); una fila mas antigua es un fondo que hoy no se puntua
     # (antes seguia siendo candidato: 2 de 30 fondos de la cartera del 2026-10-01 salian
     # de filas de Marzo). fund_family_id puede ser NULL para fondos sin family_builder.
-    candidates = load_current_candidates(conn, score_version, regime, subportfolio)
+    if candidates is None:
+        candidates = load_current_candidates(conn, score_version, regime, subportfolio)
+    else:
+        candidates = candidates[candidates["block"] == subportfolio].reset_index(drop=True)
     if candidates.empty:
         return pd.DataFrame()
     candidates = candidates.drop(columns="block")
@@ -699,6 +707,7 @@ class PortfolioBuilder:
         dry_run:            bool = False,
         previous_portfolio: "Portfolio | None" = None,
         replace_draft:      bool = False,
+        candidates:         "pd.DataFrame | None" = None,
     ) -> Portfolio:
         """
         Construye la cartera maestra para el regimen dado.
@@ -719,6 +728,9 @@ class PortfolioBuilder:
                                 load_previous() (Fase 2c).
             replace_draft:      permitir sobrescribir un escenario DRAFT existente con el
                                 mismo id (nunca PRODUCTION ni ARCHIVED).
+            candidates:         P3-7: frame de candidatos explicito (score_candidates.CANDIDATE_COLUMNS) que
+                                sustituye la consulta a fund_scores; solo lo usa el shadow de la penalizacion
+                                de comisiones (dry_run). None = la consulta de siempre.
         """
         if previous_portfolio is None and PORTFOLIO_HYSTERESIS_ENABLED:
             previous_portfolio = self.load_previous(exclude_scenario_id=scenario_id)
@@ -749,7 +761,8 @@ class PortfolioBuilder:
                 exclude_isins=isins_used,
                 exclude_names=families_used,
                 mgr_global=mgr_used,
-                incumbent_isins=incumbent_isins)
+                incumbent_isins=incumbent_isins,
+                candidates=candidates)
 
             if selected.empty:
                 print(f"  AVISO: Sin fondos elegibles para {sub_name}")
