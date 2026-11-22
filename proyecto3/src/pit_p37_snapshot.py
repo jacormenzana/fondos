@@ -39,21 +39,40 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def freeze_inputs(folder, ipc: pd.DataFrame, fees: pd.DataFrame, geography: pd.Series) -> dict:
-    """Write the three inputs and a manifest (per file: SHA-256 and row count; the snapshot id; the UTC time). Refuses a folder that exists: a snapshot is written once."""
+def freeze_frames(folder, frames: dict) -> dict:
+    """Write named frames (`{file name: DataFrame}`, parquet, index kept) and a manifest (per file: SHA-256 and row count; the snapshot id; the UTC time). Refuses a folder that exists: a snapshot is written once."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=False)                                     # FileExistsError: never overwrite a frozen input
-    fees = fees[FEE_COLUMNS]
-    geo = geography.rename("Geography").to_frame()
-    parts = {IPC_FILE: ipc.reset_index(drop=True), FEES_FILE: fees, GEO_FILE: geo}
     files = {}
-    for name, frame in parts.items():
+    for name, frame in frames.items():
         frame.to_parquet(folder / name)
         files[name] = {"sha256": _sha256(folder / name), "rows": int(len(frame))}
     snapshot_id = hashlib.sha256("\n".join(f"{n}:{files[n]['sha256']}" for n in sorted(files)).encode("utf-8")).hexdigest()
     manifest = {"snapshot_id": snapshot_id, "frozen_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "files": files}
     (folder / MANIFEST).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
+
+
+def load_frames(folder) -> dict:
+    """Every frame of a frozen folder, after checking each file against the manifest (missing manifest, a file absent from disk or changed after the freeze: SnapshotMismatch naming it)."""
+    folder = Path(folder)
+    mf_path = folder / MANIFEST
+    if not mf_path.exists():
+        raise SnapshotMismatch(f"no {MANIFEST} in {folder}: not a frozen snapshot")
+    manifest = json.loads(mf_path.read_text(encoding="utf-8"))
+    out = {}
+    for name, entry in manifest.get("files", {}).items():
+        if not (folder / name).exists():
+            raise SnapshotMismatch(f"{name} is missing from {folder}")
+        if _sha256(folder / name) != entry["sha256"]:
+            raise SnapshotMismatch(f"{name} changed after the freeze (SHA-256 differs from the manifest of {folder})")
+        out[name] = pd.read_parquet(folder / name)
+    return out
+
+
+def freeze_inputs(folder, ipc: pd.DataFrame, fees: pd.DataFrame, geography: pd.Series) -> dict:
+    """Write the three inputs and a manifest (per file: SHA-256 and row count; the snapshot id; the UTC time). Refuses a folder that exists: a snapshot is written once."""
+    return freeze_frames(folder, {IPC_FILE: ipc.reset_index(drop=True), FEES_FILE: fees[FEE_COLUMNS], GEO_FILE: geography.rename("Geography").to_frame()})
 
 
 def load_snapshot(folder) -> "tuple[pd.DataFrame, pd.DataFrame, pd.Series]":
