@@ -39,6 +39,24 @@ def aspiration_annual(base_annual, spread: "float | None" = None):
     return base_annual + add
 
 
+def net_band_text() -> str:
+    """The owner's attainable NET band as text, e.g. '3.2%-4.0%' (Package L; `config.PORTFOLIO_NET_BAND_LOW` / `_HIGH`)."""
+    return f"{config.PORTFOLIO_NET_BAND_LOW * 100:.1f}%-{config.PORTFOLIO_NET_BAND_HIGH * 100:.1f}%"
+
+
+def net_band_position(net_annual):
+    """'BELOW' / 'INSIDE' / 'ABOVE' the owner's net band (both edges inside); None when the return is unknown.
+
+    The band is reported next to IPC+M3, never instead of it, and never constrains the selection."""
+    if net_annual is None or pd.isna(net_annual):
+        return None
+    if net_annual < config.PORTFOLIO_NET_BAND_LOW:
+        return "BELOW"
+    if net_annual > config.PORTFOLIO_NET_BAND_HIGH:
+        return "ABOVE"
+    return "INSIDE"
+
+
 def monthly_equivalent(annual):
     """Compound monthly rate equivalent to an annual fraction; None stays None."""
     if annual is None:

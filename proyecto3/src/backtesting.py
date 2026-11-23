@@ -319,6 +319,20 @@ def _benchmark_return(
 # Backtester principal
 # ============================================================
 
+def _band_line(ann_return, net_of_turnover: bool) -> str:
+    """Summary line: where the simulated annual return sits against the owner's NET band (Package L, next to IPC+M3, never instead of it).
+
+    `net_of_turnover` says whether the chained series already pays the real month-to-month turnover; when it does not, the line says so."""
+    from shared.objective import net_band_position, net_band_text
+    label = "neta de la rotacion real" if net_of_turnover else "sin coste de rotacion"
+    head = f"  banda neta {net_band_text()} (decision del propietario; no restringe): cartera "
+    pos = net_band_position(ann_return)
+    if pos is None:
+        return head + f"N/D ({label})"
+    word = {"BELOW": "POR DEBAJO", "INSIDE": "DENTRO", "ABOVE": "POR ENCIMA"}[pos]
+    return head + f"{ann_return*100:.1f}% ({label}) -> {word}"
+
+
 @dataclass
 class BacktestResult:
     regime:        str
@@ -767,6 +781,7 @@ class Backtester:
                              f"entrada x {results.attrs['entry_sides']} lado(s); serie encadenada con coste por rotacion")
                 if "turnover" in results.columns and results["turnover"].notna().any():
                     lines.append(f"  rotacion media mensual {results['turnover'].mean()*100:.0f}% del capital")
+            lines.append(_band_line(stats["portfolio"]["ann_return"], "net_turnover_1m" in results.columns))
             for w in FORWARD_WINDOWS:
                 col = f"vs_target_{w}m"
                 if col in results.columns and results[col].notna().any():

@@ -37,6 +37,7 @@ from proyecto3.src.backtesting import Backtester
 from shared.config import REPORT_DIRS, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT, PORTFOLIO_TARGET_SPREAD
 from shared.config import P3_FUND_NAV_MAX_AGE_DAYS, REPORT_RECONCILIATION_ENABLED, REPORT_RECONCILIATION_TOLERANCE_BP   # FND-0428
 from shared import config as _shared_config
+from shared.objective import net_band_text
 from shared import metric_labels as _metric_labels, report_reconciliation as _report_reconciliation   # FND-0428
 
 # Columns of 1_Cartera whose value is a percentage in percent units (the cell shows value/100 as 0.00%): Retorno real, Max DD, YTD, 1A, Objetivo, Exceso, Divisa.
@@ -236,6 +237,9 @@ def _build_portada(ws, conn, clf, scenario_id, is_production=True):
          if obj['objetivo_anual'] else "N/D"),
         (f"Aspiracion IPC+M3+{PORTFOLIO_TARGET_SPREAD*100:.0f}pp (se informa, no restringe)",
          f"{obj['aspiracion_anual']*100:.1f}% anual" if obj['aspiracion_anual'] else "N/D"),
+        # Package L: banda neta atendible, decision del propietario 2026-11-23; junto a IPC+M3, no lo sustituye
+        ("Banda neta atendible (decision del propietario)",
+         f"{net_band_text()} anual neto, con tope de drawdown {_shared_config.PORTFOLIO_NET_BAND_DD_CAP*100:.0f}% (se informa, no restringe)"),
     ]
 
     for i, (label, value) in enumerate(datos_regimen, 3):

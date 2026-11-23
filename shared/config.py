@@ -1251,6 +1251,14 @@ ROLLING_TIMESERIES_METRICS: list[str] = [
 # 2005-2026 el modelo rindio 3.44% frente a 6.94% de IPC+M3. Definicion unica en shared/objective.py.
 PORTFOLIO_TARGET_SPREAD: float = 0.02
 
+# Banda NETA atendible (decision del propietario 2026-11-23, Package L): rentabilidad anual neta de costes de 3.2%-4.0% con el tope de
+# drawdown del 15% sin cambios. Se informa JUNTO a IPC+M3 (informe mensual, resumen PIT), no lo sustituye y no restringe la seleccion;
+# el numero es una decision, no se deriva de ninguna corrida. Definicion unica en shared/objective.py.
+PORTFOLIO_NET_BAND_LOW: float = 0.032
+PORTFOLIO_NET_BAND_HIGH: float = 0.040
+# El tope de drawdown del mandato (15%, sin cambios) que acompana a la banda: SOLO se imprime junto a ella; no lo aplica ningun filtro de aqui.
+PORTFOLIO_NET_BAND_DD_CAP: float = 0.15
+
 # Versión de scoring activa
 SCORE_VERSION: str = "v1"
 

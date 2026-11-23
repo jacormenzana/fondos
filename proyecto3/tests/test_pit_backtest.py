@@ -640,6 +640,7 @@ def test_run_pit_table_carries_costs_target_and_summary_sections(chain, monkeypa
     assert free["target_12m"].dropna().iloc[0] == pytest.approx(0.06)
     text = bt.summary(paid)
     assert "SERIE SIMULADA" in text and "Sharpe" in text and "objetivo IPC+M3" in text and "50 pb/lado" in text
+    assert "banda neta 3.2%-4.0%" in text and "neta de la rotacion real" in text.split("banda neta")[1]   # Package L: next to IPC+M3, not instead
     grid = bt.pit_cost_sensitivity()
     assert len(grid) == 9 and "hit_vs_target" in grid.columns
     stats = table_stats(free)
