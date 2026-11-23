@@ -385,6 +385,9 @@ def test_null_is_scored_on_the_observed_active_months_only():
     state_cash = pd.Series("CASH", index=idx)
     out = C.gain_by_state(S3, basket, state_cash, dd_limit=-0.30)
     assert out["total"] > 0.01 and out["weights"]["Convex"] > 0                   # the gain is real, so the state split is not trivially zero
+    r_new, r_front = out["r_new"], out["r_front"]                                 # the series behind the numbers, for the stressed drawdown
+    assert (1 + r_new).prod() ** (12 / len(r_new)) - 1 == pytest.approx(out["ann_new"], abs=1e-12)
+    assert (1 + r_front).prod() ** (12 / len(r_front)) - 1 == pytest.approx(out["ann_front"], abs=1e-12)
     assert out["ACTIVE"] == 0.0
     state_act = pd.Series("ACTIVE", index=idx)
     out2 = C.gain_by_state(S3, basket, state_act, dd_limit=-0.30)
@@ -398,3 +401,86 @@ def test_reach_counts_months_with_enough_funds_after_the_manager_cap():
     assert C.reach(cands, mgr, max_per_manager=2, min_funds=3) == 0.0
     mgr2 = pd.Series({"a": "M1", "b": "M2", "c": "M3"})
     assert C.reach(cands, mgr2, max_per_manager=2, min_funds=3) == pytest.approx(2 / 3)
+
+
+# ---------------------------------------------------------------------------------------- sets, observations, basket variants
+def test_excluded_sets_need_no_eligible_row_anywhere_and_all_rows_in_class():
+    t = pd.Timestamp("2010-01-31")
+    rows = pd.DataFrame([
+        # a: DD_ONLY in both of its subs -> set (a) and (b)
+        (t, "Defensiva", "a", "Mixtos", False, "DD_ONLY"), (t, "Equilibrada", "a", "Mixtos", False, "DD_ONLY"),
+        # b: DD_ONLY in one sub, SHORT in the other -> (b) only
+        (t, "Defensiva", "b", "Mixtos", False, "DD_ONLY"), (t, "Equilibrada", "b", "Mixtos", False, "SHORT"),
+        # c: eligible in one sub -> already available, in neither set
+        (t, "Defensiva", "c", "Mixtos", False, "DD_ONLY"), (t, "Equilibrada", "c", "Mixtos", True, "ELIGIBLE"),
+        # d: DD_ONLY in one sub, OTHER in the other -> in neither
+        (t, "Defensiva", "d", "Mixtos", False, "DD_ONLY"), (t, "Equilibrada", "d", "Mixtos", False, "OTHER"),
+        # e: the sealed `eligible` flag says eligible although the class says DD_ONLY (inconsistent input): the flag wins, the fund is already available
+        (t, "Defensiva", "e", "Mixtos", True, "DD_ONLY"),
+    ], columns=["as_of", "sub", "isin", "nature", "eligible", "cls"])
+    a, b = C.excluded_sets(rows)
+    assert a[t] == ["a"] and b[t] == ["a", "b"]
+
+
+def test_primary_cells_use_the_first_sub_that_maps_the_nature():
+    rows = pd.DataFrame({"isin": ["x", "x", "y"], "sub": ["Equilibrada", "Dinamica", "Dinamica"], "nature": ["Mixtos", "Mixtos", "Alternativo"]})
+    cell, sub = C.primary_cells(rows, ("Defensiva", "Equilibrada", "Dinamica"))
+    assert cell.to_dict() == {"x": "Equilibrada|Mixtos", "y": "Dinamica|Alternativo"} and sub.to_dict() == {"x": "Equilibrada", "y": "Dinamica"}
+
+
+def _stress_world():
+    idx = _idx(40)
+    pool = pd.Series(0.0, index=idx)
+    stress = pd.Series(False, index=idx)
+    stress.iloc[20:24] = True                                               # episode 1 (months 20-23)
+    stress.iloc[30:32] = True                                               # episode 2
+    R = pd.DataFrame(0.0, index=idx, columns=["c1", "c2", "k1", "k2"])
+    R.loc[stress, ["c1", "c2"]] = 0.02                                      # candidates beat the pool by 2 pp in stress
+    R.loc[stress, ["k1", "k2"]] = -0.01                                     # controls lose 1 pp
+    return idx, R, pool, stress
+
+
+def test_persistence_observations_pair_candidates_with_controls_by_episode():
+    idx, R, pool, stress = _stress_world()
+    ep = C.stress_episodes(stress, gap=2)
+    cell = pd.Series({"c1": "D|X", "c2": "D|X", "k1": "D|X", "k2": "D|X"})
+    sub = pd.Series({"c1": "D", "c2": "D", "k1": "D", "k2": "D"})
+    t1, t2 = idx[12], idx[26]                                               # t1 sees episode 1 first, t2 sees episode 2 first
+    obs, n_cells, no_fwd = C.persistence_observations(R, pool, stress, ep, {t1: ["c1", "c2"], t2: ["c1", "c2"], idx[35]: ["c1"]},
+                                                      {t1: list(R.columns), t2: list(R.columns), idx[35]: list(R.columns)}, cell, sub, [t1, t2, idx[35]])
+    assert n_cells == 2 and no_fwd == 1                                     # idx[35] has no stress month ahead: skipped, not dropped
+    assert (obs["d"] - 0.03).abs().max() < 1e-12                            # 0.02 - (-0.01)
+    assert sorted(obs["cluster"]) == [1, 2] and obs["level"].tolist() == ["cell", "cell"]
+
+
+def test_persistence_observations_count_a_cell_without_controls_as_dropped():
+    idx, R, pool, stress = _stress_world()
+    ep = C.stress_episodes(stress, gap=2)
+    cell = pd.Series({"c1": "D|X", "k1": "E|Y"})
+    sub = pd.Series({"c1": "D", "k1": "E"})
+    obs, n_cells, _ = C.persistence_observations(R[["c1", "k1"]], pool, stress, ep, {idx[12]: ["c1"]}, {idx[12]: ["c1", "k1"]}, cell, sub, [idx[12]])
+    assert n_cells == 1 and len(obs) == 0                                   # the only other fund is in another sub: no pairing at any level
+
+
+def test_basket_by_decision_date_aligns_the_return_and_haircuts_only_active_months():
+    idx = _idx(8)
+    R = pd.DataFrame({"A": 0.01, "B": 0.03}, index=idx)
+    cash = pd.Series(0.001, index=idx)
+    zero = pd.Series(0.0, index=["A", "B"])
+    stress_path = pd.Series(-0.10, index=idx)
+    cands = {idx[0]: ["A", "B"], idx[1]: ["A", "B"], idx[2]: ["A", "B"], idx[3]: ["A", "B"], idx[4]: [], idx[5]: ["A"], idx[6]: ["A"]}
+    basket, state, W = C.basket_by_decision_date(cands, list(idx[:7]), R, cash, zero, zero, "monthly", min_candidates=2, haircut_share=0.2, stress_path=stress_path)
+    # the decision at idx[1] earns the return OF idx[2] and is indexed at idx[1]; mean(A,B) = 0.02, haircut 20 % to -0.10 -> 0.8 * 0.02 + 0.2 * -0.10
+    assert basket[idx[1]] == pytest.approx(0.8 * 0.02 + 0.2 * -0.10) and state[idx[1]] == "ACTIVE"
+    # idx[4]: empty -> cash, NO haircut; idx[5]: one candidate < min_candidates 2 -> thin window -> cash, NO haircut
+    assert basket[idx[4]] == pytest.approx(0.001) and state[idx[4]] == "CASH"
+    assert basket[idx[5]] == pytest.approx(0.001) and state[idx[5]] == "CASH"
+
+
+def test_basket_by_decision_date_refuses_a_missing_stress_path_in_an_active_month():
+    idx = _idx(4)
+    R = pd.DataFrame({"A": 0.01, "B": 0.03}, index=idx)
+    zero = pd.Series(0.0, index=["A", "B"])
+    with pytest.raises(ValueError, match="stress path"):
+        C.basket_by_decision_date({idx[0]: ["A", "B"], idx[1]: ["A", "B"]}, list(idx[:2]), R, pd.Series(0.0, index=idx), zero, zero, "monthly", 2,
+                                  haircut_share=0.2, stress_path=pd.Series([np.nan] * 4, index=idx))

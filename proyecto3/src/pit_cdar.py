@@ -347,5 +347,70 @@ def gain_by_state(S3: pd.DataFrame, basket: pd.Series, state: pd.Series, dd_limi
     r_front = S4[list(S3.columns)] @ front["weights"]
     r_new = S4 @ new["weights"]
     g = attribute_gain(r_new, r_front, pd.Series(state).reindex(S4.index))
-    g.update({"ann_front": front["ann"], "ann_new": new["ann"], "dd_new": new["max_dd"], "weights": new["weights"]})
+    g.update({"ann_front": front["ann"], "ann_new": new["ann"], "dd_new": new["max_dd"], "weights": new["weights"], "weights_front": front["weights"],
+              "r_new": r_new, "r_front": r_front})
     return g
+
+
+# ------------------------------------------------------------------------------------------------------------------ sets and observations
+def excluded_sets(cls: pd.DataFrame) -> "tuple[dict, dict]":
+    """Per date, the funds the basket may draw from. `cls`: one row per (as_of, sub-portfolio, isin) with `eligible` (bool) and `cls` (`classify_exclusion`). A fund is in set (a) when it has NO
+    eligible row in any sub-portfolio and EVERY row is DD_ONLY, in set (b) when no row is eligible and every row is DD_ONLY or SHORT (a fund eligible somewhere is already available to the model).
+    Returns ({date: sorted isins} for (a), the same for (b))."""
+    d = cls.assign(_dd=cls["cls"].eq("DD_ONLY"), _b=cls["cls"].isin(["DD_ONLY", "SHORT"]), _el=cls["eligible"].astype(bool))
+    g = d.groupby(["as_of", "isin"]).agg(el=("_el", "any"), all_dd=("_dd", "all"), all_b=("_b", "all")).reset_index()
+    g = g[~g["el"]]
+    a = {t: sorted(x["isin"]) for t, x in g[g["all_dd"]].groupby("as_of")}
+    b = {t: sorted(x["isin"]) for t, x in g[g["all_b"]].groupby("as_of")}
+    return a, b
+
+
+def primary_cells(rows: pd.DataFrame, sub_order) -> "tuple[pd.Series, pd.Series]":
+    """(cell, sub) of every fund: its PRIMARY sub-portfolio is the first of `sub_order` among the sub-portfolios it is scored in, the cell is 'sub|nature'. `rows`: isin, sub, nature."""
+    rank = {s: i for i, s in enumerate(sub_order)}
+    r = rows.assign(_r=rows["sub"].map(rank)).sort_values(["isin", "_r"], kind="mergesort").drop_duplicates("isin")
+    sub = r.set_index("isin")["sub"]
+    cell = (r["sub"] + "|" + r["nature"].astype(str)).set_axis(r["isin"].to_numpy())
+    return cell, sub
+
+
+def persistence_observations(returns, r_pool, stress, episodes, cands_by_t: dict, excluded_by_t: dict, cell_of, sub_of, dates, horizon: int = 12):
+    """The F1b observations: at every date with candidates AND at least one stress month ahead, one paired difference per candidate cell (`paired_differences`), clustered by the episode of the
+    first stress month ahead. Returns (observations [t, cluster, cell, level, d], number of candidate cells at the dates that had a stress month ahead, number of dates skipped for having none).
+    A candidate cell without a valid pairing is counted in the first number and absent from the observations: that is what `persistence_verdict` reads as DROPPED."""
+    ep = pd.Series(episodes).reindex(returns.index, fill_value=0)
+    rows, n_cells, no_forward = [], 0, 0
+    for t in dates:
+        cands = list(cands_by_t.get(t) or [])
+        if not cands:
+            continue
+        x, first = forward_stress_excess(returns, r_pool, stress, t, horizon)
+        if first == 0:
+            no_forward += 1
+            continue
+        cluster = int(ep.iloc[first])
+        n_cells += len({cell_of[c] for c in cands if c in cell_of.index})
+        for r in paired_differences(cands, excluded_by_t.get(t, []), cell_of, sub_of, x):
+            rows.append({"t": t, "cluster": cluster, **r})
+    return pd.DataFrame(rows, columns=["t", "cluster", "cell", "level", "d"]), n_cells, no_forward
+
+
+def basket_by_decision_date(cands_by_t: dict, dates, returns: pd.DataFrame, cash_ret: pd.Series, entry: pd.Series, exit_: pd.Series, cadence: str,
+                            min_candidates: int = MIN_CANDIDATES, haircut_share: float = 0.0, stress_path: "pd.Series | None" = None):
+    """The fourth column as the optimiser needs it: indexed by the DECISION date t (the return t -> t+1, net of the trading cost paid at t), with its state. Applies the thin-window rule, the
+    cadence, the explicit fees and, in the ACTIVE months only, the survivorship haircut `(1 - s) r + s stress_path` (`haircut_share` s = a * k; a month that holds cash holds no fund and is not
+    haircut). An ACTIVE month without a finite stress path is refused, never filled. Returns (basket, state, weights)."""
+    W = basket_weights(thin_window(cands_by_t, min_candidates), dates, cadence)
+    series, state = basket_series(W, returns, cash_ret, entry, exit_)
+    shift = pd.offsets.MonthEnd(1)
+    basket = pd.Series(series.to_numpy(float), index=series.index - shift)
+    state = pd.Series(state.to_numpy(object), index=state.index - shift)
+    if haircut_share > 0:
+        if stress_path is None:
+            raise ValueError("basket_by_decision_date: a haircut needs a stress path")
+        active = state.index[state == "ACTIVE"]
+        sp = pd.Series(stress_path).reindex(active)
+        if not np.isfinite(sp.to_numpy(float)).all():
+            raise ValueError("basket_by_decision_date: the stress path is missing in an ACTIVE month; it is never filled")
+        basket[active] = (1.0 - haircut_share) * basket[active] + haircut_share * sp
+    return basket, state, W
