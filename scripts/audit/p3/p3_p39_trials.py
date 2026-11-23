@@ -9,10 +9,11 @@ studies read the same data (section 3 of the preregistration).
     ... --stage build --trial AC_base --stamp <S>            the base arm (band 0.10 + the fee penalty, H 0.58 y) in THIS build
     ... --stage identity --stamp <S>                         the two-part identity gate -> identity_p39.json
     ... --stage build --trial all --stamp <S>                the six trial arms: REFUSED until identity_p39.json says both parts passed
+    ... --stage report --stamp <S>                           the adoption table (PREREG_P3_9 section 5) -> adoption_table.csv, REPORT.md
 
 Identity gate (section 8 (2)): (a) the all-off baseline T0 reproduces the sealed run exactly, with the two new switches among those that must be OFF; (b) the base arm AC re-run here reproduces the
 AC series of the P3-7 run exactly (gross return and turnover). The arms: T0_baseline, AC_base and N5, N0, E5, E0, NE5, NE0 on top of AC (N = nature-bonus scale k 0.5 / 0, E = chasing control f 0.5 / 0).
-The stress, the pools and the adoption report are a later stage, written and tested before any trial result is read. `--sample-per-nature N` is a smoke test of the plumbing, never a result.
+The report stage (`pit_p39_eval`) was written and tested before any trial result was read. `--sample-per-nature N` is a smoke test of the plumbing, never a result.
 """
 import argparse
 import json
@@ -29,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import p3_p37_trials as P  # noqa: E402  (arms machinery, the build of one arm, the identity gate: one definition)
 from proyecto3.src import pit_p37_snapshot as SNAP  # noqa: E402
+from proyecto3.src import pit_p39_eval as W  # noqa: E402
 from proyecto3.src import ranking_levers as RL  # noqa: E402
 from proyecto3.src.pit_seal import RUN_STAMP, SealMismatch, verify_seal  # noqa: E402
 
@@ -38,6 +40,7 @@ PENALTY_H_YEARS = P.PENALTY_H_YEARS
 AC_TOL_GROSS, AC_TOL_TURNOVER = 1e-9, 1e-9
 P37_DIR = _ROOT / "out" / "reports" / "p3_p37_trials" / "20261121_p37"
 IDENTITY_FILE = "identity_p39.json"
+NL = chr(10)
 
 _AC = dict(band=0.10, cls=False, pen=True)
 ARMS = {
@@ -65,7 +68,7 @@ def default_switches39() -> dict:
 def build_parser():
     p = argparse.ArgumentParser(description="Package L, P3-9: layer 3, build and identity gate (read-only).")
     p.add_argument("--run-dir", required=True, help="the sealed PIT run (20261119_202509)")
-    p.add_argument("--stage", required=True, choices=("build", "identity"))
+    p.add_argument("--stage", required=True, choices=("build", "identity", "report"))
     p.add_argument("--trial", default="all")
     p.add_argument("--out-root", default=str(_ROOT / "out" / "reports" / "p3_p39_trials"))
     p.add_argument("--cache-dir", default=str(_ROOT / "proyecto3" / "cache" / "pit"))
@@ -120,6 +123,52 @@ def run_identity(base_dir: Path, run_dir: Path, p37_dir: Path) -> dict:
     return gate
 
 
+def run_report(args, base_dir: Path) -> int:
+    """The adoption table: every arm against the base arm AC of the SAME build (rules 1-4 of section 5), written to adoption_table.csv and REPORT.md. Refused (5) before the identity gate passed and (6)
+    without the baseline and the base arm. A base arm is a reference row (never a candidate)."""
+    ok, why = gate_open39(base_dir)
+    if not ok:
+        print(f"[GATE] report refused: {why}")
+        return 5
+    runs = {n: P._load_arm(base_dir / n) for n in ARMS if (base_dir / n / "meta.json").exists()}
+    if "AC_base" not in runs or "T0_baseline" not in runs:
+        print("report needs T0_baseline and AC_base built in this folder")
+        return 6
+    base = runs["AC_base"]
+    rows = []
+    for n, t in runs.items():
+        kw = dict(episodes=P.T.EPISODES, design=P.T.DESIGN, crisis_windows=P.T.CRISIS_WINDOWS, holm_level=HOLM_LEVEL)
+        if n in BASE_ARMS:
+            r = P.V.evaluate_arm("T0_baseline", t, base, W.band_target(t["series"].index), None, **kw)              # the reference rows: drawdowns and returns, no rule
+            r["trial"] = n
+        else:
+            r = W.evaluate_trial(n, t, base, **kw)
+        r["integrity_ok"] = t["meta"].get("integrity_ok")
+        r["n_swapped_rows"] = t["meta"].get("score_integrity", {}).get("n_swapped_rows")
+        r["snapshot_id"] = str(t["meta"].get("snapshot_id", ""))[:12]
+        rows.append(r)
+    res = pd.DataFrame(rows).set_index("trial")
+    res.to_csv(base_dir / "adoption_table.csv")
+    ident = json.loads((base_dir / IDENTITY_FILE).read_text(encoding="utf-8"))
+
+    def fmt(cols, nd=4):
+        return res[[c for c in cols if c in res.columns]].round(nd).to_string()
+    lines = [f"# P3-9 trials: adoption table (PREREG_P3_9 section 5; Holm family {HOLM_TRIALS}, level {HOLM_LEVEL:.5f}; every arm against the base arm AC of this build)", "",
+             f"Identity gate: T0 against the sealed run {'PASSED' if ident['t0'].get('ok') else 'FAILED'}; AC against the P3-7 AC series {'PASSED' if ident['ac'].get('ok') else 'FAILED'}. "
+             f"Snapshot ids of the arms: {sorted(set(res['snapshot_id']))}. History yields a CANDIDATE for the forward shadow, never an adoption (R7). Rule 3 is read at the 25 bp regime of the cap.", "",
+             "## 1. Returns, drawdowns and turnover (annualised; `fee` = the stated fees fund by fund, `25bp` = the flat cross-check)", "", "```",
+             fmt(["ann_fee", "ann_25bp", "maxdd_fee", "maxdd_25bp", "stressed_worst_25bp", "stressed_worst_25bp_baseline", "turnover", "cost_drag_pp", "holding_months"]), "```", "",
+             "## 2. Rule 1: the 15 % cap (unstressed at 25 bp; stressed relative to the base, 0.5 pp)", "", "```",
+             fmt(["dd_cap_ok", "stress_rel_ok", "c1"] + [f"{p}_{k}_25bp" for k in P.T.EPISODES for p in ("dd", "dds")]), "```", "",
+             "## 3. Rule 2: non-inferiority of the net return at the stated fees (lower bound at the Holm level above -0.10 pp)", "", "```",
+             fmt(["ret_mean_pp", "ret_se_pp", "ret_lb_pp", "ret_pass", "c2", "ret25_mean_pp", "ret25_lb_pp"]), "```", "",
+             "## 4. Rule 3: the risk benefit (at least 1.0 pp) and rule 4: collateral (band 3.2 %, 0.35 pp), then the verdict", "", "```",
+             fmt(["dd_gain_pp", "stress_gain_pp", "c_benefit", "noncrisis_degradation_pp", "share36_variant", "share36_baseline", "c3", "candidate", "integrity_ok", "n_swapped_rows"]), "```", ""]
+    (base_dir / "REPORT.md").write_text(NL.join(lines), encoding="utf-8")
+    print(NL.join(lines))
+    return 0
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     run = Path(args.run_dir)
@@ -150,6 +199,8 @@ def main(argv=None) -> int:
                 continue
             P.build_arm(args, n, ARMS[n], base_dir / n, base_dir, levers_fn=levers_of, identity_switches=default_switches39())
         return 0
+    if args.stage == "report":
+        return run_report(args, base_dir)
     g = run_identity(base_dir, run, Path(args.p37_dir))
     print(f"[IDENTITY GATE] {'PASSED' if g['ok'] else 'FAILED'}: T0 {g['t0']['checks']} | AC {g['ac']['checks']} | AC max |gross diff| {g['ac']['max_abs_gross_diff']:.3e}, max |turnover diff| {g['ac']['max_abs_turnover_diff']:.3e}")
     return 0 if g["ok"] else 7

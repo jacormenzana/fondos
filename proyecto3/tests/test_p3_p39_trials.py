@@ -138,3 +138,52 @@ def test_an_all_nan_series_proves_nothing():
     empty = ref.copy()
     empty[:] = np.nan
     assert R.ac_identity(empty.copy(), empty)["ok"] is False                      # equal NaN patterns with no value at all is not a reproduction
+
+
+# ================================================================ the report stage =====================================================================================
+def _arm_folder(folder: Path, series: pd.DataFrame, stress_level=0.0, integrity_ok=True):
+    folder.mkdir(parents=True, exist_ok=True)
+    series.to_csv(folder / "series.csv", index_label="date")
+    np.savez_compressed(folder / "stress.npz", master_p10=np.full((len(series), 12), stress_level), master_p05=np.full((len(series), 12), stress_level))
+    (folder / "meta.json").write_text(json.dumps({"snapshot_id": "abc123def456xyz", "integrity_ok": integrity_ok, "holding": {"mean_months": 7.0}, "score_integrity": {"n_swapped_rows": 0}}), encoding="utf-8")
+
+
+def _long_series(seed=3, shift=0.0):
+    idx = pd.date_range("2005-01-31", periods=262, freq="ME")
+    rng = np.random.default_rng(seed)
+    gross = pd.Series(0.005 + rng.normal(0, 0.004, len(idx)), index=idx) + shift
+    tu = pd.Series(0.15, index=idx)
+    return pd.DataFrame({"gross": gross, "turnover": tu, "cash": 0.0005, "net25": gross - 0.0025 * tu, "netfee": gross - 0.002 * tu / 0.30, "pool_net25": gross, "pool_netfee": gross})
+
+
+def _built(tmp_path, gate=True, arms=("T0_baseline", "AC_base", "N5")):
+    base_dir = tmp_path / "out" / "s"
+    for i, n in enumerate(arms):
+        _arm_folder(base_dir / n, _long_series(seed=3, shift=0.002 if n == "N5" else 0.0))
+    (base_dir / "identity_p39.json").write_text(json.dumps({"ok": gate, "t0": {"ok": gate, "checks": {}}, "ac": {"ok": gate, "checks": {}}}), encoding="utf-8")
+    run = tmp_path / "run"
+    run.mkdir()
+    return base_dir, run
+
+
+def test_the_report_stage_is_refused_before_the_gate_and_before_the_base_arm_exists(tmp_path, monkeypatch):
+    snap = _frozen(tmp_path)
+    base_dir, run = _built(tmp_path, gate=False)
+    args = ["--run-dir", str(run), "--stage", "report", "--out-root", str(tmp_path / "out"), "--stamp", "s", "--snapshot-dir", str(snap)]
+    assert R.main(args) == 5                                                       # the identity gate has not passed
+    base_dir2, run2 = _built(tmp_path / "x", gate=True, arms=("T0_baseline", "N5"))
+    snap2 = _frozen(tmp_path / "x")
+    assert R.main(["--run-dir", str(run2), "--stage", "report", "--out-root", str(tmp_path / "x" / "out"), "--stamp", "s", "--snapshot-dir", str(snap2)]) == 6   # no AC_base
+
+
+def test_the_report_writes_the_adoption_table_for_the_trial_arms_only(tmp_path):
+    snap = _frozen(tmp_path)
+    base_dir, run = _built(tmp_path, gate=True)
+    assert R.main(["--run-dir", str(run), "--stage", "report", "--out-root", str(tmp_path / "out"), "--stamp", "s", "--snapshot-dir", str(snap)]) == 0
+    table = pd.read_csv(base_dir / "adoption_table.csv", index_col=0)
+    assert list(table.index) == ["T0_baseline", "AC_base", "N5"]
+    assert table.loc["N5", "dd_gain_pp"] > 0 and bool(table.loc["N5", "c_benefit"]) is False and bool(table.loc["N5", "candidate"]) is False     # a better, drawdown-free series: shallower by < 1.0 pp, so no candidate
+    assert pd.isna(table.loc["AC_base", "candidate"]) and pd.isna(table.loc["T0_baseline", "candidate"])         # a base is a reference, never a candidate
+    text = (base_dir / "REPORT.md").read_text(encoding="utf-8")
+    assert "PREREG_P3_9" in text and "never an adoption" in text and "identity gate" in text.lower()
+    assert "abc123def456" in text                                                  # the snapshot id of the arms is printed

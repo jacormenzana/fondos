@@ -34,6 +34,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `pit_p37_eval.py` | `proyecto3/src` |
 | `pit_p37_snapshot.py` | `proyecto3/src` |
 | `pit_p38_regime.py` | `proyecto3/src` |
+| `pit_p39_eval.py` | `proyecto3/src` |
 | `pit_peer_metrics.py` | `proyecto3/src` |
 | `pit_run.py` | `proyecto3/src` |
 | `pit_seal.py` | `proyecto3/src` |
