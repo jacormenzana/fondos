@@ -53,7 +53,8 @@ def test_every_collected_file_lands_in_exactly_one_shard():
 
 def test_recorded_seconds_weigh_the_files_and_an_unknown_file_weighs_one_second():
     heavy = "tests/test_run_pg_tests_shards_fnd0386.py"
-    shards = rp.build_shards(_ROOT, 2, {heavy: 500.0})
+    n_unknown = len(rp.collect_test_files(_ROOT))                                                # every other file weighs one second: the recorded weight must outweigh ALL of them, however many tests the repo grows to (a fixed 500 s broke at ~500 files)
+    shards = rp.build_shards(_ROOT, 2, {heavy: 2.0 * n_unknown})
     first = shards[0]
     assert (_ROOT, heavy) in first and len(first) <= 2                                           # the recorded heavy file sits almost alone in its shard
 
