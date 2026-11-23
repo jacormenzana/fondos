@@ -152,7 +152,7 @@ def pit_scores(
     if fee_on and (lever_inputs is None or lever_inputs.fees is None):
         raise ValueError("pit_scores: the fee-aware class choice is ON but lever_inputs.fees (the entry and exit fee frame) is missing")
     lever_snaps = {}
-    if cfg.any_on:
+    if cfg.uses_inputs:                                              # L5 / L6 (PREREG_P3_9) only reshape weights and bonus: they need no lever input
         li = lever_inputs
         need = [(cfg.l1_q is not None, "dd60", "L1 (the trailing 60-month drawdown frame)"), (cfg.l2_z0 is not None, "ret36", "L2 (the trailing 36-month return frame)"),
                 (cfg.l4_h_years is not None, "fees", "L4 (lever_inputs.fees: the entry and exit fee frame)"), (cfg.l3_k is not None, "nav_m", "L3 (the month-end NAV panel)")]

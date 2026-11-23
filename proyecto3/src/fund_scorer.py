@@ -527,6 +527,10 @@ def compute_base_scores(
     # Las métricas de retorno corto son señales de tendencia secundarias.
     if SHORT_HORIZON_SCORING_ENABLED:
         weights.update(SHORT_HORIZON_WEIGHTS.get(subportfolio, {}))
+    if levers is not None and levers.l5_nature_k is not None:        # L5 (PREREG_P3_9): the nature bonus scaled toward 1 in every sub-portfolio; k = 1 is the identity
+        nature_bonus = RL.modulate_bonus(nature_bonus, levers.l5_nature_k)
+    if levers is not None and levers.l6_chase_f is not None and subportfolio in RL.L6_SUBS:       # L6 (PREREG_P3_9): the two trailing-performance weights of Equilibrada scaled by f; f = 1 is the identity
+        weights = RL.scale_weights(weights, RL.L6_METRICS, levers.l6_chase_f)
     if recovery_k is not None:                                       # L3: only in the recovery state of the pool; k = 1 is the identity
         weights, nature_bonus = RL.modulate_weights(weights, recovery_k), RL.modulate_bonus(nature_bonus, recovery_k)
     l4_h = levers.l4_h_years if levers is not None else None

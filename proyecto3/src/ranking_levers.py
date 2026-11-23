@@ -15,6 +15,11 @@ behaviour and every PIT cache key are exactly what they were.
       (`pit_p35a_prep.L3_PARAMS`; a test pins that these constants equal it).
   L4  one-off fee penalty: `return_ann_real_net = return_ann_real - (entry + exit) / H` deducted BEFORE the within-nature percentile normalisation of the return; an unknown fee takes the
       median penalty of the cell (counted by the caller, never silent).
+
+Layer 3 (PREREG_P3_9, doc/decisiones/PREREG_P3_9_LAYER3.md), both OFF and read by `from_config` from `P3_L5_*` / `P3_L6_*`:
+  L5  nature-bonus scale k: every `NATURE_PROFILE_BONUS` entry b becomes 1 + (b - 1) k in all three sub-portfolios (k = 1 identity, k = 0 no bonus).
+  L6  chasing control f: in Equilibrada ONLY the weights of `return_ann_real` and `alpha_persistence` (the trailing-performance metrics) are multiplied by f and the others rescaled
+      proportionally so the total is unchanged (f = 1 identity). Neither lever reads an input the scorer's frame does not already carry.
 """
 from __future__ import annotations
 
@@ -42,6 +47,10 @@ L3_RECOVERY_RETURN_MONTHS = 3
 L3_RECOVERY_CONFIRMATIONS = 2
 L3_MIN_REBOUND = 0.05
 
+# L6 (PREREG_P3_9): where and on what the chasing control acts
+L6_SUBS = ("Equilibrada",)
+L6_METRICS = ("return_ann_real", "alpha_persistence")
+
 
 @dataclass(frozen=True)
 class LeverConfig:
@@ -50,14 +59,22 @@ class LeverConfig:
     l2_z0: "float | None" = None
     l3_k: "float | None" = None
     l4_h_years: "float | None" = None
+    l5_nature_k: "float | None" = None             # PREREG_P3_9: values 0.5, 0.0
+    l6_chase_f: "float | None" = None              # PREREG_P3_9: values 0.5, 0.0
 
     @property
     def any_on(self) -> bool:
+        return any(v is not None for v in (self.l1_q, self.l2_z0, self.l3_k, self.l4_h_years, self.l5_nature_k, self.l6_chase_f))
+
+    @property
+    def uses_inputs(self) -> bool:
+        """True when a lever that needs the extra PIT inputs (L1-L4: trailing frames, fees, the NAV panel) is ON. L5 and L6 only reshape the weights and the bonus of the scorer."""
         return any(v is not None for v in (self.l1_q, self.l2_z0, self.l3_k, self.l4_h_years))
 
     def key(self) -> dict:
         """Everything that can change a score through a lever, for a cache key. Only meaningful when `any_on`; an all-off config must add NOTHING to a key (the warm caches stay valid)."""
-        return {"l1_q": self.l1_q, "l2_z0": self.l2_z0, "l3_k": self.l3_k, "l4_h_years": self.l4_h_years,
+        extra = {n: v for n, v in (("l5_nature_k", self.l5_nature_k), ("l6_chase_f", self.l6_chase_f)) if v is not None}      # only when ON: a key that does not use them is what it always was
+        return {"l1_q": self.l1_q, "l2_z0": self.l2_z0, "l3_k": self.l3_k, "l4_h_years": self.l4_h_years, **extra,
                 "const": {"l1_dd_backstop": L1_DD_BACKSTOP, "l1_ret_delta": L1_RET_BACKSTOP_DELTA, "min_cell": MIN_CELL, "l2_mult": L2_MULT, "mad": MAD_SCALE,
                           "l3": [L3_TRAILING_MONTHS, L3_STRESS_THRESHOLD, L3_RECOVERY_RETURN_MONTHS, L3_RECOVERY_CONFIRMATIONS, L3_MIN_REBOUND]}}
 
@@ -69,7 +86,9 @@ class LeverConfig:
         return cls(l1_q=float(cfg.P3_L1_PEER_CUT) if cfg.P3_L1_PEER_FILTER_ENABLED else None,
                    l2_z0=float(cfg.P3_L2_Z0) if cfg.P3_L2_OVEREXTENSION_ENABLED else None,
                    l3_k=float(cfg.P3_L3_RECOVERY_K) if cfg.P3_L3_RECOVERY_MODULATION_ENABLED else None,
-                   l4_h_years=float(cfg.P3_L4_H_YEARS) if cfg.P3_L4_FEE_PENALTY_ENABLED else None)
+                   l4_h_years=float(cfg.P3_L4_H_YEARS) if cfg.P3_L4_FEE_PENALTY_ENABLED else None,
+                   l5_nature_k=float(cfg.P3_L5_NATURE_K) if cfg.P3_L5_NATURE_SCALE_ENABLED else None,
+                   l6_chase_f=float(cfg.P3_L6_CHASE_F) if cfg.P3_L6_CHASE_CONTROL_ENABLED else None)
 
 
 @dataclass(frozen=True)
@@ -209,6 +228,19 @@ def modulate_weights(weights: dict, k: float, key: str = "max_dd") -> dict:
     rest = total - w_dd
     scale = (total - new_dd) / rest if rest > 0 else 1.0
     return {m: (new_dd if m == key else float(w) * scale) for m, w in weights.items()}
+
+
+def scale_weights(weights: dict, keys, f: float) -> dict:
+    """L6: the weights of `keys` (those present) are multiplied by `f` and the others rescaled by ONE factor so that the total is unchanged (f = 1 is the identity). When no key of `keys` is
+    weighted, or nothing else is weighted to absorb the change, the weights are returned unchanged (a total that is not 1 would be a silent change of the score scale)."""
+    chosen = [m for m in weights if m in keys]
+    total = float(sum(weights.values()))
+    s_old = float(sum(weights[m] for m in chosen))
+    rest = total - s_old
+    if not chosen or rest <= 0:
+        return dict(weights)
+    scale = (total - s_old * f) / rest
+    return {m: (float(w) * f if m in chosen else float(w) * scale) for m, w in weights.items()}
 
 
 # ---- L4 ----------------------------------------------------------------------------------------------------------------------------------------------------------------

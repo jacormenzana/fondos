@@ -47,7 +47,7 @@ def shadow_levers(base, h_years: float):
 
 def other_levers_on(base) -> bool:
     """True when a lever other than L4 is ON in `base`: the AC arm is defined over the ranking with L1-L3 OFF, so the stream does not run in that case."""
-    return any(v is not None for v in (base.l1_q, base.l2_z0, base.l3_k))
+    return any(v is not None for v in (base.l1_q, base.l2_z0, base.l3_k, base.l5_nature_k, base.l6_chase_f))
 
 
 def candidates_from_scores(scores: pd.DataFrame, management_company: dict) -> pd.DataFrame:

@@ -174,9 +174,9 @@ def compute_pit_scores(
     fee_on = (fee_aware if fee_aware is not None else _config.P3_FEE_AWARE_CLASS_ENABLED)
     if fee_on and inputs.fees is None:
         raise ValueError("compute_pit_scores: the fee-aware class choice is ON but inputs.fees (the entry and exit fee frame) is missing")
-    if fee_on and not levers.any_on:
+    if fee_on and not levers.uses_inputs:
         lever_inputs = RL.LeverInputs(dd60=None, ret36=None, fees=inputs.fees, nav_m=None)          # only the one-off fees: no lever reads anything else
-    if levers.any_on:
+    if levers.uses_inputs:
         dd60 = ret36 = None
         if levers.l1_q is not None:
             win, hit, secs = cached_frames(cache, "lever_win60", content_hash(risk_key, {"window": 60, "kind": "p35a_v1"}), lambda: trailing_risk_metrics(

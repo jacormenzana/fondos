@@ -289,6 +289,12 @@ P3_L3_RECOVERY_K: float = 0.5
 # L4 one-off fee penalty: return_ann_real - (entry + exit) / P3_L4_H_YEARS before the within-nature normalisation (values 3.0, 2.0 years).
 P3_L4_FEE_PENALTY_ENABLED: bool = False
 P3_L4_H_YEARS: float = 3.0
+# L5 nature-bonus scale (PREREG_P3_9, doc/decisiones/PREREG_P3_9_LAYER3.md): every NATURE_PROFILE_BONUS entry b becomes 1 + (b - 1) * P3_L5_NATURE_K in all sub-portfolios (values 0.5, 0). Ships OFF; adoption is the owner's order.
+P3_L5_NATURE_SCALE_ENABLED: bool = False
+P3_L5_NATURE_K: float = 0.5
+# L6 Equilibrada chasing control (PREREG_P3_9): the weights of return_ann_real and alpha_persistence in Equilibrada are multiplied by P3_L6_CHASE_F, the others rescaled to the same total (values 0.5, 0). Ships OFF.
+P3_L6_CHASE_CONTROL_ENABLED: bool = False
+P3_L6_CHASE_F: float = 0.5
 # FND-0430 / P3-1.6 (Package L): the live `selection_health` block of p3_build_portfolio.py: after the build it prints ONE compact block (eligible set and its change against the latest
 # persisted run before today, top-10 turnover, concentration of the CONSTRUCTED portfolio, share of score weight on a missing metric, counts of funds under a data hold / suspicion flag) and
 # flags the monitors above their limit. REPORT-ONLY and fail-soft: it never changes the DRAFT, the return code or a gate, and an error prints one AVISO line. Ships ON because it can
