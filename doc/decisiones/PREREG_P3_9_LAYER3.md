@@ -65,3 +65,6 @@ Forward shadow of any candidate (the pattern of `P3_FEE_PENALTY_SHADOW`: in-memo
 
 ## 11. The owner's answers (2026-11-23, in the session, to the question "which of D1-D5 do you approve?")
 Answer: **"Approve all as drafted"**: D1 base arm AC; D2 N k 0.5 / 0 and E f 0.5 / 0 (E on `return_ann_real` and `alpha_persistence` together); D3 risk benefit of at least 1.0 pp with the return held to -0.10 pp (no stated trade); D4 confirmation by forward shadow only, with its own amendment before any row exists; D5 the band 3.2 % - 4.0 % only as the reporting reference of rule 4. No value of sections 0-10 changes. Next: the engineering prerequisites of section 8, tests first, every new switch OFF; no trial runs before the identity gate of section 8 (2) passes.
+
+## 12. Result (2026-11-23, written after the run; no value of sections 0-11 changes)
+The gated sequence ran as preregistered: identity gate PASSED in both parts (T0 equals the sealed run; AC equals the P3-7 AC series, difference 0), then the six arms. **No arm is a candidate**: rule 2 (non-inferiority) fails for all six, rule 3 (a risk benefit of at least 1.0 pp) for all six (best: E5 +0.36 pp of drawdown for -0.29 pp of return; N0 deepens the drawdown by 1.4 pp), rule 1 for five. Nothing is adopted and no forward shadow of layer 3 is opened. Tables and reading: `doc/audit/P3_9_TRIALS_REPORT.md`.
