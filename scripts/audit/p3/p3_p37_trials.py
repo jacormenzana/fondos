@@ -164,7 +164,9 @@ def gate_open(base_dir: Path) -> "tuple[bool, str]":
 # ============================================================================================================================================================================
 # build: one arm
 # ============================================================================================================================================================================
-def build_arm(args, name: str, spec: dict, out: Path, base_dir: Path) -> None:
+def build_arm(args, name: str, spec: dict, out: Path, base_dir: Path, levers_fn=None, identity_switches=None) -> None:
+    """One arm. `levers_fn(spec)` -> LeverConfig and `identity_switches` (the switches that must be OFF for the baseline gate) default to this study's; PREREG P3-9 passes its own (`p3_p39_trials`).
+    The frozen snapshot is `args.snapshot_dir` when the parser has one, else `<base_dir>/snapshot`."""
     t0 = time.perf_counter()
     run = Path(args.run_dir)
     pit0, inputs, hist, at = load_saved_run(run, None)
@@ -173,8 +175,9 @@ def build_arm(args, name: str, spec: dict, out: Path, base_dir: Path) -> None:
     if args.sample_per_nature:
         inputs, scores0, sample_keep = T._sample(inputs, scores0, args.sample_per_nature)
         print(f"[SAMPLE] {len(sample_keep)} funds ({args.sample_per_nature} per nature): a plumbing smoke test, NEVER a result")
-    ipc, fees_df, geo = SNAP.load_snapshot(base_dir / "snapshot")                       # verified against its manifest: no live read of these three inputs
-    snap_id = json.loads((base_dir / "snapshot" / SNAP.MANIFEST).read_text(encoding="utf-8"))["snapshot_id"]
+    snap_dir = Path(getattr(args, "snapshot_dir", None) or (base_dir / "snapshot"))
+    ipc, fees_df, geo = SNAP.load_snapshot(snap_dir)                                    # verified against its manifest: no live read of these three inputs
+    snap_id = json.loads((snap_dir / SNAP.MANIFEST).read_text(encoding="utf-8"))["snapshot_id"]
     entry, exit_ = fees_df["Entry_Fee_Pct"], fees_df["Exit_Fee_Pct"]
     if sample_keep is not None:
         fees_df = fees_df.reindex(sample_keep)
@@ -185,7 +188,7 @@ def build_arm(args, name: str, spec: dict, out: Path, base_dir: Path) -> None:
     try:
         daily = None if conn is None else (lambda: iter_daily_chunks(conn, list(inputs.nav.columns)))
         inputs2 = dataclasses.replace(inputs, ipc=ipc, fees=fees_df, daily_chunks=daily)
-        cfg = levers_of(spec)
+        cfg = (levers_fn or levers_of)(spec)
         print(f"[{name}] spec {spec} | levers {cfg} | snapshot {snap_id[:16]}")
         import shared.config as C
         run_t = compute_pit_scores(inputs2, at, hist["regime"], ParquetCache(args.cache_dir), max_stale_days=60, levers=cfg, fee_aware=bool(spec["cls"]),
@@ -229,7 +232,7 @@ def build_arm(args, name: str, spec: dict, out: Path, base_dir: Path) -> None:
     meta["elapsed_s"] = round(time.perf_counter() - t0, 1)
     if name == "T0_baseline" and sample_keep is None:
         table = pd.read_csv(Path(args.run_dir) / "pit_backtest_table.csv", parse_dates=["date"]).set_index("date")
-        gate = identity_gate(meta, series, table, default_switches())
+        gate = identity_gate(meta, series, table, identity_switches if identity_switches is not None else default_switches())
         meta["identity"] = gate
         (base_dir / "identity.json").write_text(json.dumps(gate, indent=2, default=str), encoding="utf-8")
         print(f"[IDENTITY GATE] {'PASSED' if gate['ok'] else 'FAILED'}: {gate['checks']} | max |gross diff| {gate['max_abs_gross_diff']:.3e} | max |turnover diff| {gate['max_abs_turnover_diff']:.3e}")
