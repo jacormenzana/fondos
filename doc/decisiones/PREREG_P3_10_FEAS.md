@@ -1,6 +1,6 @@
 # PREREG P3-10F: feasibility of marginal-CDaR admission (C.2 of the drawdown-management RFC)
 
-**Status: DRAFT 2026-11-23, NOT committed as a preregistration.** It becomes the preregistration when the owner answers D1-D5 (section 9) and it is committed BEFORE any outcome stage (F1 census, F1b gate, F2) is run. Plan of record: the approved plan rev. 3 (session 2026-11-23), cluster ticket FND-0430, package `doc/backlog/PKG_L_p3_alignment.md`. Pure code and its tests exist and are mutation-checked (`proyecto3/src/pit_cdar.py`, `proyecto3/tests/test_pit_cdar.py`); the only number read so far is the DESIGN-POWER count of section 6.
+**Status: PREREGISTERED 2026-11-23 on the owner's approval of D1-D5 as recommended (section 10), committed BEFORE any outcome stage (F1 census, F1b gate, F2) was built or run.** Drafted the same day; sections 0-9 are the draft he approved, changed only by this status line, the episode definition of section 3 (D1), the primary-cell rule of section 4 and section 10. Plan of record: the approved plan rev. 3 (session 2026-11-23), cluster ticket FND-0430, package `doc/backlog/PKG_L_p3_alignment.md`. Pure code and its tests exist and are mutation-checked (`proyecto3/src/pit_cdar.py`, `proyecto3/tests/test_pit_cdar.py`); the only number read so far is the DESIGN-POWER count of section 6.
 
 ## 0. Mandate
 15 % maximum drawdown unchanged; target an attainable NET band of 3.2-4.0 % (owner, 2026-11-22); IPC+M3 reported next to it (`d06353f`). AC (band 0.10 + fee penalty) nets 3.12 % at the stated fees in the PIT history, 0.08 pp under the band floor.
@@ -13,7 +13,7 @@ Static ceiling of the three matched pools under -15 %: 4.14 % gross (`doc/audit/
 
 ## 3. Data and conventions (read-only; sealed run `out/reports/pit_backtest/20261119_202509`, `pit_seal.verify_seal`; no database)
 - Pool series: equal-weight return over month t of the funds ELIGIBLE at t-1 in the sealed scores (any sub-portfolio). Returns: month-end NAV of `inputs/nav.parquet`. Every statistic at t uses data <= t; a decision at t earns month t+1.
-- Stress month: the 12-month pool level more than 3 % below its 12-month high (the arithmetic of `ranking_levers.pool_state`, pinned by a test). Episode: a run of stress months; **D1 below** fixes how runs are joined.
+- Stress month: the 12-month pool level more than 3 % below its 12-month high (the arithmetic of `ranking_levers.pool_state`, pinned by a test). Episode: runs of stress months separated by at most 2 months out of stress are ONE episode (D1, approved: 10 episodes in the sealed history); the bootstrap resamples these episodes.
 - Candidate pool (structural filters passed): sealed first reason not data / document / hold / suspect; not failing the independent return, SRRI or High Yield filters (`pit_crisis_decompose.independent_filters` on the rescored frames, validated against the sealed `score_base` as in `p3_crisis_diagnostic.py`). Excluded sets: (a) DD only: first reason the since-inception drawdown filter and no other metric filter failing; (b) DD and/or a short gate: (a) plus first reason `short_*`. Limitation stated in advance: the sealed run keeps only the first failing reason, so a short-DD first reason hides a later short-volatility failure.
 - **Convex candidate** (trailing 60 months, stress months only, a full window of returns): at least 6 stress months; stress beta <= 0.3 (cov with the pool / var of the pool); mean return in the stress months above the pool's; 60-month total return > 0.
 - **Fourth column ("Convex")**: ONE equal-weight basket of the candidates across all sub-portfolios (D2). Cash (`cash_ret_1m` of the sealed table) when the window has fewer than 6 stress months or fewer than 3 candidates (thin-window rule); the % of months it is active is reported.
@@ -32,7 +32,7 @@ Static ceiling of the three matched pools under -15 %: 4.14 % gross (`doc/audit/
 - Construction reach: share of months with at least 3 basket funds left after at most 2 per management company.
 - **PASS (all):** `Gain_ACTIVE` >= +0.5 pp over 4.14 % gross; >= +0.35 pp after friction and haircut (monthly or quarterly variant); above the null's 95th percentile; stressed drawdown <= 15 %. Gain reported in band terms.
 
-**Inference level.** F is a go/no-go gate, not an adoption test: F1b and F2 use NOMINAL 95 % levels. The Holm family (676 + 2 = 678 trials, level 0.05 / 678 = 7.4e-5) is printed as a reference and reserved for the adoption contrast of P3-10; neither a 2,000-draw episode bootstrap nor a 500-draw null can resolve it. F1b and F2 are logged as 2 trials of the family. **Sensitivity grid** declared now: stress beta cap {0.3, 0.5} x stress threshold {3 %, 5 %}; all four reported, none picked as the best (R8).
+**Inference level.** F is a go/no-go gate, not an adoption test: F1b and F2 use NOMINAL 95 % levels. The Holm family (676 + 2 = 678 trials, level 0.05 / 678 = 7.4e-5) is printed as a reference and reserved for the adoption contrast of P3-10; neither a 2,000-draw episode bootstrap nor a 500-draw null can resolve it. F1b and F2 are logged as 2 trials of the family. **Sensitivity grid** declared now: stress beta cap {0.3, 0.5} x stress threshold {3 %, 5 %}; all four reported, none picked as the best (R8). **The verdict is the PRIMARY cell (beta cap 0.3, stress threshold 3 %)**; the other three cells are reported as a fragility check and cannot turn a STOP into a PASS: a PASS in the primary cell that fails in two or more of the other three is reported as FRAGILE next to the verdict.
 
 ## 5. Decision table
 | Outcome | Action |
@@ -52,7 +52,7 @@ Sealed pool series 2005-02..2026-10 (261 months); stress months 69 (26 %); a str
 The sealed run is survivor-only (FND-0436): funds excluded for deep drawdowns are the likeliest to have died, so every result is flattered (the same direction as L1, which is why k = 3 is reported). The stress episodes 2008, 2020 and 2022 were spent by P3-5A: they are descriptive here. The census and the gate read the same history that produced the stress months, so F is necessary, never sufficient. The 2008 and 2022 episodes dominate the stress sample; a result carried by one of them is reported as such.
 
 ## 8. Provenance
-Code: `proyecto3/src/pit_cdar.py` (31 tests, 30 mutations killed in three consecutive runs), driver `scripts/audit/p3/p3_cdar_feasibility.py` (stage `design` only until this is committed). Inputs: the sealed run (nine SHA-256 verified artifacts), the P3-7 frozen fee snapshot for the friction stage. No database read, no production change, no P2 recompute.
+Code: `proyecto3/src/pit_cdar.py` (32 tests, 33 mutations killed in consecutive runs), driver `scripts/audit/p3/p3_cdar_feasibility.py` (stage `design` only until this is committed). Inputs: the sealed run (nine SHA-256 verified artifacts), the P3-7 frozen fee snapshot for the friction stage. No database read, no production change, no P2 recompute.
 
 ## 9. Decisions for the owner (each needs an answer before the preregistration is committed)
 - **D1. Episode definition.** (a) consecutive stress months only (13 episodes), as in the approved plan; (b) join runs separated by at most 2 months (10 episodes). Recommended (b): a one-month rebound inside a drawdown is not an independent event, and F1b resamples episodes.
@@ -60,3 +60,10 @@ Code: `proyecto3/src/pit_cdar.py` (31 tests, 30 mutations killed in three consec
 - **D3. Gain scale.** The thresholds apply to the ARITHMETIC annual contribution `Gain_s`; the geometric difference of the two optimal mixes is reported next to it. Recommended: keep (the exact ACTIVE + CASH identity needs the arithmetic form).
 - **D4. The values of section 4:** beta cap 0.3, 6 stress months, 60-month window, 3 candidates, 25 % active share, 30 % dropped, 8 episodes for the sign rule, 75 %, +0.5 / +0.35 pp, 95 % level, a = 10 %, k in {2, 3}, 500 draws, the sensitivity grid. They are my working values, not calibrated.
 - **D5. Go.** Approve the preregistration as drafted (with the answers above) so it is committed and the outcome stages can be built and run.
+
+## 10. The owner's answers (2026-11-23, in the session)
+- **D1 approved (b):** runs separated by at most 2 months are one episode (10 episodes); brief rebounds inside one crisis are not separate events in the bootstrap.
+- **D2 approved:** one global basket as the fourth column (no three extra degrees of freedom in the static optimiser).
+- **D3 approved:** thresholds on the arithmetic annual contribution `Gain_s` (exact ACTIVE + CASH = total); the geometric differential (CAGR) is reported in parallel.
+- **D4 approved:** every operating threshold of section 4 is an uncalibrated ex-ante parameter, fixed now, supported by the fixed sensitivity grid {0.3, 0.5} x {3 %, 5 %}.
+- **D5 approved (go):** commit this preregistration at once and run F1, then F1b, then F2 in sequence until the PASS / STOP verdict.
