@@ -67,3 +67,6 @@ Code: `proyecto3/src/pit_cdar.py` (32 tests, 33 mutations killed in consecutive 
 - **D3 approved:** thresholds on the arithmetic annual contribution `Gain_s` (exact ACTIVE + CASH = total); the geometric differential (CAGR) is reported in parallel.
 - **D4 approved:** every operating threshold of section 4 is an uncalibrated ex-ante parameter, fixed now, supported by the fixed sensitivity grid {0.3, 0.5} x {3 %, 5 %}.
 - **D5 approved (go):** commit this preregistration at once and run F1, then F1b, then F2 in sequence until the PASS / STOP verdict.
+
+## 11. Result (2026-11-23, written after the run; no value of sections 0-10 changes)
+**STOP at F1b in the primary cell** (beta cap 0.3, stress 3 %): mean excess +0.73 pp per stress month, one-sided 95 % bound -0.18 pp, 384 observations in 8 episodes, 6 of 8 positive, 0 % dropped. F1 passed; F2 was not run, by the decision table. The full table, the episode breakdown and the reading are in `doc/audit/P3_10_CDAR_FEASIBILITY.md`; the run is `out/reports/p3_cdar_feasibility/20261123_224439`, code `2553f94`.
