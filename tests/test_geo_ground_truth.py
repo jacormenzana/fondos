@@ -57,6 +57,31 @@ def test_excerpt_starts_at_the_objective_section_and_is_bounded():
     assert G.objective_excerpt(None, 50) == ""
 
 
+def test_investment_sentences_reach_the_mandate_that_a_short_excerpt_misses():
+    text = ("Objetivos El fondo se gestiona activamente. El fondo promueve caracteristicas del articulo 8 del SFDR sobre inversiones sostenibles. " + "Texto de relleno sin verbo de interes. " * 40
+            + "El fondo invierte al menos el 70 % en acciones de empresas de todo el mundo. Los importes indican cuanto invierte usted. "
+            + "The Fund may also invest in Asia. Perfil del inversor minorista: quiere invertir a largo plazo.")
+    got = G.investment_sentences(text, max_sentences=5, width=600)
+    assert "empresas de todo el mundo" in got and "may also invest in Asia" in got
+    assert "SFDR" not in got and "importes" not in got and "inversor minorista" not in got                      # boilerplate that mentions investing is not a mandate
+    assert len(G.investment_sentences(text, max_sentences=1, width=600)) < len(got)
+    assert len(G.investment_sentences("El fondo invierte en bonos. " * 100, max_sentences=50, width=120)) <= 120
+    assert G.investment_sentences(None) == "" and G.investment_sentences("Nada que ver.") == ""
+
+
+def test_regulator_brand_and_cost_scenario_sentences_are_not_investment_sentences():
+    text = ("La Commission de Surveillance es la autoridad competente de supervisar a DWS Invest en este documento. Producto DWS Invest Bonds, ISIN: LU000, Sitio web: x, un subfondo de DWS Invest. "
+            "Q Se invierten $ 10.000. El fondo invierte en bonos asiaticos.")
+    assert G.investment_sentences(text) == "El fondo invierte en bonos asiaticos."
+
+
+def test_reading_by_isin_cannot_reach_the_sealed_holdout():
+    with pytest.raises(PermissionError):
+        G.assert_isins_readable({"A", "B"}, holdout={"B"}, frozen=False)
+    G.assert_isins_readable({"A", "B"}, holdout={"B"}, frozen=True)
+    G.assert_isins_readable({"A"}, holdout={"B"}, frozen=False)
+
+
 def test_holdout_stays_locked_until_a_commit_declares_the_patterns_frozen():
     assert G.holdout_unlocked(["feat: x", "docs: GEO patterns discussed"]) is False
     assert G.holdout_unlocked(["fix(p1): patterns\n\nGEO-PATTERNS-FROZEN FND-0441"]) is True

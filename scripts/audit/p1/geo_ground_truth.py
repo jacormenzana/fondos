@@ -61,6 +61,19 @@ def objective_excerpt(text, width: int) -> str:
     return flat[m.start() if m else 0:][:width]
 
 
+_INVESTS = re.compile(r"(?i)\binvierte[n]?\b|\binvertir[aá]?[n]?\b|\binvests?\b|\binvesting\b|\bexposici[oó]n\b|\bexposure\b|\bse invierte")
+_BOILERPLATE = re.compile(r"(?i)\bimportes?\b|\bcostes?\b|inversor(?:es)? minorista|retail investor|\bSFDR\b|art[ií]culo 8|\busted\b|\byou\b|su inversi[oó]n|your investment"
+                          r"|autoridad competente|\bISIN\b|sitio web|se invierten [$€£]|\b10[.,]000\b|\bun subfondo de\b")
+
+
+def investment_sentences(text, max_sentences: int = 4, width: int = 620) -> str:
+    """The first sentences of the document that say what the fund invests in (verbs of investing / exposure), without the cost, investor-profile and sustainability boilerplate that also uses them.
+    This is what is read to label the mandate: a short excerpt of the objective section often stops before the sentence that states the region."""
+    flat = " ".join((text or "").split())
+    out = [s.strip() for s in re.split(r"(?<=[.;])\s+", flat) if _INVESTS.search(s) and not _BOILERPLATE.search(s)]
+    return " | ".join(out[:max_sentences])[:width]
+
+
 def holdout_unlocked(messages) -> bool:
     return any(FROZEN_MARKER in msg for msg in messages)
 
@@ -68,6 +81,24 @@ def holdout_unlocked(messages) -> bool:
 def assert_readable(name: str, frozen: bool) -> None:
     if name == "holdout" and not frozen:
         raise PermissionError(f"the holdout is sealed: no commit message contains {FROZEN_MARKER} yet")
+
+
+def assert_isins_readable(isins, holdout, frozen: bool) -> None:
+    sealed = set(isins) & set(holdout)
+    if sealed and not frozen:
+        raise PermissionError(f"{len(sealed)} of the ISINs belong to the sealed holdout")
+
+
+def _listed(name: str) -> list:
+    with open(OUT / f"{name}.csv", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
+
+
+def stage_isins(isins, width: int, sentences: int) -> int:
+    assert_isins_readable(isins, {r["isin"] for r in _listed("holdout")}, holdout_unlocked(_git_messages()))
+    for x in _load(set(isins)):
+        print(f"{x['isin']} {x['language']} {x['nature']}: {investment_sentences(x['text'], sentences, width) or objective_excerpt(x['text'], width)}")
+    return 0
 
 
 def _git_messages() -> list:
@@ -143,7 +174,9 @@ def stage_read(name: str, batch: int, size: int, width: int) -> int:
     docs = {x["isin"]: x for x in _load({r["isin"] for r in part})}
     print(f"[{name}] batch {batch}: funds {batch * size + 1}-{batch * size + len(part)} of {len(listed)}")
     for i, r in enumerate(part, batch * size + 1):
-        print(f"{i} {r['isin']} {r['language']} {r['nature']}: {objective_excerpt(docs.get(r['isin'], {}).get('text'), width)}")
+        text = docs.get(r["isin"], {}).get("text")
+        body = investment_sentences(text, width=width) or "(no investing sentence) " + objective_excerpt(text, width)
+        print(f"{i} {r['isin']} {r['language']} {r['nature']}: {body}")
     return 0
 
 
@@ -154,9 +187,15 @@ def main(argv=None) -> int:
     ap.add_argument("--batch", type=int, default=0)
     ap.add_argument("--size", type=int, default=25)
     ap.add_argument("--width", type=int, default=520)
+    ap.add_argument("--isin", default="", help="read these ISINs instead of a batch (never a sealed holdout one)")
+    ap.add_argument("--sentences", type=int, default=4)
     args = ap.parse_args(argv)
     try:
-        return stage_sample() if args.stage == "sample" else stage_read(args.name, args.batch, args.size, args.width)
+        if args.stage == "sample":
+            return stage_sample()
+        if args.isin:
+            return stage_isins({x.strip() for x in args.isin.split(",") if x.strip()}, args.width, args.sentences)
+        return stage_read(args.name, args.batch, args.size, args.width)
     except PermissionError as exc:
         print(f"[REFUSED] {exc}")
         return 3
