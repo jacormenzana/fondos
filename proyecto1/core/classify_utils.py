@@ -4906,6 +4906,84 @@ def detect_geography_from_equity_index(fund_name: Optional[str], benchmark: Opti
     return next(iter(regions)) if len(regions) == 1 else None
 
 
+# FND-0441 (2026-11-25): the mandate SENTENCE of the KIID, a FALLBACK read only when the KIID extractor and the name report nothing. Patterns were built from the 180 documents of the development and
+# KIID-only samples (doc/audit/geo_ground_truth); the sealed holdout judges them. Owner-approved rules: a currency is not a region; a benchmark or performance objective is not a mandate; "may
+# invest" is not a mandate (except a worldwide scope); developed+emerging, OECD+emerging, domestic+foreign, US+non-US are global; one European country is Europe.
+_MANDATE_VERB = re.compile(r"\binvierte[n]?\b|\binvertir[aá]?[n]?\b|\binversi[oó]n(?:es)? en\b|\bexpondr[aá]\b|\binvests?\b|\binvesting\b|\binvested\b|equity investments|se invierte|se invertir")
+_MANDATE_SKIP = re.compile(r"\briesgos?\b|\brisks?\b|\bimportes?\b|\bcostes?\b|inversor(?:es)? minorista|retail investor|\busted\b|\byou\b|your investment|su inversi[oó]n|autoridad competente"
+                           r"|marca registrada|pacto mundial|global funds|global investment funds|exposici[oó]n global|global exposure|\bdirectiva\b|banco central europeo")
+_MANDATE_GLOBAL = re.compile(
+    r"todo el mundo|cualquier (?:parte|lugar) del mundo|cualquier zona geogr[aá]fica|a (?:escala|nivel) (?:mundial|global|internacional)|emisores internacionales|renta variable internacional"
+    r"|(?:nacionales|dom[eé]sticos) (?:o|y|como) extranjer|mercados (?:de (?:bonos|renta variable|renta fija|commodities|materias primas) )?mundiales|mercados mundiales de|cartera internacional"
+    r"|mercados desarrollados y (?:en )?emergentes|ocde y (?:pa[ií]ses )?emergentes|gobiernos de la ocde|sin (?:ninguna )?limitaci[oó]n(?:es)?\b[^.]{0,140}?geogr[aá]fic"
+    r"|estadounidenses[^.]{0,90}?no estadounidenses|\bworldwide\b|around the world|\bglobally\b|on a global basis|global equit(?:y|ies)|developed and emerging|emerging and developed")
+_MANDATE_REGIONS: dict = {
+    "Europa": r"europe[oa]s?\b|\ben europa\b|\baleman[ea]s\b|\bgerman\b|\beuropean\b",
+    "EEUU": r"(?<!d[oó]lares )(?<!d[oó]lar )estadounidenses?\b|\bu\.s\.(?!\w)",
+    "Japón": r"\bjap[oó]n\b|\bjapones|\bjapanese\b",
+}
+_MANDATE_EMERGING = re.compile(r"mercados? emergentes?|pa[ií]ses emergentes|emerging markets?")
+_MANDATE_PRINCIPAL = re.compile(r"principalmente|mayoritariamente|al menos|como m[ií]nimo|mayor parte|\bmainly\b|\bprimarily\b|\bmostly\b|predominantly|at least|su patrimonio en|focuses on")
+_MANDATE_PERMISSIVE = re.compile(r"\bpodr[aá]\b|\bpuede[n]?\b|\bmay\b|up to|hasta un|hasta el|como m[aá]ximo")
+_MANDATE_COMPARATOR = re.compile(r"rentabilidad|superar|outperform|referencia|[ií]ndice|benchmark|\bindex\b")
+_MANDATE_HEADING = re.compile(r"\bobjetivos?\b(?! de este documento)|\binvestment objectives?\b|\bobjectives\b|\bpol[ií]tica de inversi[oó]n\b|\binvestment policy\b")
+_MANDATE_WINDOW = 2500
+
+
+_MANDATE_NEGATED = re.compile(r"(?:\bsin|\bexcepto|\bsalvo|\bexcluding|\bexcluid[oa]s?|\bfuera de|\boutside|\bex|\bno|\bnon)\W*(?:(?:the|el|la|los|las)\s+)?$")
+
+
+def _principal_before(sentence: str, start: int, span: int = 220) -> bool:
+    """A principal-investment cue before position `start`, with no 'may / up to' before it, nothing that turns the next words into an accessory or a mixed universe in between, and no negation
+    ('sin Japón', 'excluding', 'ex-') immediately before the word at `start`."""
+    if _MANDATE_NEGATED.search(sentence[max(0, start - 24):start]):
+        return False
+    cues = [m for m in _MANDATE_PRINCIPAL.finditer(sentence, max(0, start - span), start)]
+    if not cues or _MANDATE_PERMISSIVE.search(sentence[:start]):
+        return False
+    return not re.search(r"incluid|incluyendo|including|which may include|ocde|desarrollad|developed", sentence[cues[-1].end():start])
+
+
+def detect_geography_from_mandate(kiid_text: Optional[str]) -> Optional[str]:
+    """The investment region STATED by the document's objective section, in the ES vocabulary of `detect_geography` ("Global", "Emergentes", "Europa", "EEUU", "Japón"), or None.
+
+    A principal investment in emerging markets or in one region beats a permissive worldwide sentence; a principal worldwide statement, or two principal regions, is Global. Sentences about
+    risk, costs, the investor profile or trademarks are ignored, as is a cue that follows a performance-comparison wording."""
+    if not kiid_text:
+        return None
+    flat = " ".join(kiid_text.lower().split())
+    heading = _MANDATE_HEADING.search(flat)
+    if heading:                                   # R-6: bounded window from the objective heading (90 % of the stated mandates sit within 1,100 characters of it in the development sample)
+        window = flat[heading.start():heading.start() + _MANDATE_WINDOW]
+    else:
+        start, end = _get_obj_bounds(kiid_text)
+        window = _extract_window(flat, start, end)
+    window = re.sub(r"\bu\.s\.\s*dollars?\b", "usd", window)       # a currency, and its dots must not split the sentence
+    emerging, global_any, global_principal, regions = False, False, False, set()
+    for sentence in re.split(r"(?<=[.;])\s+", window):
+        if not _MANDATE_VERB.search(sentence) or _MANDATE_SKIP.search(sentence):
+            continue
+        compared = lambda pos: bool(_MANDATE_COMPARATOR.search(sentence[max(0, pos - 60):pos]))      # noqa: E731 -- one-line helper bound to this sentence
+        for m in _MANDATE_GLOBAL.finditer(sentence):
+            if not compared(m.start()):
+                global_any = True
+                global_principal = global_principal or bool(_MANDATE_PRINCIPAL.search(sentence))
+        for m in _MANDATE_EMERGING.finditer(sentence):
+            if not compared(m.start()) and _principal_before(sentence, m.start()):
+                emerging = True
+        for region, pattern in _MANDATE_REGIONS.items():
+            if any(not compared(m.start()) and _principal_before(sentence, m.start()) for m in re.finditer(pattern, sentence)):
+                regions.add(region)
+    if not global_principal:
+        if emerging:
+            return "Emergentes"
+        if len(regions) == 1:
+            return next(iter(regions))
+    if global_any or len(regions) > 1:
+        return "Global"
+    return None
+
+
 def detect_geography(name_l: str) -> Optional[str]:
     """Detecta geografía desde el nombre del fondo (en minúsculas).
 

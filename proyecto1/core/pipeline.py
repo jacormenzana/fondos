@@ -226,6 +226,7 @@ from core.classify_utils import (
     detect_geography           as detect_geography_from_name,   # FIX-GEO-1 (cross-check)
     detect_geography_from_kiid,                             # FIX-GEO-1 (cross-check)
     detect_geography_from_equity_index,                     # FND-0440
+    detect_geography_from_mandate,                          # FND-0441
     _derive_geography_en,                                   # FIX-GEO-1 (traducción ES→EN)
     derive_development_status,                               # FIX-GEO-1 (recalculado, no heredado del bloque)
     validate_geography_universe,                             # FIX-GEO-4 (BL-52, única fuente de verdad)
@@ -325,6 +326,18 @@ def _attribute_group_write_enabled() -> bool:
     except ImportError:
         try:
             from shared.config import ATTRIBUTE_GROUP_WRITE_ENABLED as _f
+            return bool(_f)
+        except ImportError:
+            return False
+
+def _geo_mandate_fallback_enabled() -> bool:
+    """FND-0441: lee GEO_MANDATE_FALLBACK_ENABLED en runtime (config = dependency leaf). OFF por defecto."""
+    try:
+        from config import GEO_MANDATE_FALLBACK_ENABLED as _f
+        return bool(_f)
+    except ImportError:
+        try:
+            from shared.config import GEO_MANDATE_FALLBACK_ENABLED as _f
             return bool(_f)
         except ImportError:
             return False
@@ -1313,7 +1326,12 @@ def run_block(
                 or _is_name_subregion
             )
             _geo_es_final = _geo_name if _geo_name_wins else (_geo_kiid or _geo_name)
-            # FND-0440 (2026-11-25): third signal, ONLY when KIID text and name give nothing: a single-region equity index in the fund name or the declared benchmark.
+            # FND-0441 (2026-11-25): third signal, ONLY when KIID extractor and name give nothing: the mandate sentence of the objective section. Switch ships OFF.
+            _geo_mandate = None
+            if not _geo_es_final and _geo_mandate_fallback_enabled():
+                _geo_mandate = detect_geography_from_mandate(kiid_text)
+                _geo_es_final = _geo_mandate
+            # FND-0440 (2026-11-25): fourth signal, ONLY when all of the above give nothing: a single-region equity index in the fund name or the declared benchmark.
             # It runs here, before any default fills Geography (BL-50 turned a default Investment_Universe='Global' into Geography='Global' and the benchmark was never read).
             _geo_from_index = False
             if not _geo_es_final:
@@ -1936,7 +1954,7 @@ def run_block(
                 _dq_issues.append((
                     "GEOGRAPHY_UNIVERSE_CORRECTED", "INFO", "INFO", _geouniv_msg
                 ))
-            elif _geouniv_status == "WARNING" and (_geo_name_wins or _geo_from_index):
+            elif _geouniv_status == "WARNING" and (_geo_name_wins or _geo_from_index or _geo_mandate):
                 # FIX-GEO-7: name drove Geography to a specific country AND
                 # Universe is still 'Global' (stale from a prior cycle).
                 # Safe to auto-correct because the name signal is the
@@ -1947,6 +1965,7 @@ def run_block(
                     "GEOGRAPHY_UNIVERSE_CORRECTED", "INFO", "INFO",
                     f"Universe corregido a 'Country' ({_geo_eff} confirmado por "
                     + ("indice de renta variable de una sola region; ni el KIID ni el nombre daban geografia)." if _geo_from_index
+                       else "la frase de mandato del KIID)." if _geo_mandate
                        else "señal de nombre; KIID decía 'Global').")
                 ))
             elif _geouniv_status == "WARNING":

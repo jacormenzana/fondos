@@ -119,6 +119,6 @@ def test_pipeline_marks_an_index_driven_geography_and_corrects_its_universe_like
     before = PIPELINE[PIPELINE.index("_geo_es_final = _geo_name if"):start]
     assert re.search(r"_geo_from_index = False\s*\n(?:\s*#.*\n)*\s*if not _geo_es_final:", before), "the flag starts False, outside the fallback"
     assert re.search(r"_geo_from_index = bool\(_geo_es_final\)", PIPELINE[start:start + 700]), "the flag is True only when the index signal really gave a value"
-    branch = re.search(r'elif _geouniv_status == "WARNING" and \(_geo_name_wins or _geo_from_index\):', PIPELINE)
+    branch = re.search(r'elif _geouniv_status == "WARNING" and \(_geo_name_wins or _geo_from_index or _geo_mandate\):', PIPELINE)
     assert branch, "an index-driven country takes the auto-correct branch"
     assert branch.start() < PIPELINE.index('"GEOGRAPHY_UNIVERSE_WARNING"'), "and it comes before the plain warning branch"

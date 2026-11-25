@@ -273,6 +273,10 @@ P3_FEE_PENALTY_SHADOW_H_YEARS: float = 0.58
 # OFF the output is exactly what it was and only a counter is printed (`[Scorer] fee-aware class shadow`). The 0.02 tolerance is the reviewer's value (provenance table of PREREG_P3_5A_DRAFT).
 P3_FEE_AWARE_CLASS_ENABLED: bool = False
 P3_FEE_AWARE_CLASS_SCORE_TOLERANCE: float = 0.02
+# FND-0441 (Step 2, 2026-11-25): P1 reads the MANDATE SENTENCE of the KIID objective section when the KIID geography extractor and the fund name report nothing
+# (classify_utils.detect_geography_from_mandate). Ships OFF: the owner froze database writes until its precision is judged on the sealed holdout and the live pass is ordered; a P1 run reads the
+# working tree, so with the switch ON any cycle would write the values. Rollback = False.
+GEO_MANDATE_FALLBACK_ENABLED: bool = False
 # FND-0436 / Package L step F (doc/decisiones/PREREG_P3_5A.md, signed off 2026-11-21): the four ranking-layer levers of `proyecto3/src/ranking_levers.py`, one function for the live build and the PIT (R3).
 # Each ships OFF (R2): with all four OFF the scorer and every PIT cache key are exactly what they were. The values below are the FIRST (less intrusive) preregistered value of each lever; the 11 preregistered
 # trials run with explicit `LeverConfig`s and do not read them. Adoption is the owner's order after the forward shadow (R7); turning a switch ON live also needs the P2 metrics the lever reads
