@@ -481,6 +481,11 @@ desde dos perspectivas complementarias. La semántica de su combinación debe se
 | `China`, `Japan`, `India` | `Country` | Foco en un único país |
 | `Global` | `Global` | Mandato global sin restricción geográfica |
 
+**Fuentes de `Geography` (por prioridad):** texto KIID; nombre del fondo (gana si el texto dice `Global` y el nombre es especifico); y, solo
+si ambos callan, el indice de RENTA VARIABLE de una unica region citado en el nombre o en `Benchmark_Declared` (FND-0440: solo `Renta Variable` y
+`Mixtos` no sectoriales; nunca mezclas, indices mundiales, nombres "global"/"internacional" ni un benchmark que el propio texto declara no
+representativo; un indice de bonos en euros es una divisa, no una region). Un `Global` rellenado por defecto no es evidencia.
+
 **Precedencia:** `Geography` gana. Es derivada de señales positivas explícitas en el nombre y
 texto KIID del fondo; `Investment_Universe` puede ser una inferencia por defecto (BL-33).
 

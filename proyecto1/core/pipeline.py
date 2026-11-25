@@ -225,6 +225,7 @@ from core.classify_utils import (
     detect_share_class_currency_from_name,                  # FND-0243 (suffix, else hedged token)
     detect_geography           as detect_geography_from_name,   # FIX-GEO-1 (cross-check)
     detect_geography_from_kiid,                             # FIX-GEO-1 (cross-check)
+    detect_geography_from_equity_index,                     # FND-0440
     _derive_geography_en,                                   # FIX-GEO-1 (traducción ES→EN)
     derive_development_status,                               # FIX-GEO-1 (recalculado, no heredado del bloque)
     validate_geography_universe,                             # FIX-GEO-4 (BL-52, única fuente de verdad)
@@ -1312,6 +1313,13 @@ def run_block(
                 or _is_name_subregion
             )
             _geo_es_final = _geo_name if _geo_name_wins else (_geo_kiid or _geo_name)
+            # FND-0440 (2026-11-25): third signal, ONLY when KIID text and name give nothing: a single-region equity index in the fund name or the declared benchmark.
+            # It runs here, before any default fills Geography (BL-50 turned a default Investment_Universe='Global' into Geography='Global' and the benchmark was never read).
+            if not _geo_es_final:
+                _theme_idx = classification.get("Theme") or _detect_theme_pipeline(_geo_name_l)
+                _geo_es_final = detect_geography_from_equity_index(
+                    fund_name, eff.get("Benchmark_Declared", {"Benchmark_Declared": parsed.get("Benchmark_Declared")}),
+                    classification.get("Fund_Nature"), _theme_idx)
             _geo_en_final = _derive_geography_en(_geo_es_final, _geo_name_l)
             _devstat_final = derive_development_status(_geo_es_final, _geo_en_final, _geo_name_l)
 

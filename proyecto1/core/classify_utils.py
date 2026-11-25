@@ -4866,6 +4866,46 @@ def detect_kiid_attributes(
 _US_STANDALONE_WORD = re.compile(r"\bus\b")
 
 
+# FND-0440 (2026-11-25): a single-region EQUITY index is evidence of the investment region. `Geography='Global'` was being filled by DEFAULT (Investment_Universe='Global' -> BL-50) on index
+# trackers whose declared benchmark or name says one region, and the declared benchmark was never read. Index FAMILIES only: a region or currency word is not an index (a euro corporate
+# bond index is a currency universe, the FIX-GEO-NAME-1 trap). Values are the ES vocabulary of `detect_geography`, translated by `_derive_geography_en` like every other signal.
+_EQUITY_INDEX_REGIONS: dict = {
+    "EEUU": r"s&p ?500\b|\bmsci (?:usa|us|north america)\b|\brussell ?(?:1000|2000|2500|3000)|\bnasdaq[ -]?(?:100|composite)\b|\bdow jones industrial",
+    "Europa": r"\bstoxx (?:europe ?)?600\b|\bstoxx europe\b|\beuro ?stoxx|\bmsci (?:europe|emu|uk)\b|\bftse (?:developed )?europe|\bs&p (?:europe|eurozone)\b|\bdax\b|\bcac ?40\b|\bftse ?100\b",
+    "Japón": r"\btopix\b|\bnikkei\b|\bmsci japan\b",
+    "Asia": r"\bmsci (?:ac )?(?:asia|pacific)\b",
+    "China": r"\bmsci china\b|\bcsi ?300\b",
+}
+# a blend (any weight, plus sign or slash list) or a world / global universe disqualifies the whole string
+_INDEX_BLEND_OR_WORLD = re.compile(r"\+|%| / |\bworld\b|\bwld\b|\bglobal\b|\bglbl?\b|\bacwi\b|all[ -]country|mondial|\bex[ -]?(?:us|usa|europe|emu)\b")
+_NAME_SAYS_GLOBAL = re.compile(r"\bglobal\b|\bglbl?\b|\bglob\b|\bworld\b|\bwld\b|mondial|\binternat\w*|\binternac\w*|\bintl\b")
+# the KIID says the index is only a comparator ("... no representa necesariamente el universo de inversion"); the captured benchmark string often ends in that sentence
+_BENCHMARK_DISOWNED = re.compile(r"no representa|not representative|not necessarily representative")
+
+
+def _equity_index_regions(text_l: str) -> set:
+    return {region for region, pattern in _EQUITY_INDEX_REGIONS.items() if re.search(pattern, text_l)}
+
+
+def detect_geography_from_equity_index(fund_name: Optional[str], benchmark: Optional[str], fund_nature: Optional[str], theme: Optional[str]) -> Optional[str]:
+    """The region of the ONE equity index named in the fund name or the declared benchmark, in the ES vocabulary of `detect_geography`, or None.
+
+    Narrow by the owner's decision (FND-0440): equity and mixed funds only; not sector funds (their index is a comparator of an often global mandate); nothing when the name says global, when
+    a string is a blend or a world index, when more than one region appears, or when name and benchmark disagree. It is a FALLBACK: KIID text and a region named in the name come first."""
+    if fund_nature not in ("Renta Variable", "Mixtos") or theme not in (None, "Core/General"):
+        return None
+    name_l, bmk_l = (fund_name or "").lower(), (benchmark or "").lower()
+    if _NAME_SAYS_GLOBAL.search(name_l):
+        return None
+    if _BENCHMARK_DISOWNED.search(bmk_l):
+        bmk_l = ""
+    in_name, in_bmk = _equity_index_regions(name_l), _equity_index_regions(bmk_l)
+    if _INDEX_BLEND_OR_WORLD.search(bmk_l) and (in_name or in_bmk):         # a blend or a world universe cancels the benchmark AND a name-only reading
+        return None
+    regions = in_name | in_bmk
+    return next(iter(regions)) if len(regions) == 1 else None
+
+
 def detect_geography(name_l: str) -> Optional[str]:
     """Detecta geografía desde el nombre del fondo (en minúsculas).
 
