@@ -1315,11 +1315,13 @@ def run_block(
             _geo_es_final = _geo_name if _geo_name_wins else (_geo_kiid or _geo_name)
             # FND-0440 (2026-11-25): third signal, ONLY when KIID text and name give nothing: a single-region equity index in the fund name or the declared benchmark.
             # It runs here, before any default fills Geography (BL-50 turned a default Investment_Universe='Global' into Geography='Global' and the benchmark was never read).
+            _geo_from_index = False
             if not _geo_es_final:
                 _theme_idx = classification.get("Theme") or _detect_theme_pipeline(_geo_name_l)
                 _geo_es_final = detect_geography_from_equity_index(
                     fund_name, eff.get("Benchmark_Declared", {"Benchmark_Declared": parsed.get("Benchmark_Declared")}),
                     classification.get("Fund_Nature"), _theme_idx)
+                _geo_from_index = bool(_geo_es_final)
             _geo_en_final = _derive_geography_en(_geo_es_final, _geo_name_l)
             _devstat_final = derive_development_status(_geo_es_final, _geo_en_final, _geo_name_l)
 
@@ -1934,16 +1936,18 @@ def run_block(
                 _dq_issues.append((
                     "GEOGRAPHY_UNIVERSE_CORRECTED", "INFO", "INFO", _geouniv_msg
                 ))
-            elif _geouniv_status == "WARNING" and _geo_name_wins:
+            elif _geouniv_status == "WARNING" and (_geo_name_wins or _geo_from_index):
                 # FIX-GEO-7: name drove Geography to a specific country AND
                 # Universe is still 'Global' (stale from a prior cycle).
                 # Safe to auto-correct because the name signal is the
                 # authority for both Geography AND Universe in this case.
+                # FND-0440: the same when the equity-index signal gave the country (this check runs before SC-G1 corrects a default 'Global').
                 fund_master_record["Investment_Universe"] = "Country"
                 _dq_issues.append((
                     "GEOGRAPHY_UNIVERSE_CORRECTED", "INFO", "INFO",
-                    f"Universe corregido a 'Country' ({_geo_eff} confirmado "
-                    f"por señal de nombre; KIID decía 'Global')."
+                    f"Universe corregido a 'Country' ({_geo_eff} confirmado por "
+                    + ("indice de renta variable de una sola region; ni el KIID ni el nombre daban geografia)." if _geo_from_index
+                       else "señal de nombre; KIID decía 'Global').")
                 ))
             elif _geouniv_status == "WARNING":
                 _dq_issues.append((
