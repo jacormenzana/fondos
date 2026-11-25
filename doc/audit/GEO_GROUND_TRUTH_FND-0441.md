@@ -56,3 +56,26 @@ A currency of denomination is not a region. A benchmark or performance objective
 
 ## Decision for the owner (Step 1 is a stop point)
 Go to Step 2 (extraction fix from these sentences, then the sealed holdout judges it) or stop here and only record the source of each value (Step 3).
+
+## Step 2: extraction fix judged on the sealed holdout (2026-11-25)
+
+The owner ordered Step 2, approved the labelling rules and the twelve spot-check rows, and kept database writes frozen. Patterns frozen in commit `0a16ab5` (`GEO-PATTERNS-FROZEN`) before any holdout text was read; the code has not changed since. The 150 holdout funds were labelled without running the patterns on them (`geo_ground_truth/labels_holdout.csv`; evidence extracted by the tool, marked `[auto]`).
+
+| Sample | Values written | Right | Precision (one-sided 95 % bound) | Wrong named regions | Share of stated mandates found |
+|---|---|---|---|---|---|
+| Development (training, not evidence) | 55 | 55 | 100 % | 0 | 93 % |
+| KIID-only (partly independent) | 51 | 48 | 94 % (86 %) | 0 | 72 % |
+| **Sealed holdout** | **56** | **55** | **98.2 % (92.4 %)** | **0** | **61 %** |
+
+- **Acceptance:** no wrong named region (met) and precision of written values at least 95 % (met as an estimate). The 95 % claim with 95 % confidence is **not** established (bound 92.4 %; it needs about 60 written values without an error).
+- **The single "error"** (`LU0794123256`) reads, on inspection, "se puede invertir en todo el mundo, lo que incluye los mercados emergentes": global under the approved rules, so the label looks wrong, not the value. The label and the figures are left as measured; correcting it would give 56/56 (bound 95.4 %). The owner rules.
+- **Recall fell from 93 % to 61 %** between development and holdout: the patterns fit the development wording. Missed mandates stay `Global` by default; nothing wrong is written by missing them.
+- **Disclosed deviations from "development sample only":** the negation guard ("Asia (sin Japón)") came from the replay (which excluded the holdout), the "U.S. dollars" split from a test, and some negative test sentences from the KIID-only sample.
+- **Not fixed:** the current extractor's own false `Global` values (13 of 80 KIID-only) come from benchmark names (`msci world`, `bloomberg global aggregate`) and from worldwide phrases outside a mandate, not from "exposición global" as the Step 1 text above says. That statement was wrong.
+
+### What switching it ON would change (read-only replay, current universe, 2,943 funds)
+- 29 stored `Geography` values, all from `Global`: 19 to Europe, 9 to North America, 1 to Japan. No stored named region changes.
+- 23 funds marked `Development_Status = Emerging` (`Geography` stays `Global`).
+- The fallback recognises a mandate in 309 funds; for most of them the value stays `Global`, now with a sentence behind it. That matters only once the source is recorded (Step 3).
+
+`GEO_MANDATE_FALLBACK_ENABLED` ships OFF. No database value has changed.
