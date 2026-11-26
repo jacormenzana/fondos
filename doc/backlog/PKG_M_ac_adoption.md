@@ -1,6 +1,6 @@
 # Package M - adoption plan of AC (fee-aware selection live, safely)
 
-**Status: DRAFT 2026-11-26, waiting for the owner's sign-off. Docs only: no code ticket is opened and nothing is built before it.** One page, rewritten in place, never amended. Rules: `doc/decisiones/PREREG_P3_7.md` sections 13-14 (Amendment 2, `bc69c7d`; its three additions approved by the owner 2026-11-26). Decision record: `doc/decisiones/DECISION_P3_7_AC_ADOPTION_ROUTE.md`. Study ticket: FND-0438. Letter M chosen by the assistant.
+**Status: SIGNED OFF by the owner 2026-11-26 (on `9b0adf3`); tickets open (section 4), no work started.** One page, rewritten in place, never amended. Rules: `doc/decisiones/PREREG_P3_7.md` sections 13-14 (Amendment 2, `bc69c7d`; its three additions approved by the owner 2026-11-26). Decision record: `doc/decisiones/DECISION_P3_7_AC_ADOPTION_ROUTE.md`. Study ticket: FND-0438. Letter M chosen by the assistant.
 
 **Exit metric.** At the R6 review, one of:
 - the candidate it names (AC, or B under the fallback) runs in PRODUCTION, with the baseline shadow recording;
@@ -8,10 +8,16 @@
 
 **Time box.** The build work below takes a few sessions. The review is a dated event (earliest about 2027-05/06), not a session.
 
-## Decision needed from the owner
-1. Sign off this plan.
-2. The four proposed tickets (section 4): open them, or widen existing tickets instead.
-3. The `[CARGA MANUAL]` item (section 5): the monthly build cadence.
+## Owner rulings (2026-11-26)
+1. The plan is signed off as written.
+2. Tickets:
+   - T1 widens FND-0438;
+   - T2, T3 and T4 are new tickets;
+   - T3 is kept separate from FND-0444.
+3. **Standing order:** scheduled monthly builds are authorised strictly in DRAFT-only mode. They generate the DRAFT and the shadow rows and never promote to PRODUCTION without the owner's explicit order. This replaces "an order per run" for these builds only; P1 / P2 runs are not covered.
+4. FND-0443 and FND-0444 are HARD gates before any live promotion (logged on both tickets).
+
+**Open point (for the owner, not worked):** FND-0444 has no closing condition yet, so "CLOSED on its probe" cannot be evaluated by a machine. It gets one when the ticket is started (`NORMAS_BACKLOG.md` section 4).
 
 ## 1. The R6 reader (`scripts/audit/p3/p3_shadow_read.py`, built `54fb3d2`)
 **State.**
@@ -71,21 +77,21 @@ Adoption is not promotion. The flags change the NEXT DRAFT. PRODUCTION changes o
 - A fresh POST audit (at most 3 days) and the usual gates (D1 code, manifest, cost).
 - The first AC DRAFT is promoted by the owner's order, like every promotion.
 
-## 4. Proposed tickets (NOT opened; for sign-off)
-| # | Work | Proposal |
-|---|---|---|
-| T1 | Section 1: the reader to Amendment 2 | widen FND-0438 (the study's ticket) rather than open a new one |
-| T2 | Section 2: `P3_BASELINE_SHADOW` stream, its reader branch, the identity check | new ticket (P3, CODE_FIX), DEPENDS_ON nothing; probe: the identity check passes on the first build after it is switched ON |
-| T3 | Section 3: `GATE:DUPLICATE_FUND` | widen FND-0444 (its root cause) or a separate ticket; probe: a synthetic scenario with two classes of one sub-fund is refused |
-| T4 | Section 5: scheduled monthly DRAFT build | new ticket if the owner accepts the automation |
+## 4. Tickets (opened / widened 2026-11-26, session `FND_20261126_DEV_PKGM_AC_ADOPTION`)
+| # | Work | Ticket | Priority | Closing conditions |
+|---|---|---|---|---|
+| T1 | Section 1: the reader to Amendment 2 | FND-0438, widened (absorbed scope copied in its log) | MEDIUM | `tests_pass`, plus `manual`: the R6 verdict is recorded. The study ends at R6; the reader commit cites `Refs:`, not `Closes:` |
+| T2 | Section 2: `P3_BASELINE_SHADOW`, its reader branch, the identity check | FND-0445 | MEDIUM | `tests_pass`; at least 1 `P3_BASELINE_SHADOW` / `SHADOW` row in 40 days; 0 `P3_BASELINE_SHADOW_ERROR` rows in 40 days |
+| T3 | Section 3: `GATE:DUPLICATE_FUND` (separate from FND-0444) | FND-0446 | HIGH | `tests_pass` (refusal also when the `fund_family_id` differ; replay refuses the DRAFTs of 11-21 and 11-22) |
+| T4 | Section 5: scheduled monthly DRAFT-only build | FND-0447 | HIGH (the 2026-12 row is the first counted month) | `tests_pass`; `task_ok` `FondosP3MonthlyDraft`; at least 1 `P3_FEE_PENALTY_SHADOW` row in 40 days |
 
-FND-0443 and FND-0444 are worked on their own tickets, in the order the owner sets. None of them is worked before the sign-off.
+FND-0443 and FND-0444 are worked on their own tickets, in the order the owner sets.
 
 ## 5. Risk to the date: the build cadence `[CARGA MANUAL]`
 - **What and who.** Rows exist only when a real build runs, and every live build needs the owner's order (owner rule, `PLAN_SELECCION_CALIDAD.md`). So it is the owner, once a month, for at least 7 months (2026-11 is uncounted; 2026-12 to 2027-05 are the 6 counted months).
 - **Why it matters.** More than 1 missed month in the 6-month window postpones R6 by a month each time.
 - **Automated alternative (proposed).** A scheduled monthly P3 build that writes a DRAFT and the shadow rows and NEVER promotes. Promotion stays the owner's event. It runs behind the same cycle lock, single instance, with its own exit codes (`NORMAS_BATCH.md` for its launcher).
-- **Prerequisite.** The owner turns "an order per run" into a standing order for DRAFT-only builds.
+- **Prerequisite: GRANTED 2026-11-26** (standing order, section "Owner rulings"). Built under FND-0447.
 
 ## 6. Timeline (if builds run monthly)
 | When | Event |

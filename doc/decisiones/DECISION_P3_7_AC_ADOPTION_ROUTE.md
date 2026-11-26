@@ -86,4 +86,4 @@ Any amendment must be committed before the first review of the AC shadow, while 
   - The P3-7 fill did NOT flatter AC. Under the Amendment 2 fill, the gain over L rises from 3.03 to 3.24 pp a year and the gain over A1 from 1.20 to 1.28 pp.
   - On history, AC clears the 95 % coverage condition with a margin of 3.3 pp.
 - **Correction of the derivation in section 14, item 3:** AC buys about 0.82 times its capital a year, not 1.6; the 13.4 % a month is two-way traded notional. At 95 % coverage the bias bound is therefore about 0.2 pp a year, not 0.40 pp. The threshold is more conservative than stated, and its value does not change.
-3. The adoption plan: DRAFT in `doc/backlog/PKG_M_ac_adoption.md` (2026-11-26), waiting for the owner's sign-off. The three additions of Amendment 2 were approved as written on 2026-11-26.
+3. The adoption plan `doc/backlog/PKG_M_ac_adoption.md`: SIGNED OFF by the owner 2026-11-26. Tickets: FND-0438 widened, FND-0445 / FND-0446 / FND-0447 opened. Standing order for DRAFT-only monthly builds granted. The three additions of Amendment 2 were approved as written on 2026-11-26.
