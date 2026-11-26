@@ -28,7 +28,7 @@
 
 **Decisions already taken by the owner.**
 - The challenger ends if the vendor budget is denied or the scorecard fails (terminate, no dormant state).
-- The hysteresis band stays 0.10; enabling it is the owner's separate ruling after the shadow and the forward holdout (FND-0299) hold evidence.
+- The hysteresis band stays 0.10; enabling it is the owner's separate ruling after the shadow ~~and the forward holdout (FND-0299)~~ hold evidence. **Superseded 2026-11-26 (owner ruling, `doc/decisiones/DECISION_P3_7_AC_ADOPTION_ROUTE.md`): Amendment 5 of `PREREG_FND-0193` (2026-11-21) prevails; the band is decoupled from the FND-0299 holdout and is ruled at the 6-row review (R6) on its deterministic rules 1 and 3.**
 - No manual handling in any data pipeline; where no automated route exists, the component is not built.
 - Champion-side data captures (WP3) continue under any outcome; the owner can switch any of them off.
 - Every live P1 / P2 / P3 run needs the owner's order for that run.

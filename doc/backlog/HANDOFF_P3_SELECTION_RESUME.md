@@ -23,7 +23,7 @@ Next-step handoff for the selection work. It supersedes the "recommended next st
 - Live arm at the stated KIID fees: net about 0.08 % a year. AC (band 0.10 + fee penalty H = 0.58 years): net about 3.12 %, 25 bp-cost drawdown -12.5 %, turnover about 13 % a month against 32 %.
 - Owner's mandate: max drawdown 15 %, target net band 3.2-4.0 %. AC's 3.12 % is just below the band.
 - The gain is fee arithmetic: at a flat 25 bp all arms net about the same.
-- AC is not live. Forward shadow: 1 row (2026-11), 0 errors. In that row 570 of 1,432 candidates have an unknown fee.
+- AC is not live. Forward shadow: 1 row (2026-11), 0 errors. In that row 570 of 1,432 candidates have an unknown fee. **Corrected 2026-11-26:** the 570 is counted over the 2,901 scored funds. 202 of the 942 candidate funds lack a point value, and only 22 have no figure at all (`doc/decisiones/DECISION_P3_7_AC_ADOPTION_ROUTE.md`).
 
 ## 3. The point to progress: the adoption route for AC
 Two committed rules differ:
