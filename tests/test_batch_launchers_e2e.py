@@ -53,7 +53,7 @@ _PY_TOOLS = [
     "proyecto2/src/discovery/nav_discovery.py", "proyecto2/src/analysis/export_metrics.py",
     "proyecto2/src/reports/rolling_dashboard.py", "scripts/audit/p1/diag_cost_extraction.py",
     "scripts/launch/release_check.py", "scripts/audit/p1/verify_fund_currency.py",
-    "scripts/launch/p3_monthly_draft.py",
+    "scripts/launch/p3_monthly_draft.py", "scripts/launch/p1p2_monthly_refresh.py",
 ]
 
 _POWERCFG_STUB = """@echo off
@@ -70,7 +70,7 @@ exit /b 0
 _LAUNCHERS = ["_template", "P1P2_runCycle", "P2P3_runCycle", "P1P2P3_runCycle", "P1_refreshBenchmarks", "P1_discoverAllFunds",
               "P2_discoverLoadMetrics", "P2_calculateIndicators", "P1_harvestFunds", "P1_diagCost",
               "P1_audit", "P2_audit", "P1P2_auditStatistical", "P3_buildPortfolio", "P3_generateReport",
-              "P1_runCycle", "P2_runCycle", "P3_runCycle", "P3_monthlyDraft",
+              "P1_runCycle", "P2_runCycle", "P3_runCycle", "P3_monthlyDraft", "P1P2_monthlyRefresh",
               "FND-0246", "FND-0246_V2"]
 
 
@@ -459,6 +459,54 @@ def test_monthly_draft_waits_while_another_cycle_holds_the_lock(tree):
         out, _ = first.communicate(timeout=240)
     assert first.returncode == 0, out
     assert "p3_monthly_draft" not in tree.tools()                                                # the refused run ran nothing
+
+
+# ─── P1P2_monthlyRefresh: the scheduled NAV refresh of the monthly build (FND-0448) ────────────
+
+def test_monthly_refresh_runs_the_p1p2_cycle_when_due_and_records_after(tree):
+    r = tree.run("P1P2_monthlyRefresh")
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = tree.lines()
+    assert lines[0] == "p1p2_monthly_refresh status", lines
+    assert "run_pipeline" in tree.tools() and "nav_discovery" in tree.tools()                    # P2 recomputed on refreshed NAV
+    assert lines[-1] == "p1p2_monthly_refresh record --rc 0", lines
+    assert not [ln for ln in lines if "--sync" in ln or "--retire-orphans" in ln], lines         # harvest read-only
+
+
+def test_monthly_refresh_does_nothing_when_not_due(tree):
+    r = tree.run("P1P2_monthlyRefresh", STUB_RC_P1P2_MONTHLY_REFRESH="3")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert tree.lines() == ["p1p2_monthly_refresh status"]
+
+
+def test_monthly_refresh_check_runs_nothing(tree):
+    assert tree.run("P1P2_monthlyRefresh", "--check").returncode == 0
+    assert tree.lines() == ["p1p2_monthly_refresh status"]
+
+
+def test_monthly_refresh_propagates_a_failed_cycle_and_records_it(tree):
+    r = tree.run("P1P2_monthlyRefresh", STUB_RC_RUN_PIPELINE="4")
+    assert r.returncode == 4, r.stdout + r.stderr
+    assert tree.lines()[-1] == "p1p2_monthly_refresh record --rc 4"
+
+
+def test_monthly_refresh_rejects_an_unknown_argument(tree):
+    assert tree.run("P1P2_monthlyRefresh", "--harvest-sync").returncode == 100
+    assert not tree.lines()
+
+
+def test_monthly_refresh_waits_while_another_cycle_holds_the_lock(tree):
+    first = tree.popen("P1P2_runCycle", *CYCLE, STUB_SLEEP_BENCHMARK_LOADER="6")
+    try:
+        deadline = time.time() + 60
+        while "benchmark_loader" not in tree.tools():
+            assert first.poll() is None and time.time() < deadline, "the first cycle did not reach step 1"
+            time.sleep(0.3)
+        assert tree.run("P1P2_monthlyRefresh").returncode == 105
+    finally:
+        out, _ = first.communicate(timeout=240)
+    assert first.returncode == 0, out
+    assert "p1p2_monthly_refresh" not in tree.tools()
 
 
 # ─── P2P3_runCycle: nothing preassigned ────────────────────────────────────────────────────────

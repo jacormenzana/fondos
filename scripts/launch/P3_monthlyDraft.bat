@@ -7,7 +7,7 @@ call "%COMMON%" :utf8_on
 :: ============================================================
 :: P3_monthlyDraft.bat -- Construccion mensual programada, SOLO DRAFT (orden permanente del propietario): una vez por mes calendario.
 ::
-:: Lo lanza la tarea programada FondosP3MonthlyDraft (scripts\mnt\sched\register_p3_monthly_draft.ps1), que puede dispararse cada dia:
+:: Lo lanza la tarea programada FondosP3MonthlyDraft (scripts\mnt\sched\register_monthly_cycle_tasks.ps1), que puede dispararse cada dia:
 ::   1. p3_monthly_draft.py status   si este mes (UTC) ya tiene su DRAFT y una fila de cada sombra encendida, no hace nada (RC 0)
 ::   2. P3_runCycle.bat              DRAFT + auditoria P2 posterior + informe del DRAFT. NUNCA promueve: la promocion es una orden
 ::                                   del propietario (p3_promote_scenario.py), que este lanzador no invoca

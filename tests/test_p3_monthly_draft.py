@@ -205,12 +205,12 @@ def test_the_monthly_launcher_runs_the_draft_cycle_and_records_after_it():
 
 
 # ------------------------------------------------------------------------------------------------------------- the scheduled task
-REG = ROOT / "scripts" / "mnt" / "sched" / "register_p3_monthly_draft.ps1"
+REG = ROOT / "scripts" / "mnt" / "sched" / "register_monthly_cycle_tasks.ps1"
 
 
 def test_the_registration_names_the_task_the_ticket_probes_and_runs_the_monthly_launcher():
     text = REG.read_text(encoding="utf-8")
-    assert "'FondosP3MonthlyDraft'" in text                                    # task_ok condition of FND-0447
-    assert "P3_monthlyDraft.bat" in text and "--allow-stale" not in text
+    assert "Name = 'FondosP3MonthlyDraft'; Bat = 'P3_monthlyDraft.bat'" in text      # task_ok condition of FND-0447
+    assert "--allow-stale" not in text
     assert "C:\\desarrollo" not in text and "c:\\desarrollo" not in text.lower(), "the repo path is derived from the script's own location"
     assert "-Register" in text and "-Unregister" in text                       # a dry run by default

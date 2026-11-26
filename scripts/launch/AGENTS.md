@@ -63,6 +63,7 @@ Postgres SQL validity is checked by an `EXPLAIN` sweep over every statement prod
 | `FND-0246_V2.bat` | — |
 | `P1P2P3_runCycle.bat` | P1+P2+P3 |
 | `P1P2_auditStatistical.bat` | P1+P2 |
+| `P1P2_monthlyRefresh.bat` | P1+P2 |
 | `P1P2_runCycle.bat` | P1+P2 |
 | `P1_audit.bat` | P1 |
 | `P1_diagCost.bat` | P1 |

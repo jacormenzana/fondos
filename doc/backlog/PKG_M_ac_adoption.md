@@ -16,6 +16,7 @@
    - T3 is kept separate from FND-0444.
 3. **Standing order:** scheduled monthly builds are authorised strictly in DRAFT-only mode. They generate the DRAFT and the shadow rows and never promote to PRODUCTION without the owner's explicit order. This replaces "an order per run" for these builds only; P1 / P2 runs are not covered.
 4. FND-0443 and FND-0444 are HARD gates before any live promotion (logged on both tickets).
+5. **Standing order extended (2026-11-26, second ruling):** the monthly NAV refresh is automated, and the standing order is extended EXCLUSIVELY to the P1/P2 ingestion and calculation cycle (`P1P2_runCycle.bat`, harvest read-only), scheduled from day 25 and retried until the data will pass the P3 gate on the next build. Promotions, switch flips, KIID sync / retire and every other run still need his order. Ticket FND-0448.
 
 **Open point (for the owner, not worked):** FND-0444 has no closing condition yet, so "CLOSED on its probe" cannot be evaluated by a machine. It gets one when the ticket is started (`NORMAS_BACKLOG.md` section 4).
 
@@ -83,7 +84,8 @@ Adoption is not promotion. The flags change the NEXT DRAFT. PRODUCTION changes o
 | T1 | Section 1: the reader to Amendment 2 | FND-0438, widened (absorbed scope copied in its log) | MEDIUM | `tests_pass`, plus `manual`: the R6 verdict is recorded. The study ends at R6; the reader commit cites `Refs:`, not `Closes:` |
 | T2 | Section 2: `P3_BASELINE_SHADOW`, its reader branch, the identity check | FND-0445 | MEDIUM | `tests_pass`; at least 1 `P3_BASELINE_SHADOW` / `SHADOW` row in 40 days; 0 `P3_BASELINE_SHADOW_ERROR` rows in 40 days |
 | T3 | Section 3: `GATE:DUPLICATE_FUND` (separate from FND-0444) | FND-0446 | HIGH | `tests_pass` (refusal also when the `fund_family_id` differ; replay refuses the DRAFTs of 11-21 and 11-22) |
-| T4 | Section 5: scheduled monthly DRAFT-only build | FND-0447 | HIGH (the 2026-12 row is the first counted month) | `tests_pass`; `task_ok` `FondosP3MonthlyDraft`; at least 1 `P3_FEE_PENALTY_SHADOW` row in 40 days |
+| T4 | Section 5: scheduled monthly DRAFT-only build | FND-0447 | HIGH (the 2026-12 row is the first counted month) | `tests_pass`; `task_ok` `FondosP3MonthlyDraft`; at least 1 `P3_FEE_PENALTY_SHADOW` row in 40 days; at least 1 `P3_MONTHLY_DRAFT` OK row in 40 days |
+| T5 | Section 5: scheduled monthly P1+P2 cycle (NAV refresh) | FND-0448 | HIGH | `tests_pass`; `task_ok` `FondosP1P2MonthlyRefresh`; at least 1 `P1P2_MONTHLY_REFRESH` OK row in 40 days |
 
 FND-0443 and FND-0444 are worked on their own tickets, in the order the owner sets.
 
@@ -91,11 +93,12 @@ FND-0443 and FND-0444 are worked on their own tickets, in the order the owner se
 - **What and who.** Rows exist only when a real build runs, and every live build needs the owner's order (owner rule, `PLAN_SELECCION_CALIDAD.md`). So it is the owner, once a month, for at least 7 months (2026-11 is uncounted; 2026-12 to 2027-05 are the 6 counted months).
 - **Why it matters.** More than 1 missed month in the 6-month window postpones R6 by a month each time.
 - **Automated alternative (proposed).** A scheduled monthly P3 build that writes a DRAFT and the shadow rows and NEVER promotes. Promotion stays the owner's event. It runs behind the same cycle lock, single instance, with its own exit codes (`NORMAS_BATCH.md` for its launcher).
-- **Prerequisite: GRANTED 2026-11-26** (standing order, section "Owner rulings"). Built under FND-0447 (`d8403e6`): `scripts/launch/P3_monthlyDraft.bat` wraps `P3_runCycle.bat`, builds only while the current UTC month lacks its DRAFT or a row of an enabled shadow stream, and writes one `P3_MONTHLY_DRAFT` row per attempt. The daily task `FondosP3MonthlyDraft` (09:00) is registered by `scripts/mnt/sched/register_p3_monthly_draft.ps1`.
-- **Remaining dependency `[CARGA MANUAL]`: NAV freshness.** The P3 freshness gate needs `nav_p10` to be at most 14 days old (and the harvest at most 45 days).
-  - December 2026 is covered without a P1/P2 run: the newest NAV is 2026-11-19, so builds on 12-01 to 12-03 pass.
-  - From January, every month's build needs a P1/P2 cycle (NAV refresh) in the 14 days before it. Today that is the owner, once a month. Without it the task retries daily and records FAILED (RC 2), and the month becomes a gap.
-  - Automated alternative (needs the owner's order, outside the current standing order): schedule the NAV refresh (`P1P2_runCycle.bat` or the NAV step) a few days before the build, under the same lock.
+- **Prerequisite: GRANTED 2026-11-26** (standing order, section "Owner rulings"). Built under FND-0447 (`d8403e6`): `scripts/launch/P3_monthlyDraft.bat` wraps `P3_runCycle.bat`, builds only while the current UTC month lacks its DRAFT or a row of an enabled shadow stream, and writes one `P3_MONTHLY_DRAFT` row per attempt. The daily task `FondosP3MonthlyDraft` (09:00) is registered by `scripts/mnt/sched/register_monthly_cycle_tasks.ps1`.
+- **NAV freshness: AUTOMATED (FND-0448).** The P3 freshness gate needs `nav_p10` to be at most 14 days old and the harvest at most 45 days.
+  - `scripts/launch/P1P2_monthlyRefresh.bat` (daily task `FondosP1P2MonthlyRefresh`, 20:00, same registration script) acts from day 25 to the end of the month. It runs `P1P2_runCycle.bat` (defaults: harvest read-only) while the NAV or the harvest would fail the gate on the next build's last retry day (day 4 of the next month), computed with the gate's own functions.
+  - It retries daily until the data is fresh enough, writes one `P1P2_MONTHLY_REFRESH` row per attempt (OK / FAILED / STALE), and shares the single-instance lock.
+  - Window: the owner's "25th to 28th", extended to the end of the month so a failed day still has a retry.
+  - No recurring manual step is left in the monthly capture.
 
 ## 6. Timeline (if builds run monthly)
 | When | Event |

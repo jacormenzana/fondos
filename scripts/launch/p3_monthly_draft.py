@@ -91,8 +91,9 @@ def months_by_item(conn, required: list, now: datetime) -> dict:
     return out
 
 
-def write_record(conn, status: str, message: dict) -> None:
-    conn.execute("INSERT INTO ingestion_log (isin, step, status, message, created_at) VALUES (NULL, %s, %s, %s, now())", (STEP, status, json.dumps(message)))
+def write_record(conn, status: str, message: dict, step: str = STEP) -> None:
+    """One append-only ingestion_log row of a scheduled job (this one's step by default; p1p2_monthly_refresh.py passes its own)."""
+    conn.execute("INSERT INTO ingestion_log (isin, step, status, message, created_at) VALUES (NULL, %s, %s, %s, now())", (step, status, json.dumps(message)))
     conn.commit()
 
 
