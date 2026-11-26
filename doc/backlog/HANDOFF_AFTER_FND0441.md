@@ -19,7 +19,7 @@ Supersedes `HANDOFF_P3_AFTER_LAYER3.md` for the next steps (that file keeps the 
 Record: `doc/audit/GEO_GROUND_TRUTH_FND-0441.md`.
 
 ## 2. State
-- **FND-0441 is READY_FOR_DEPLOY, not closed.** The merge touches `db/**` and a DEPLOY fact is only written for `db/pg_backlog`, so the owner closes it: `scripts/gov/backlog/close_release.py --release R2026.11-FND-0441 --tickets FND-0441 --log "..." --actor human:<login>` (dry run, then `--apply`).
+- **FND-0441 CLOSED** by the owner (release `R2026.11-FND-0441`). A merge that touches `db/**` of the `fondos` database does not close by itself (a DEPLOY fact is only written for `db/pg_backlog`): the owner runs, in cmd, `set FONDOS_ACTOR=human:<login>`, then `close_release.py --release ... --tickets ... --log "..."` (dry run, then `--apply`), then `set FONDOS_ACTOR=`. `--actor` alone is refused.
 - `Geography_Source`, all funds: kiid 2,122, name 758, mandate 339, index 17, default 467, unreproduced 59, wrong_doc 5. In the PRODUCTION portfolio of 2026-11-26, 9 of 30 funds (38.5 % of weight) are `default`.
 - **FND-0442** (new, DEFERRED, review 2027-01-15): the Geography leftovers (blanking defaults, unreproduced values, false `Global` of the KIID extractor).
 - **FND-0029** (BLOCKED) holds the five wrong-document funds; LU2363199204 stores a wrong `Asia-Pacific` (noted there).
