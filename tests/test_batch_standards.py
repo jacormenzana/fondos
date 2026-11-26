@@ -24,7 +24,7 @@ LIB = LAUNCH / "lib"
 BATS = sorted(p for p in [*LAUNCH.glob("*.bat"), *LIB.glob("*.bat")])
 COMMON = LIB / "common.bat"
 TOP_LEVEL_LOCKED = ("P1P2_runCycle.bat", "P2P3_runCycle.bat", "P1P2P3_runCycle.bat", "P1_runCycle.bat", "P2_runCycle.bat",
-                    "P3_runCycle.bat", "FND-0246.bat")
+                    "P3_runCycle.bat", "P3_monthlyDraft.bat", "FND-0246.bat")
 IS_LIB = lambda p: p.parent == LIB          # lib files are subroutines / data, not launchers
 
 # {(rule, file name): reason}

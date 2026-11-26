@@ -27,6 +27,7 @@ _ENTRY_POINTS = [
     ("mark_stale",             ["scripts/launch/mark_stale.py", "--help"], "."),
     ("p3_generate_report",     ["scripts/launch/p3_generate_report.py", "--help"], "."),
     ("p3_promote_scenario",    ["scripts/launch/p3_promote_scenario.py", "--help"], "."),
+    ("p3_monthly_draft",       ["scripts/launch/p3_monthly_draft.py", "--help"], "."),
     ("p1_db_harvest",          ["proyecto1/harvest/p1_db_harvest.py", "--help"], "."),
     ("p1_kiid_sync",           ["proyecto1/harvest/p1_kiid_sync.py", "--help"], "."),
     ("fund_family_builder",    ["proyecto1/core/fund_family_builder.py", "--help"], "."),

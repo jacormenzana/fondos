@@ -77,5 +77,6 @@ Postgres SQL validity is checked by an `EXPLAIN` sweep over every statement prod
 | `P2_runCycle.bat` | P2 |
 | `P3_buildPortfolio.bat` | P3 |
 | `P3_generateReport.bat` | P3 |
+| `P3_monthlyDraft.bat` | P3 |
 | `P3_runCycle.bat` | P3 |
 <!-- AUTO:END launchers -->

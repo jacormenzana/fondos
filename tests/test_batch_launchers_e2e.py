@@ -53,6 +53,7 @@ _PY_TOOLS = [
     "proyecto2/src/discovery/nav_discovery.py", "proyecto2/src/analysis/export_metrics.py",
     "proyecto2/src/reports/rolling_dashboard.py", "scripts/audit/p1/diag_cost_extraction.py",
     "scripts/launch/release_check.py", "scripts/audit/p1/verify_fund_currency.py",
+    "scripts/launch/p3_monthly_draft.py",
 ]
 
 _POWERCFG_STUB = """@echo off
@@ -69,7 +70,7 @@ exit /b 0
 _LAUNCHERS = ["_template", "P1P2_runCycle", "P2P3_runCycle", "P1P2P3_runCycle", "P1_refreshBenchmarks", "P1_discoverAllFunds",
               "P2_discoverLoadMetrics", "P2_calculateIndicators", "P1_harvestFunds", "P1_diagCost",
               "P1_audit", "P2_audit", "P1P2_auditStatistical", "P3_buildPortfolio", "P3_generateReport",
-              "P1_runCycle", "P2_runCycle", "P3_runCycle",
+              "P1_runCycle", "P2_runCycle", "P3_runCycle", "P3_monthlyDraft",
               "FND-0246", "FND-0246_V2"]
 
 
@@ -401,6 +402,63 @@ def test_a_second_cycle_is_refused_while_the_first_runs_and_the_lock_dies_with_t
     assert first.returncode == 0, out
     assert tree.tools().count("run_pipeline") == 1                               # the refused ones ran nothing
     assert tree.run("P1P2_runCycle", *CYCLE).returncode == 0                    # nothing left behind to clean up
+
+
+# ─── P3_monthlyDraft: the scheduled DRAFT-only build (FND-0447) ────────────────────────────────
+
+def test_monthly_draft_builds_through_the_p3_cycle_when_the_month_needs_it_and_records_after(tree):
+    r = tree.run("P3_monthlyDraft")
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = tree.lines()
+    assert lines[0] == "p3_monthly_draft status", lines
+    assert "p3_build_portfolio" in tree.tools() and "run_statistical_audit" in tree.tools()     # the DRAFT and the P2 audit after it
+    assert lines[-1] == "p3_monthly_draft record --rc 0", lines
+    assert not [ln for ln in lines if "promote" in ln], lines
+
+
+def test_monthly_draft_does_nothing_when_the_month_is_already_captured(tree):
+    r = tree.run("P3_monthlyDraft", STUB_RC_P3_MONTHLY_DRAFT="3")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert tree.lines() == ["p3_monthly_draft status"]
+
+
+def test_monthly_draft_check_reports_and_builds_nothing(tree):
+    r = tree.run("P3_monthlyDraft", "--check")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert tree.lines() == ["p3_monthly_draft status"]
+
+
+def test_monthly_draft_propagates_a_stale_build_and_records_it(tree):
+    r = tree.run("P3_monthlyDraft", STUB_RC_P3_BUILD_PORTFOLIO="2")
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert tree.lines()[-1] == "p3_monthly_draft record --rc 2"
+    assert "run_statistical_audit" not in tree.tools()                                           # no DRAFT, no audit
+
+
+def test_monthly_draft_stops_when_the_month_check_fails(tree):
+    r = tree.run("P3_monthlyDraft", STUB_RC_P3_MONTHLY_DRAFT="1")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert tree.lines() == ["p3_monthly_draft status"]
+
+
+def test_monthly_draft_rejects_an_unknown_argument(tree):
+    assert tree.run("P3_monthlyDraft", "--allow-stale").returncode == 100
+    assert not tree.lines()
+
+
+def test_monthly_draft_waits_while_another_cycle_holds_the_lock(tree):
+    first = tree.popen("P1P2_runCycle", *CYCLE, STUB_SLEEP_BENCHMARK_LOADER="6")
+    try:
+        deadline = time.time() + 60
+        while "benchmark_loader" not in tree.tools():
+            assert first.poll() is None and time.time() < deadline, "the first cycle did not reach step 1"
+            time.sleep(0.3)
+        r = tree.run("P3_monthlyDraft")
+        assert r.returncode == 105, r.stdout + r.stderr
+    finally:
+        out, _ = first.communicate(timeout=240)
+    assert first.returncode == 0, out
+    assert "p3_monthly_draft" not in tree.tools()                                                # the refused run ran nothing
 
 
 # ─── P2P3_runCycle: nothing preassigned ────────────────────────────────────────────────────────
