@@ -91,7 +91,11 @@ FND-0443 and FND-0444 are worked on their own tickets, in the order the owner se
 - **What and who.** Rows exist only when a real build runs, and every live build needs the owner's order (owner rule, `PLAN_SELECCION_CALIDAD.md`). So it is the owner, once a month, for at least 7 months (2026-11 is uncounted; 2026-12 to 2027-05 are the 6 counted months).
 - **Why it matters.** More than 1 missed month in the 6-month window postpones R6 by a month each time.
 - **Automated alternative (proposed).** A scheduled monthly P3 build that writes a DRAFT and the shadow rows and NEVER promotes. Promotion stays the owner's event. It runs behind the same cycle lock, single instance, with its own exit codes (`NORMAS_BATCH.md` for its launcher).
-- **Prerequisite: GRANTED 2026-11-26** (standing order, section "Owner rulings"). Built under FND-0447.
+- **Prerequisite: GRANTED 2026-11-26** (standing order, section "Owner rulings"). Built under FND-0447 (`d8403e6`): `scripts/launch/P3_monthlyDraft.bat` wraps `P3_runCycle.bat`, builds only while the current UTC month lacks its DRAFT or a row of an enabled shadow stream, and writes one `P3_MONTHLY_DRAFT` row per attempt. The daily task `FondosP3MonthlyDraft` (09:00) is registered by `scripts/mnt/sched/register_p3_monthly_draft.ps1`.
+- **Remaining dependency `[CARGA MANUAL]`: NAV freshness.** The P3 freshness gate needs `nav_p10` to be at most 14 days old (and the harvest at most 45 days).
+  - December 2026 is covered without a P1/P2 run: the newest NAV is 2026-11-19, so builds on 12-01 to 12-03 pass.
+  - From January, every month's build needs a P1/P2 cycle (NAV refresh) in the 14 days before it. Today that is the owner, once a month. Without it the task retries daily and records FAILED (RC 2), and the month becomes a gap.
+  - Automated alternative (needs the owner's order, outside the current standing order): schedule the NAV refresh (`P1P2_runCycle.bat` or the NAV step) a few days before the build, under the same lock.
 
 ## 6. Timeline (if builds run monthly)
 | When | Event |
