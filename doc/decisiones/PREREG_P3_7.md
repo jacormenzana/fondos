@@ -110,3 +110,39 @@ Fees in the PIT frame for C (the PIT carries them only for L4 today); a per-tria
   - **R24 and R36 (paired bootstrap of `pit_oos`, the FND-0299 checkpoints): AC against L only.** Non-inferiority of the forward net return at the stated fees (lower bound of AC minus L above minus `net_return_tolerance`) AND the drawdown guard (no worse than L's by more than `max_dd_tolerance` and within `mandate_dd_cap`; NOT INFORMATIVE under `dd_informative_min` is carried to the next review, never a pass). The superiority of AC over L and any return comparison with B are reported, not gating.
 - **Consequence.** No review adopts anything (R7). AC is proposed for adoption only if R6 passed at its last review and R36 passed on both tests; the owner's order then switches `PORTFOLIO_HYSTERESIS_ENABLED` and `P3_L4_FEE_PENALTY_ENABLED` with `P3_L4_H_YEARS` = 0.58 (the shadow's own H is a separate constant; both ship OFF until then, R2). If R6 rule 3 fails but rules 1 and 2 pass, the band alone (B) is the candidate and the penalty is dropped. The revert trigger of Amendment 5 applies to whatever is adopted. The reader of these rows is a read-only script built AFTER the first live row has been verified (tests first); it is not part of this commit.
 - **Not decided here:** the gross-return gap (separate studies, one layer at a time), the mandate parameters, and any change of the band or of H.
+
+## 14. Amendment 2 (2026-11-26): adoption route of AC and the unknown-fee rule of every cost reader
+Written and committed **before the first review** and before any turnover, cost or selection-difference field of `P3_FEE_PENALTY_SHADOW` or `P3_HYSTERESIS_SHADOW` is read (R8, R9). The owner's rulings of 2026-11-26 (`doc/decisiones/DECISION_P3_7_AC_ADOPTION_ROUTE.md`) are the authority. This amendment changes a RULE of section 13, not one of its values, so it does not use the one dated re-sync of values that section 13 allows. Every value of sections 4-13 stays as it is unless it is named below.
+
+- **What has been read (disclosure, R9).**
+  - The P3-7 PIT report and adoption table: in-sample, already disclosed in sections 12-13.
+  - The read-only fee-coverage check of the live candidate pool, 2026-11-26, from the metrics frame and `fund_master`, no shadow field. Of the 942 candidate funds, 202 lack an exact fee on at least one side; 180 of those state a ceiling and 22 state nothing.
+  - From the shadow rows: only the integrity fields that section 13 allows (`n_candidates`, `n_fee_unknown`).
+- **1. Adoption route (replaces the first sentence of section 13, "Consequence").** The fee penalty is treated as a structural rule (`PKG_L` R7). AC is proposed for adoption at the R6 review if ALL of the following hold:
+  - (a) R6 rules 1-3 PASS at the primary regime, with the fill of item 2;
+  - (b) the coverage condition of item 3 holds;
+  - (c) on the PIT cost grid, rule 3 of Amendment 5 of `PREREG_FND-0193` applied to AC against the baseline holds on the P3-7 build: at 25 bp per side the net return is no lower than the baseline's minus `net_return_tolerance_25bp` (0.15 pp a year), and at 100 bp it is higher. The 25 bp half is already on record (`adoption_table.csv` of the build `20261121_p37`): AC nets 3.71 % a year against the baseline's 3.69 % (paired monthly mean -0.01 pp, lower bound -0.76 pp). The 100 bp half is computed after this commit from the stored series;
+  - (d) the owner's order.
+
+  The order switches `PORTFOLIO_HYSTERESIS_ENABLED` and `P3_L4_FEE_PENALTY_ENABLED`, with `P3_L4_H_YEARS` = 0.58. The fallback of section 13 is unchanged: if R6 rule 3 fails but rules 1 and 2 pass, the band alone (B) is the candidate and the penalty is dropped. The band alone keeps its own route: Amendment 5 at its 6-row review (owner ruling 2026-11-26, which decouples it from the FND-0299 holdout).
+- **After adoption.**
+  - R12 stays an alarm.
+  - R24 and R36 (the same tests, AC against L, the same parameters) become checks after adoption: a FAIL on either test means REVERT.
+  - The revert trigger of Amendment 5 also applies, with AC as the adopted arm and L as the baseline arm: `revert_window` 12, `revert_return_gap` 0.50 pp a year, `revert_dd_gap` 2.0 pp, `revert_turnover_ratio` 0.5.
+  - A REVERT verdict is reported by the reader, and the owner's order switches both flags OFF (a one-off authority event, D-0).
+  - **Engineering prerequisite of the adoption (built test-first before the order, shipped with it):** once AC is live, L (band 0, no penalty) keeps being recorded as a shadow arm, so that R24, R36 and the revert trigger still have their baseline.
+- **2. Fill of an unknown fee in EVERY cost reader of this stream (R6, R12, R24, R36 and the revert trigger).** Per fund and per side (entry, exit), the first of:
+  1. the exact value (`Entry_Fee_Pct` / `Exit_Fee_Pct`, ratios);
+  2. the declared ceiling (`Entry_Fee_Pct_Max` / `Exit_Fee_Pct_Max`, percent divided by 100), consistent with D1: the KIID maximum is what the owner pays;
+  3. the 90th percentile of the exact values of that side among the funds of the same `Fund_Nature` in the review's frozen fee snapshot; if a nature has no exact value on that side, the 90th percentile over all natures.
+
+  The fill is applied identically to L, B and AC. The verdicts use it. Next to it the reader reports an optimistic variant, with a fund without any figure costed at 0; that variant is never gating. The stored `rotation_cost_estimate` of both shadows (which costs an unknown entry at 0) is not used by any rule. The fill of the ranking penalty (`ranking_levers.l4_penalty`, the median of the nature cell) is NOT changed: it defines the AC arm, and changing it would break the stream.
+- **3. Coverage condition (gating at R6).** In the review window, at least `fee_coverage_min` = **95 %** of AC's bought notional must be in funds with an exact value or a declared ceiling on BOTH sides. Bought notional is the sum of the positive weight changes between consecutive counted rows, recomputed by the reader as in section 13. Below the threshold, R6 is NOT INFORMATIVE and carried to the next review, never PASS. The same share is reported for L and B, and the exit coverage of sold notional for all three; these are not gating. Derivation (the assistant's; value set by the owner 2026-11-26): AC buys about 1.6 times capital a year at its PIT turnover (13.4 % a month). A share u of bought notional costed at 0 while paying 5 % (the p90 of the exact entry fees) biases the cost by u × 8.0 pp a year; u ≤ 5 % keeps it at most 0.40 pp, below the 0.50 pp materiality of R6 rules 2 and 3.
+- **New parameters** (added to the table of section 13).
+
+| Name | Value | Used in |
+|---|---|---|
+| `fee_fill` | exact → declared ceiling → p90 of the nature (frozen snapshot), symmetric over L, B, AC | every cost reader of this stream |
+| `fee_coverage_min` | 95 % of AC's bought notional, both sides, exact or ceiling | R6 (NOT INFORMATIVE below) |
+
+- **Not changed:** the reader is still built only after the first live row has been verified (tests first); the 12-month alarm; the review months; every value of the parameter table of section 13. The one-off validation of the PIT cost under this fill (a rebuild of the stored-weight series of L, A1 and AC, ordered 2026-11-26 as a document check) runs AFTER this commit and cannot change any rule of it. Its result is recorded in the decision note.
