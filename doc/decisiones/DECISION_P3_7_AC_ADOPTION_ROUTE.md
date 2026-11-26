@@ -67,5 +67,23 @@ Any amendment must be committed before the first review of the AC shadow, while 
 
 ## Next steps (each on the owner's order)
 1. DONE: the read-only fee-coverage check above; the owner set the threshold (95 %) and the fill rule on 2026-11-26.
-2. DONE: Amendment 2 (section 14 of PREREG_P3_7), committed before the first review. Open: the 100 bp half of its condition (c) and the PIT validation run under the new fill (results below, when recorded).
+2. DONE: Amendment 2 (section 14 of PREREG_P3_7), committed before the first review (`bc69c7d`).
+
+## Checks run after Amendment 2 (2026-11-26, read-only, outputs in the session scratchpad only; no rule changes)
+- **Condition (c), 100 bp half:** from the stored series of the P3-7 build, AC nets 2.47 % a year against the baseline's 0.74 %. PASS. The 25 bp figures reproduce the adoption table exactly (3.71 % against 3.69 %).
+- **PIT weight rebuild** of L, A1 and AC:
+  - Built through `build_arm` on the sealed run `20261119_202509`, the frozen snapshot `42d92e50d483` and the cached scores, about 4 minutes in total.
+  - The identity gate PASSED, and the stated-fee net series equals the P3-7 series for all three arms.
+  - Ceilings and natures were read from today's `fund_master`; exact fees come from the snapshot.
+
+| Arm | Net, P3-7 fill (3 % / 0) | Net, Amendment 2 fill | Net, optimistic | Bought notional with an exact fee or a ceiling | Exact only | Bought per year (× capital) |
+|---|---|---|---|---|---|---|
+| L | 0.08 % | -0.19 % | 0.08 % | 96.0 % | 85.6 % | 1.96 |
+| A1 | 1.92 % | 1.78 % | 1.96 % | 95.2 % | 83.8 % | 0.91 |
+| AC | 3.12 % | 3.06 % | 3.08 % | **98.3 %** | 90.5 % | 0.82 |
+
+- **Reading of the table:**
+  - The P3-7 fill did NOT flatter AC. Under the Amendment 2 fill, the gain over L rises from 3.03 to 3.24 pp a year and the gain over A1 from 1.20 to 1.28 pp.
+  - On history, AC clears the 95 % coverage condition with a margin of 3.3 pp.
+- **Correction of the derivation in section 14, item 3:** AC buys about 0.82 times its capital a year, not 1.6; the 13.4 % a month is two-way traded notional. At 95 % coverage the bias bound is therefore about 0.2 pp a year, not 0.40 pp. The threshold is more conservative than stated, and its value does not change.
 3. Either way: the adoption or waiting plan, including what must hold before a promotion (FND-0443 and FND-0444 stay parked until then).
