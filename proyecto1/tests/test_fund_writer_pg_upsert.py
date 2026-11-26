@@ -185,6 +185,27 @@ def test_official_fund_name_is_coalesced_fnd0246(pg_conn):
     assert stored() == "Another Official Fund"
 
 
+def test_geography_source_is_written_and_coalesced_fnd0441(pg_conn):
+    """FND-0441: Geography_Source follows Geography's policy -- written with it, kept when a cycle brings none, and limited to the closed vocabulary."""
+    pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+    isin = "ZZ0000000441"
+
+    def stored():
+        return tuple(pg_conn.execute("SELECT geography, geography_source FROM fund_master WHERE isin = %s", (isin,)).fetchone())
+
+    first = _minimal_partial_record(isin, "Renta Variable", "TEST GEOSOURCE")
+    first.update({"Geography": "Europe", "Geography_Source": "mandate"})
+    upsert_fund_master(pg_conn, first)
+    assert stored() == ("Europe", "mandate")
+
+    upsert_fund_master(pg_conn, _minimal_partial_record(isin, "Renta Variable", "TEST GEOSOURCE") | {"Geography": None, "Geography_Source": None})
+    assert stored() == ("Europe", "mandate")
+
+    with pytest.raises(Exception, match="check"):
+        with pg_conn.transaction():
+            pg_conn.execute("UPDATE fund_master SET geography_source = 'guess' WHERE isin = %s", (isin,))
+
+
 def test_upsert_fund_master_insert_path_creates_new_row(pg_conn):
     """The INSERT branch (a brand-new ISIN, no prior row) must create the row with the values
     given — exercises the 'ins'-policy columns (ISIN, fund_family_id) and confirms the whole

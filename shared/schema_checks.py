@@ -372,10 +372,14 @@ FND0246_FUND_MASTER_NEW: list[str] = ["Official_Fund_Name"]
 # Package H (FND-0408, 2026-11-14): Exit_Fee_Known_Flag, a GENERATED column (the exit twin of Fee_Known_Flag, which became generated in the same migration:
 # db/migrations/20261114_fund_master_derived_fee_flags.sql). Neither is ever written; both are derived from the fee numbers (shared/fee_state.py).
 FND0408_FUND_MASTER_NEW: list[str] = ["Exit_Fee_Known_Flag"]
-FUND_MASTER_COLUMNS_CURRENT: list[str] = FUND_MASTER_COLUMNS_V23 + FND0246_FUND_MASTER_NEW + FND0408_FUND_MASTER_NEW
+
+# FND-0441 (2026-11-26): Geography_Source -- la señal que reproduce Geography (classify_utils.derive_geography_source). Columna nullable anadida por
+# db/migrations/20261126_fund_master_geography_source.sql (aplicada ANTES del codigo).
+FND0441_FUND_MASTER_NEW: list[str] = ["Geography_Source"]
+FUND_MASTER_COLUMNS_CURRENT: list[str] = FUND_MASTER_COLUMNS_V23 + FND0246_FUND_MASTER_NEW + FND0408_FUND_MASTER_NEW + FND0441_FUND_MASTER_NEW
 FUND_MASTER_COLUMNS_CURRENT_SET: frozenset = frozenset(FUND_MASTER_COLUMNS_CURRENT)
-assert len(FUND_MASTER_COLUMNS_CURRENT_SET) == 62, (
-    f"fund_master debe tener 62 columnas, tiene {len(FUND_MASTER_COLUMNS_CURRENT_SET)}"
+assert len(FUND_MASTER_COLUMNS_CURRENT_SET) == 63, (
+    f"fund_master debe tener 63 columnas, tiene {len(FUND_MASTER_COLUMNS_CURRENT_SET)}"
 )
 
 # v24 (2026-07-18): fund_nav_monthly + fund_nav_daily incorporadas al schema
@@ -560,6 +564,7 @@ def assert_schema_alignment(conn, tables=None) -> None:
         lines.append(
             "Aplica el DDL: db/pg/00_roles_schemas.sql .. 40_matviews.sql (con el rol propietario); "
             "fund_master.official_fund_name: db/migrations/20261024_fund_master_official_fund_name.sql (con el rol propietario); "
+            "fund_master.geography_source: scripts/mig/fondos/migrate_fund_master_geography_source.py --apply; "
             "fund_metric_state.last_ols_calc_version: scripts/mig/fondos/migrate_fund_metric_state_ols_calc_version.py --apply; "
             "fund_metric_family_state (FAMILY_VERSIONING_ENABLED): scripts/mig/fondos/migrate_fund_metric_family_state.py --apply"
         )

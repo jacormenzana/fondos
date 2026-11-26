@@ -488,6 +488,8 @@ def upsert_fund_master(conn: "psycopg.Connection",
         ("Family",                      record.get("Family"),                    family_pol),
         ("Style_Profile",               record.get("Style_Profile"),             style_pol),
         ("Geography",                   record.get("Geography"),                 'co'),
+        # FND-0441: which signal reproduces Geography (classify_utils.derive_geography_source); same COALESCE as the value.
+        ("Geography_Source",            record.get("Geography_Source"),          'co'),
         ("Theme",                       record.get("Theme"),                     'co'),
         ("Exposure_Bias",               record.get("Exposure_Bias"),             'ow'),
         ("Benchmark_Type",              record.get("Benchmark_Type"),            'ow'),

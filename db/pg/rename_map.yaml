@@ -250,6 +250,7 @@ columns:
     In_Current_Universe: in_current_universe
     Performance_Fee_Basis: performance_fee_basis
     Official_Fund_Name: official_fund_name
+    Geography_Source: geography_source
 
   fund_metric_alerts:
     isin: isin

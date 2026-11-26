@@ -73,6 +73,10 @@ Q_ROWS_SERIES_BENCHMARK = "SELECT COUNT(*) FROM bronze.series_benchmark"
 Q_ROWS_NAV_SOURCES = "SELECT COUNT(*) FROM control.nav_sources"
 Q_ROWS_NAV_SOURCES_OLDER_180D = "SELECT COUNT(*) FROM control.nav_sources WHERE last_nav_date < CURRENT_DATE - 180"
 TABLE_ROWS_SQL = {"series_benchmark": Q_ROWS_SERIES_BENCHMARK, "nav_sources": Q_ROWS_NAV_SOURCES, "nav_sources_older_180d": Q_ROWS_NAV_SOURCES_OLDER_180D}
+# FND-0441: every stored Geography has a source, and the 'Global' that nothing supports does not rise above its level at delivery, by nature.
+Q_GEO_WITHOUT_SOURCE = "SELECT COUNT(*) FROM silver.fund_master WHERE geography IS NOT NULL AND geography_source IS NULL"
+Q_GEO_DEFAULT_BY_NATURE = "SELECT COALESCE(fund_nature, '-'), COUNT(*) FROM silver.fund_master WHERE geography = 'Global' AND geography_source = 'default' GROUP BY 1 ORDER BY 1"
+_NATURE = re.compile(r"[A-Za-z\- ]{1,40}")
 _RULE_ID = re.compile(r"[A-Za-z0-9_]{3,80}")
 _STEP_OR_STATUS = re.compile(r"[A-Za-z0-9_]{1,60}")
 _ISIN = re.compile(r"[A-Z0-9]{12}")
@@ -121,8 +125,15 @@ def validate_db_check(args) -> list:
         if len(p) < 3 or p[0] not in AUDIT_DOMAINS or not (isinstance(p[1], str) and _RULE_ID.fullmatch(p[1])) \
                 or not all(isinstance(i, str) and _ISIN.fullmatch(i) for i in p[2:]):
             return [f"audit_rule_clear needs [domain in {list(AUDIT_DOMAINS)}, a rule id, at least one ISIN]"]
+    elif name == "geography_without_source":
+        if p:
+            return ["geography_without_source takes no argument"]
+    elif name == "geography_default_global":
+        natures = p[0::2]
+        if not p or len(p) % 2 or not all(isinstance(n, str) and _NATURE.fullmatch(n) for n in natures) or len(set(natures)) != len(natures) or not all(_is_int(v) for v in p[1::2]):
+            return ["geography_default_global needs pairs [fund nature, its level at delivery >= 0], each nature once"]
     else:
-        return [f"unknown db_check {name!r} (known: audit_rule_clear, ingestion_events, p2_run_summary, table_rows)"]
+        return [f"unknown db_check {name!r} (known: audit_rule_clear, geography_default_global, geography_without_source, ingestion_events, p2_run_summary, table_rows)"]
     return []
 
 
@@ -300,6 +311,14 @@ def probe_db_check(conn, *args) -> tuple:
         else:                                                                  # nav_sources_older_180d: validate_db_check admits nothing else
             value = conn.execute(Q_ROWS_NAV_SOURCES_OLDER_180D).fetchone()[0]
         return compare(value, op, n), f"table {table}: {value} row(s) (needs {op} {n})"
+    if name == "geography_without_source":
+        value = conn.execute(Q_GEO_WITHOUT_SOURCE).fetchone()[0]
+        return value == 0, f"{value} fund(s) with a Geography and no Geography_Source (needs 0)"
+    if name == "geography_default_global":
+        level = dict(zip(p[0::2], p[1::2]))
+        found = {r[0]: r[1] for r in conn.execute(Q_GEO_DEFAULT_BY_NATURE).fetchall()}
+        above = [f"{nature} {count} > {level.get(nature, 0)}" for nature, count in sorted(found.items()) if count > level.get(nature, 0)]
+        return not above, f"default 'Global' by nature: {'above its level: ' + ', '.join(above) if above else 'none above its level'} ({sum(found.values())} in total)"
     if name == "ingestion_events":
         step, status, op, n, days = p
         value = conn.execute("SELECT COUNT(*) FROM ingestion_log WHERE step = %s AND status = %s AND created_at >= now() - make_interval(days => %s)", (step, status, days)).fetchone()[0]

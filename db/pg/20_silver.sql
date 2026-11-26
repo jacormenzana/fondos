@@ -82,9 +82,12 @@ CREATE TABLE IF NOT EXISTS silver.fund_master (
     in_current_universe            smallint NOT NULL DEFAULT 1 CHECK (in_current_universe IN (0,1)),
     performance_fee_basis          text CHECK (performance_fee_basis IS NULL OR performance_fee_basis IN
                                    ('NONE','RATE_ON_OUTPERFORMANCE','PCT_OF_ASSETS','UNDETERMINED')),
-    official_fund_name             text     -- FND-0246: official sub-fund name read from the KIID head (proyecto1/core/kiid_official_name.py),
+    official_fund_name             text,    -- FND-0246: official sub-fund name read from the KIID head (proyecto1/core/kiid_official_name.py),
                                             -- class-invariant; NULL = not discovered (head carries no name) -> the family key falls back to fund_name.
                                             -- Migration for a live database: db/migrations/20261024_fund_master_official_fund_name.sql
+    geography_source               text     -- FND-0441: the signal that reproduces `geography` (classify_utils.derive_geography_source); NULL = no value or not derived.
+        CHECK (geography_source IS NULL OR geography_source IN ('kiid','name','mandate','index','default','unreproduced','wrong_doc'))
+                                            -- Migration for a live database: db/migrations/20261126_fund_master_geography_source.sql
     -- fund_family_id's FK to silver.fund_families is added below, AFTER that table exists —
     -- PostgreSQL requires the referenced table to exist at CREATE time, unlike SQLite's more
     -- permissive forward-reference tolerance. Declaring it inline here (as the source SQLite DDL

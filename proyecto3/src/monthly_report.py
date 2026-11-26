@@ -48,6 +48,9 @@ from proyecto3.src import scenario_lifecycle as _lifecycle
 from shared import fx_exposure as _fx_exposure
 from shared.db import round_sql, int_cast_sql
 
+# FND-0441: a Geography that was a default, or read from a wrong document, is not printed as a fact (fund_master.Geography_Source).
+GEOGRAPHY_REPORT_SQL = "CASE WHEN fm.Geography_Source IN ('default', 'wrong_doc') THEN 'not determined' ELSE fm.Geography END"
+
 
 # ============================================================
 # Estilos
@@ -339,7 +342,7 @@ def _build_cartera(ws, conn, scenario_id):
                {round_sql("fx.value * 100", 2)}    as fx_ann_pct,
                fm.Fund_Currency,
                fm.Hedging_Policy,
-               fm.Geography,
+               {GEOGRAPHY_REPORT_SQL},
                {round_sql("oil.value", 4)}          as beta_oil,
                {round_sql("reu.value", 4)}          as beta_rate_eu,
                {round_sql("rus.value", 4)}          as beta_rate_us,

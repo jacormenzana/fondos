@@ -42,6 +42,7 @@ OWNER_TOOLS = {
     "migrate_cycle_flag_read_ts.py": (_OWNER,), "migrate_cycle_telemetry.py": (_OWNER,), "migrate_fund_metric_family_state.py": (_OWNER,),
     "migrate_fund_metric_state_ols_calc_version.py": (_OWNER,), "migrate_portfolio_scenario_status.py": (_OWNER,),
     "migrate_fund_master_derived_fee_flags.py": (_OWNER,),   # Package H (FND-0408): the derived fee flags, one transaction
+    "migrate_fund_master_geography_source.py": (_OWNER,),    # FND-0441: one additive column
     "p1p2_state.py": (_OWNER,),                              # the cycle launcher's restore point (pg_create_restore_point needs the owner role); without it the cycle runs with a WARN
     # the owner-only backlog role: a human:* identity writes only through it
     "backlog_v3_bootstrap.py": (_HUMAN,), "backlog_step0.py": (_HUMAN,), "close_release.py": (_HUMAN,), "gate_mode.py": (_HUMAN,), "backlog_links.py": (_HUMAN,), "autopilot_mode.py": (_HUMAN,),

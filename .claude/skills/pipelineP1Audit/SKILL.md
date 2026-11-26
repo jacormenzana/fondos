@@ -152,6 +152,12 @@ ORDER BY n DESC;
 ```
 Investigate with `fund_family_builder.py` logic (structural heterogeneity or bipartite tie).
 
+**Geography provenance (FND-0441)** — (1) must return 0; (2) compare with the previous run: a rise means the default `Global` is creeping back (or new funds state no mandate the extractors read):
+```sql
+SELECT COUNT(*) FROM silver.fund_master WHERE geography IS NOT NULL AND geography_source IS NULL;
+SELECT COALESCE(fund_nature, '-'), COUNT(*) FROM silver.fund_master WHERE geography = 'Global' AND geography_source = 'default' GROUP BY 1 ORDER BY 1;
+```
+
 ### Step 3 — Process-Efficiency Pass
 
 - Identify blocks re-running for funds already stable (no KIID change, no FORCE_REFRESH).

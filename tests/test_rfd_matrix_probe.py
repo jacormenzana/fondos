@@ -206,6 +206,40 @@ def test_the_registry_holds_only_static_count_queries_and_the_operators_are_a_wh
         m.compare(1, "; DROP", 1)
 
 
+# ---- FND-0441: a Geography has a source, and the default 'Global' does not creep back ---------------------------------------------------------------------------------------------
+class _GeoConn:
+    def __init__(self, without_source=0, default_by_nature=()):
+        self.without_source, self.default_by_nature = without_source, list(default_by_nature)
+
+    def execute(self, sql, params=()):
+        rows = [(self.without_source,)] if sql is m.Q_GEO_WITHOUT_SOURCE else (self.default_by_nature if sql is m.Q_GEO_DEFAULT_BY_NATURE else None)
+        assert rows is not None, sql
+        return type("R", (), {"fetchone": lambda s: rows[0], "fetchall": lambda s: rows})()
+
+
+def test_geography_checks_validate_their_arguments():
+    for args in (["geography_without_source"], ["geography_default_global", "Renta Variable", 10, "Mixtos", 0]):
+        assert m.validate_db_check(args) == [], args
+    for args in (["geography_without_source", 1], ["geography_default_global"], ["geography_default_global", "Mixtos"], ["geography_default_global", "Mixtos", -1],
+                 ["geography_default_global", "x'; DROP TABLE y", 1], ["geography_default_global", "Mixtos", 1, "Mixtos", 2]):
+        assert m.validate_db_check(args), args
+
+
+def test_geography_without_source_passes_only_at_zero():
+    ok, text = m.probe_db(_GeoConn(0), "db_check", "geography_without_source")
+    assert ok is True and "0 fund" in text
+    assert m.probe_db(_GeoConn(3), "db_check", "geography_without_source")[0] is False
+
+
+def test_default_global_must_not_rise_above_its_level_by_nature():
+    args = ("db_check", "geography_default_global", "Renta Variable", 10, "Mixtos", 5)
+    assert m.probe_db(_GeoConn(default_by_nature=[("Renta Variable", 10), ("Mixtos", 2)]), *args)[0] is True
+    ok, text = m.probe_db(_GeoConn(default_by_nature=[("Renta Variable", 11), ("Mixtos", 2)]), *args)
+    assert ok is False and "Renta Variable 11 > 10" in text
+    ok, text = m.probe_db(_GeoConn(default_by_nature=[("Monetario", 1)]), *args)                 # a nature that had none at delivery has level 0
+    assert ok is False and "Monetario 1 > 0" in text
+
+
 def test_table_rows_compares_the_count_of_a_named_table_and_a_bad_condition_is_a_value_error():
     ok, text = m.probe_db(_FakeCheckConn(count=0), "db_check", "table_rows", "series_benchmark", "==", 0)
     assert ok is True and "series_benchmark: 0 row" in text

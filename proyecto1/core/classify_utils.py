@@ -4984,6 +4984,37 @@ def detect_geography_from_mandate(kiid_text: Optional[str]) -> Optional[str]:
     return None
 
 
+# FND-0441 Step 3 (2026-11-26): the closed vocabulary of fund_master.Geography_Source (the CHECK of db/pg/20_silver.sql repeats it).
+GEOGRAPHY_SOURCES: tuple = ("kiid", "name", "mandate", "index", "default", "unreproduced", "wrong_doc")
+
+
+def derive_geography_source(geography: Optional[str], kiid_text: Optional[str], fund_name: Optional[str], benchmark: Optional[str], fund_nature: Optional[str],
+                            theme: Optional[str], kiid_status: Optional[str] = None) -> Optional[str]:
+    """Which signal reproduces the STORED (English) `geography`; None when there is no value. One function for the pipeline (end of a pass) and the one-off backfill.
+
+    The signals are read in the pipeline's order (KIID extractor, name, mandate sentence, equity index) and the first that gives this value is credited. 'default': a 'Global' that no signal
+    supports. 'unreproduced': any other value no signal supports (older fallbacks, or a 'Global' that a signal contradicts). 'wrong_doc': the document is not the fund's."""
+    if not geography:
+        return None
+    if kiid_status == "WRONG_DOC":
+        return "wrong_doc"
+    name_l = (fund_name or "").lower()
+    signals = (
+        ("kiid", lambda: detect_geography_from_kiid(kiid_text) if kiid_text else None),
+        ("name", lambda: detect_geography(name_l)),
+        ("mandate", lambda: detect_geography_from_mandate(kiid_text)),
+        ("index", lambda: detect_geography_from_equity_index(fund_name, benchmark, fund_nature, theme or detect_theme(name_l))),
+    )
+    contradicted = False
+    for source, read in signals:
+        value = read()
+        if value:
+            if _derive_geography_en(value, name_l) == geography:
+                return source
+            contradicted = True
+    return "default" if geography == "Global" and not contradicted else "unreproduced"
+
+
 def detect_geography(name_l: str) -> Optional[str]:
     """Detecta geografía desde el nombre del fondo (en minúsculas).
 

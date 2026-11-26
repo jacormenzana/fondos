@@ -67,8 +67,8 @@ The owner ordered Step 2, approved the labelling rules and the twelve spot-check
 | KIID-only (partly independent) | 51 | 48 | 94 % (86 %) | 0 | 72 % |
 | **Sealed holdout** | **56** | **55** | **98.2 % (92.4 %)** | **0** | **61 %** |
 
-- **Acceptance:** no wrong named region (met) and precision of written values at least 95 % (met as an estimate). The 95 % claim with 95 % confidence is **not** established (bound 92.4 %; it needs about 60 written values without an error).
-- **The single "error"** (`LU0794123256`) reads, on inspection, "se puede invertir en todo el mundo, lo que incluye los mercados emergentes": global under the approved rules, so the label looks wrong, not the value. The label and the figures are left as measured; correcting it would give 56/56 (bound 95.4 %). The owner rules.
+- **Acceptance:** no wrong named region (met) and precision of written values at least 95 % (met).
+- **Owner ruling (2026-11-26): the single disputed value counts as correct.** `LU0794123256` reads "se puede invertir en todo el mundo, lo que incluye los mercados emergentes": global under the approved rules; the label was a labelling miss and is corrected. **56 of 56 right (100 %)**. One-sided 95 % bound: 95.4 % (Wilson), 94.8 % (exact binomial), so with n = 56 "at least 95 % with 95 % confidence" holds under the first method and falls just short under the stricter one. The table above shows the figures as first measured.
 - **Recall fell from 93 % to 61 %** between development and holdout: the patterns fit the development wording. Missed mandates stay `Global` by default; nothing wrong is written by missing them.
 - **Disclosed deviations from "development sample only":** the negation guard ("Asia (sin Japón)") came from the replay (which excluded the holdout), the "U.S. dollars" split from a test, and some negative test sentences from the KIID-only sample.
 - **Not fixed:** the current extractor's own false `Global` values (13 of 80 KIID-only) come from benchmark names (`msci world`, `bloomberg global aggregate`) and from worldwide phrases outside a mandate, not from "exposición global" as the Step 1 text above says. That statement was wrong.
@@ -79,3 +79,24 @@ The owner ordered Step 2, approved the labelling rules and the twelve spot-check
 - The fallback recognises a mandate in 309 funds; for most of them the value stays `Global`, now with a sentence behind it. That matters only once the source is recorded (Step 3).
 
 `GEO_MANDATE_FALLBACK_ENABLED` ships OFF. No database value has changed.
+
+## Delivery (2026-11-26, on the owner's order)
+
+- **Switch** `GEO_MANDATE_FALLBACK_ENABLED` ON. P1 pass on the 52 affected funds, family builder and refresh. Full `fund_master` diff: only those 52 funds; `Geography` and nothing else changed on 29 (19 Europe, 9 North America, 1 Japan, all from `Global`, identical to the replay) with their `Investment_Universe`; `Development_Status` on 52 (29 to Developed, 23 to Emerging); no named region changed; no `GEOGRAPHY_UNIVERSE_WARNING`.
+- **Column** `fund_master.Geography_Source` added by the owner; backfill wrote 3,715 rows, that column only; a second run changes 0. Rows with a `Geography` and no source: 0.
+
+| Source (all funds, retired included) | `Global` | Named region |
+|---|---|---|
+| kiid | 1,377 | 745 |
+| name | 167 | 591 |
+| mandate | 299 | 40 |
+| index | 0 | 17 |
+| default | 467 | 0 |
+| unreproduced | 8 | 51 |
+| wrong_doc | 4 | 1 |
+
+(6 funds have no `Geography`.)
+
+- **Level of the default `Global` at delivery**, by nature (the closing condition): Renta Fija Corto Plazo 128, Renta Fija Flexible 111, Mixtos 91, Renta Variable 70, Monetario 37, Alternativo 30.
+- **Monthly report:** a `default` or `wrong_doc` value prints "not determined" (9 of the 30 rows of the PRODUCTION portfolio on this date).
+- **Left open:** the 51 unreproduced named regions come from older rules and are kept; the current extractor's own false `Global` values are not fixed; blanking the defaults stays deferred.

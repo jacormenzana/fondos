@@ -70,7 +70,8 @@ SELECT
        "asset_currency" AS "Asset_Currency",
        "in_current_universe" AS "In_Current_Universe",
        "performance_fee_basis" AS "Performance_Fee_Basis",
-       "official_fund_name" AS "Official_Fund_Name"
+       "official_fund_name" AS "Official_Fund_Name",
+       "geography_source" AS "Geography_Source"
 FROM   silver.fund_master;
 GRANT SELECT ON bi_compat.fund_master TO superset_ro;
 

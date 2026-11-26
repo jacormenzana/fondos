@@ -97,10 +97,15 @@ Migración: `db/migrations/20261024_fund_master_official_fund_name.sql` (la apli
 | Style_Profile | TEXT | `Growth` \| `Value` \| `Blend` \| `Income` \| `Low Volatility` \| `Quality` \| `Momentum` \| `Strategic Allocation` \| `Not Applicable` |
 | Geography | TEXT | `Global` \| `Europa` \| `EE.UU.` \| `Eurozona` \| `Asia` \| `Japón` \| `China` \| `Emergentes` \| `Norte de África` \| ... (**ES**) |
 | Theme | TEXT | `Technology` \| `Healthcare` \| `Climate / Clean Energy` \| `Artificial Intelligence` \| `Gold` \| `Inflation` \| `Megatrends` \| ... (**EN**) |
+| Geography_Source | TEXT | `kiid` \| `name` \| `mandate` \| `index` \| `default` \| `unreproduced` \| `wrong_doc`; NULL = sin `Geography` o sin derivar (FND-0441) |
 | Is_ESG | INTEGER | `0` \| `1` |
 | Exposure_Bias | TEXT | `Long Only` \| `Long/Short` \| `Market Neutral` \| `Net Short` \| `Not Applicable` |
 | Benchmark_Type | TEXT | `Reference Index` \| `Target Index` \| `No Benchmark` |
 | Subtype | TEXT | `ETF` \| `Index Fund` \| `Autocallable` \| `Global Macro` \| `Long/Short` \| ... |
+
+`Geography_Source` (FND-0441): la señal que reproduce `Geography` (`classify_utils.derive_geography_source`), escrita con el mismo COALESCE que el valor. `default` = `Global` sin
+ninguna señal; `unreproduced` = otro valor que ninguna señal reproduce. El informe mensual imprime "not determined" para `default` y `wrong_doc`.
+Migración: `db/migrations/20261126_fund_master_geography_source.sql`.
 
 ### Bloques heurísticos (2 columnas)
 

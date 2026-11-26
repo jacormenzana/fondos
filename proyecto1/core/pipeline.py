@@ -227,6 +227,7 @@ from core.classify_utils import (
     detect_geography_from_kiid,                             # FIX-GEO-1 (cross-check)
     detect_geography_from_equity_index,                     # FND-0440
     detect_geography_from_mandate,                          # FND-0441
+    derive_geography_source,                                # FND-0441 Step 3
     _derive_geography_en,                                   # FIX-GEO-1 (traducción ES→EN)
     derive_development_status,                               # FIX-GEO-1 (recalculado, no heredado del bloque)
     validate_geography_universe,                             # FIX-GEO-4 (BL-52, única fuente de verdad)
@@ -3203,6 +3204,12 @@ def run_block(
                 from shared.family_refresh import STEP_DONE as _FAMILY_REFRESH_DONE
                 _extra_log = [(_FAMILY_REFRESH_DONE, "OK",
                                f"nature={classification.get('Fund_Nature')} own_evidence={_fam_own_nature}")]
+            # FND-0441 Step 3: where Geography comes from, derived on the EFFECTIVE values of this pass (R-4), after every rule that may change it.
+            fund_master_record["Geography_Source"] = derive_geography_source(
+                eff.get("Geography", fund_master_record), kiid_text, fund_name,
+                eff.get("Benchmark_Declared", fund_master_record), eff.get("Fund_Nature", fund_master_record),
+                eff.get("Theme", fund_master_record), kiid_meta.get("KIID_Status"))
+
             publish_fund(conn, fund_master_record, None, kiid_record,
                          cost_schedule_rows=_schedule_rows or None, extra_log=_extra_log)
 

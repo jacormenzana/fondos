@@ -151,9 +151,9 @@ def test_pipeline_uses_the_mandate_only_when_kiid_and_name_are_silent_and_before
     assert re.search(r'elif _geouniv_status == "WARNING" and \(_geo_name_wins or _geo_from_index or _geo_mandate\):', PIPELINE), "a country from the mandate must not leave a stale warning"
 
 
-def test_the_fallback_ships_off_so_no_pass_writes_it_before_the_owner_orders():
+def test_the_fallback_is_on_and_stays_behind_its_switch():
     from shared import config
-    assert config.GEO_MANDATE_FALLBACK_ENABLED is False                      # owner 2026-11-25: database writes stay frozen; a P1 run reads the working tree
+    assert config.GEO_MANDATE_FALLBACK_ENABLED is True                       # owner order 2026-11-26, after the sealed holdout (56 of 56)
     helper = PIPELINE[PIPELINE.index("def _geo_mandate_fallback_enabled"):][:700]
     assert "GEO_MANDATE_FALLBACK_ENABLED" in helper and "return False" in helper
 

@@ -481,10 +481,14 @@ desde dos perspectivas complementarias. La semántica de su combinación debe se
 | `China`, `Japan`, `India` | `Country` | Foco en un único país |
 | `Global` | `Global` | Mandato global sin restricción geográfica |
 
-**Fuentes de `Geography` (por prioridad):** texto KIID; nombre del fondo (gana si el texto dice `Global` y el nombre es especifico); y, solo
-si ambos callan, el indice de RENTA VARIABLE de una unica region citado en el nombre o en `Benchmark_Declared` (FND-0440: solo `Renta Variable` y
+**Fuentes de `Geography` (por prioridad):** texto KIID; nombre del fondo (gana si el texto dice `Global` y el nombre es especifico); si ambos callan, la frase de
+mandato de la seccion de objetivos (FND-0441, `GEO_MANDATE_FALLBACK_ENABLED`: una divisa o un benchmark no son un mandato); y, solo
+si todo lo anterior calla, el indice de RENTA VARIABLE de una unica region citado en el nombre o en `Benchmark_Declared` (FND-0440: solo `Renta Variable` y
 `Mixtos` no sectoriales; nunca mezclas, indices mundiales, nombres "global"/"internacional" ni un benchmark que el propio texto declara no
 representativo; un indice de bonos en euros es una divisa, no una region). Un `Global` rellenado por defecto no es evidencia.
+
+**`Geography_Source` (FND-0441):** registra que señal reproduce el valor guardado: `kiid`, `name`, `mandate`, `index`; `default` = `Global` sin ninguna señal (no es evidencia);
+`unreproduced` = otro valor que ninguna señal reproduce (reglas antiguas, o un `Global` que una señal contradice); `wrong_doc` = el documento no es del fondo.
 
 **Precedencia:** `Geography` gana. Es derivada de señales positivas explícitas en el nombre y
 texto KIID del fondo; `Investment_Universe` puede ser una inferencia por defecto (BL-33).
