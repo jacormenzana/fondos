@@ -12,6 +12,7 @@ Loaded by Claude Code the first time a file under `proyecto3/` is read (`proyect
 | `backtest_inference.py` | `proyecto3/src` |
 | `backtesting.py` | `proyecto3/src` |
 | `data_freshness.py` | `proyecto3/src` |
+| `duplicate_holdings.py` | `proyecto3/src` |
 | `fee_penalty_shadow.py` | `proyecto3/src` |
 | `fund_scorer.py` | `proyecto3/src` |
 | `hysteresis_shadow.py` | `proyecto3/src` |
@@ -111,7 +112,8 @@ A portfolio scenario is `DRAFT` → `PRODUCTION` → `ARCHIVED` (`portfolio_scen
 (`p3_build_portfolio.py`) only writes a DRAFT, under a unique id `cartera_<regime>_<YYYYMM>_b<YYYYMMDDHHMMSS>`, and never replaces anything that is not
 a DRAFT (`--replace-draft` replaces a DRAFT). Promotion is an owner command, `scripts\launch\p3_promote_scenario.py <id>`, gated on: DRAFT with weights
 summing to 1, no stale input in the P3 freshness gate, net non-EUR exposure ≤ `MAX_NON_EUR_UNHEDGED_WEIGHT` (30%, `shared/fx_exposure.py`: a foreign
-class counts as exposed whatever it hedges inside; a EUR class only if unhedged with non-EUR assets) and the **data gate** (FND-0251): the evidence run (FND-0261,
+class counts as exposed whatever it hedges inside; a EUR class only if unhedged with non-EUR assets), at most one share class of one sub-fund (`[GATE:DUPLICATE_FUND]`, hard, no override, FND-0446,
+`proyecto3/src/duplicate_holdings.py`: the same `fund_family_id`, or the same manager with near-identical monthly returns in the EUR or own-currency view, so a family the key split is still caught; an unreadable input refuses) and the **data gate** (FND-0251): the evidence run (FND-0261,
 `AUDIT_COMPLETENESS_CONTRACT_ENABLED` ON: the latest `control.audit_run` header of a FULL-scope, not INCOMPLETE `p2_metrics` audit; a sample or INCOMPLETE run is
 never evidence, an INCOMPLETE run exits 2; contract and header: `doc/reglas/AUDITORIA_ESTADISTICA.md` §6.4) must be newer than the DRAFT build and have no open *hard defect* (`HARD_INVARIANT`, `BLOCK2`, `TIMESERIES_DUPLICATE`:
 `shared/statistical_audit/gating.py`, the same predicate as the audit's `--mode check`) on a fund of the scenario; a hard defect outside it needs an

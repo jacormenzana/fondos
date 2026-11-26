@@ -193,6 +193,7 @@ GATE_ALARM_WATCH = "ALARM_WATCH"               # FND-0289: a PRODUCTION fund on 
 GATE_DATA_SUSPECT = "DATA_SUSPECT"             # FND-0394: a fund of the scenario that the shared suspicion predicate flags and no verified-genuine exemption covers
 GATE_METRICS_LINEAGE = "METRICS_LINEAGE"       # FND-0306: the stored P2 metrics the DRAFT was built on differ from (or cannot be compared with) those the evidence audit judged
 GATE_AUDIT_IDENTITY = "AUDIT_IDENTITY"         # FND-0306: the evidence audit ran on other code or configuration than the DRAFT was built under (or either cannot be identified)
+GATE_DUPLICATE_FUND = "DUPLICATE_FUND"         # FND-0446: two holdings are share classes of one sub-fund (proyecto3/src/duplicate_holdings.py); hard, no override
 # Sum of weights + declared cash must be 1 within this tolerance. The builder rounds to 4 dp by largest remainder, so the exact contract is
 # 1.0000; decision D2 sets the promotion tolerance to half a unit of the 4th decimal, applied by the orchestrator. The legacy gate keeps 1e-3.
 WEIGHT_TOLERANCE = 5e-5
@@ -231,6 +232,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                        alarm_watch_tolerance: float = 1e-4,
                        data_suspects: Optional[list] = None, data_suspect_problem: Optional[str] = None,
                        lineage: Optional[tuple] = None, identity: Optional[tuple] = None,
+                       duplicate_holdings: Optional[list] = None, duplicate_problem: Optional[str] = None,
                        weight_tolerance: float = WEIGHT_TOLERANCE_LEGACY) -> PromotionVerdict:
     """Pure: why a scenario may not be promoted (empty `blockers` = promotable) and which gates a reasoned override covered.
 
@@ -271,7 +273,11 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     with an AP: MISMATCH (P2 recomputed after the build or the audit), UNKNOWN (a stamp is missing: never a silent pass) and AMBIGUOUS (too few real stamps).
 
     `identity` (FND-0306, same switch; None = not evaluated): the (state, detail) of shared.governance.run_identity.identity_verdict, the DRAFT's build identity (git sha, clean
-    flag, configuration hash) against the evidence audit header. Anything but MATCH is AUDIT_IDENTITY, reasoned override with an AP."""
+    flag, configuration hash) against the evidence audit header. Anything but MATCH is AUDIT_IDENTITY, reasoned override with an AP.
+
+    `duplicate_holdings` (FND-0446, only with shared.config.DUPLICATE_FUND_GATE_ENABLED; None = not evaluated): [(isin_a, isin_b, reason)] of
+    proyecto3.src.duplicate_holdings.check_scenario, the pairs of the scenario's funds that are share classes of one sub-fund. DUPLICATE_FUND is HARD,
+    no override (the portfolio is rebuilt); `duplicate_problem` (the inputs could not be read) refuses under the same code (fail closed)."""
     if max_cash is None:
         from shared.config import MAX_PORTFOLIO_CASH_WEIGHT as max_cash
     hard: list = []
@@ -296,6 +302,11 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     if exposure_non_eur > budget + 1e-9:
         hard.append(g(GATE_FX, f"exposicion no-EUR {exposure_non_eur:.1%} excede el presupuesto {budget:.0%} (puerta dura: sin override; "
                       "reconstruya la cartera)"))
+    # FND-0446: at most one share class of one sub-fund (None = not evaluated); an unreadable input refuses (fail closed). Hard, no override.
+    if duplicate_problem:
+        hard.append(g(GATE_DUPLICATE_FUND, f"no se pudo comprobar si la cartera repite un fondo ({duplicate_problem}): puerta dura, sin override"))
+    for a, b, why in (duplicate_holdings or []):
+        hard.append(g(GATE_DUPLICATE_FUND, f"{a} y {b} son clases del mismo fondo ({why}): puerta dura, sin override; reconstruya la cartera"))
 
     # --- data gates --------------------------------------------------------------------------------------------------------------
     if exceptions_problem:

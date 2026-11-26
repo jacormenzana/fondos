@@ -554,6 +554,18 @@ ATTRIBUTE_GROUP_WRITE_ENABLED: bool = True
 ALARM_WATCH_GATE_ENABLED: bool = True
 ALARM_WATCH_RULES: tuple = ("DD_CAT_P03", "VOL_CAT_P97")
 ALARM_WATCH_WEIGHT_TOLERANCE: float = 1e-4
+# FND-0446 (owner sign-off of PKG_M, 2026-11-26), HARD promotion gate GATE:DUPLICATE_FUND (control T-DUPLICATE-FUND, proyecto3/src/duplicate_holdings.py):
+# a scenario may hold at most one share class of one sub-fund. Two holdings are one fund when they share a fund_family_id, or when they come from the
+# same management company and their monthly returns over the last DUPLICATE_FUND_WINDOW_MONTHS (at least DUPLICATE_FUND_MIN_MONTHS in common) have
+# correlation >= DUPLICATE_FUND_MIN_CORR and a mean absolute difference <= DUPLICATE_FUND_MAX_MAD, in the EUR view or in each class's own currency.
+# The values come from the read-only calibration of 2026-11-26 over the live universe: the ABN US ESG EUR / USD pair (split by fund_family_id, FND-0444)
+# has EUR-view correlation 0.998 and a mean difference of 0.18 pp. No override (like the currency budget); an unreadable input refuses (fail closed).
+# Rollback = False: the check is still computed and printed at promotion, and blocks nothing.
+DUPLICATE_FUND_GATE_ENABLED: bool = True
+DUPLICATE_FUND_MIN_CORR: float = 0.995
+DUPLICATE_FUND_MAX_MAD: float = 0.002          # a monthly return difference, as a fraction (0.002 = 0.20 pp)
+DUPLICATE_FUND_MIN_MONTHS: int = 24
+DUPLICATE_FUND_WINDOW_MONTHS: int = 36
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
 # cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.
 AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30

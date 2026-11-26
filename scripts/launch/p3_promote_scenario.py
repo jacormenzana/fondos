@@ -17,7 +17,9 @@ Puertas (todas deben pasar; --dry-run las evalua sin promover). Cada rechazo lle
     estadisticas (OUTLIER_MAD_Z...) sobre fondos de la cartera se LISTAN y no bloquean (FND-0175);
   * DATA_UNIVERSE: un defecto duro fuera de la cartera exige un residual aceptado vigente (accept_audit_residual.py, con AP y caducidad);
   * ALARM_WATCH (FND-0289, con ALARM_WATCH_GATE_ENABLED; apagado se muestra en sombra): un fondo de PRODUCCION con una ALARM vigente de
-    ALARM_WATCH_RULES en fund_metric_alerts no puede subir de peso en el DRAFT; si las alarmas no se pueden leer, rechaza (fail closed).
+    ALARM_WATCH_RULES en fund_metric_alerts no puede subir de peso en el DRAFT; si las alarmas no se pueden leer, rechaza (fail closed);
+  * DUPLICATE_FUND (FND-0446, con DUPLICATE_FUND_GATE_ENABLED; siempre se calcula y se muestra): la cartera no tiene dos clases del mismo subfondo
+    (mismo fund_family_id, o misma gestora con rentabilidades mensuales casi identicas); puerta dura sin override; entrada ilegible = rechazo.
 El unico override (--accept-alarms "motivo" --ap FND-nnnn) cubre DATA_SCENARIO / RESIDUAL_SCENARIO / DATA_COVERAGE / ALARM_WATCH; exige el ticket que
 corrige la causa y queda en ingestion_log como [OVERRIDE:<puerta>] junto con quien promueve. El anterior PRODUCCION pasa a ARCHIVED.
 
@@ -207,7 +209,7 @@ def main(argv=None) -> int:
     assert_no_overlay("p3_promote_scenario")   # FND-0303: never promote with an experiment's parameter overlay active
 
     from shared.config import (ALARM_WATCH_GATE_ENABLED, ALARM_WATCH_WEIGHT_TOLERANCE, AUDIT_EXCEPTION_EVENTS_ENABLED, DATA_SUSPECT_ENABLED,
-                               AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CODE_INTEGRITY_GATE_ENABLED, COST_DOMAIN_GATE_ENABLED,
+                               AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CODE_INTEGRITY_GATE_ENABLED, COST_DOMAIN_GATE_ENABLED, DUPLICATE_FUND_GATE_ENABLED,
                                GOVERNANCE_ORCHESTRATOR_ENABLED, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT,
                                PROMOTION_AUDIT_IDENTITY_GATE_ENABLED)
     from shared.governance import orchestrator
@@ -319,6 +321,15 @@ def main(argv=None) -> int:
             for isin, why in (suspects or []):
                 print(f"    {isin}: {why}")
             gate_kw.update(data_suspects=suspects, data_suspect_problem=suspect_problem)
+        from proyecto3.src import duplicate_holdings                # FND-0446: always computed and printed; it decides only with the switch ON
+        dup_pairs, dup_problem = duplicate_holdings.check_scenario(conn, weights.keys())
+        print("Fondos repetidos en la cartera (T-DUPLICATE-FUND"
+              + ("" if DUPLICATE_FUND_GATE_ENABLED else ", sombra: interruptor apagado") + "): "
+              + (f"NO LEGIBLE ({dup_problem})" if dup_problem else f"{len(dup_pairs)} par(es) de clases del mismo fondo"))
+        for a, b, why in (dup_pairs or []):
+            print(f"    {a} / {b}: {why}")
+        if DUPLICATE_FUND_GATE_ENABLED:
+            gate_kw.update(duplicate_holdings=dup_pairs, duplicate_problem=dup_problem)
         if PROMOTION_AUDIT_IDENTITY_GATE_ENABLED:                # FND-0306 (ships OFF): ON uses the DRAFT-vs-audit verdict; an unreadable lineage refuses (fail closed)
             unreadable = ("UNKNOWN", f"no se pudo leer el linaje ({lineage_problem})")
             gate_kw.update(lineage=lineage_results["audit"] if lineage_results else unreadable,

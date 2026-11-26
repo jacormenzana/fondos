@@ -133,6 +133,10 @@ CONTROLS = (
     Control("T-FX", PILLAR_TECHNICAL, "Net non-EUR exposure within the mandate", _OWNER_PROMOTION,
             "net non-EUR unhedged exposure <= MAX_NON_EUR_UNHEDGED_WEIGHT (shared/config.py, 30%, shared/fx_exposure.py)",
             BLOCK, SOURCE_GATE + "FX", STATUS_ENFORCED),
+    Control("T-DUPLICATE-FUND", PILLAR_TECHNICAL, "No fund held twice", _OWNER_PROMOTION,
+            "at most one share class of one sub-fund: no two holdings share a fund_family_id, or come from one manager with near-identical monthly returns "
+            "(EUR or own-currency view, shared.config.DUPLICATE_FUND_*; proyecto3/src/duplicate_holdings.py); an unreadable input refuses (FND-0446)",
+            BLOCK, SOURCE_GATE + "DUPLICATE_FUND", STATUS_ENFORCED),
     Control("T-CODE", PILLAR_TECHNICAL, "Code integrity", "owner (release)",
             "HEAD == origin/master as of the last fetch and no modified tracked file (untracked files ignored; decision D1; "
             "run_identity.code_integrity, the predicate the gated push of FND-0273 shares); the cycle preflight only warns (D3)",
