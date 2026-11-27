@@ -184,6 +184,16 @@ def test_a_scenario_with_one_fund_has_nothing_to_compare():
     assert dh.check_scenario(_BrokenConn(), ["A"]) == ([], None)
 
 
+def test_the_gate_itself_applies_the_volatility_floor(monkeypatch):
+    """2026-11-27: two money-market funds of one manager are not one fund. The pure rule has its floor tests; this pins that the GATE path (check_scenario) passes it."""
+    flat = [0.0021, 0.0023, 0.0022, 0.0024, 0.0020, 0.0022, 0.0023, 0.0021, 0.0022, 0.0024, 0.0023, 0.0022] * 3
+    monkeypatch.setattr(dh, "load_holdings", lambda conn, isins: [_h("A", "F1"), _h("B", "F2")])
+    monkeypatch.setattr(dh, "load_returns", lambda conn, isins, window: {"loc": {"A": _series(flat), "B": _series(flat)}, "eur": {}})
+    assert dh.check_scenario(None, ["A", "B"]) == ([], None)
+    monkeypatch.setattr(cfg, "DUPLICATE_FUND_MIN_VOL", 0.0)
+    assert len(dh.check_scenario(None, ["A", "B"])[0]) == 1
+
+
 def test_the_switch_and_its_parameters():
     assert cfg.DUPLICATE_FUND_GATE_ENABLED is True
     assert (cfg.DUPLICATE_FUND_MIN_CORR, cfg.DUPLICATE_FUND_MAX_MAD, cfg.DUPLICATE_FUND_MIN_MONTHS, cfg.DUPLICATE_FUND_WINDOW_MONTHS) == (0.995, 0.002, 24, 36)
