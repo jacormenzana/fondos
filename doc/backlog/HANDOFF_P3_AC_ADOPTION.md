@@ -25,12 +25,12 @@ Next step: **check the first 09:00 build (2026-11-28) and close what waits** (se
 | Backups | external disk failing; off-box physical backup last verified 2026-11-20 (FND-0463) |
 
 ## 2. Open work, in order
-1. **First baseline row** (FND-0445): `python scripts/audit/p3/p3_shadow_read.py` (default view) must show `identity MATCH` and 0 ERROR rows. Owner still to confirm the reader's readings (PKG_M section 2).
-2. **Closures wait for a person.** Autopilot dry run (2026-11-27 22:30) would move FND-0443, 0445, 0451, 0452, 0453 to READY_FOR_DEPLOY. It demotes itself while 2 of its closures were reopened in 30 days: FND-0375 (2026-11-03) and FND-0446 (2026-11-27 17:15). The first ages out on **2026-12-03**; after that `autopilot_mode.py --set ON` holds. Until then closures need the owner's `close_release.py`.
+1. **First baseline row** (FND-0445): `python scripts/audit/p3/p3_shadow_read.py` (default view) must show `identity MATCH` and 0 ERROR rows. Then, **in that same session, the owner confirms the reader's readings** (PKG_M section 2, scheduled 2026-11-27): present them one by one.
+2. **Closures wait for a person.** Autopilot dry run (2026-11-27 22:30) would move FND-0443, 0445, 0451, 0452, 0453 to READY_FOR_DEPLOY. It demotes itself while 2 of its closures were reopened in 30 days: FND-0375 (2026-11-03) and FND-0446 (2026-11-27 17:15). The first ages out on **2026-12-03**; **the owner chose to wait**: `autopilot_mode.py --set ON` on 2026-12-03 after 20:37 (or 12-04); closures follow at the next published commit. FND-0443 stays open until then, so the 12-01 DRAFT is not promotable before.
 3. **Backups** (FND-0463): the owner takes the logical backup on 2026-11-28 and checks the disk.
 4. **FND-0443 data:** all 446,655 exported rows are deleted (the last 6,820, in 7 frozen funds, by the owner's order). Keep `out\audit\fnd0443_export_20261127\` until the ticket is closed.
 5. **FND-0444:** the check `db_check family_class_collisions` is built (`507e39e`): live 417 split pairs, 47 allowlisted until 2027-05-26. The key repair is frozen.
-6. **FND-0454:** items 5 (a failing shadow rebuilds daily) and 7 (failed report / audit never retried) are code work, not ordered; item 6 is the owner's decision; item 4 fixed.
+6. **FND-0454:** items 4, 5 and 7 fixed (`0c11e9a`; limit of 3 builds a month confirmed by the owner). Item 6 (same-month rebuilds advance the shadow chains) stays UNCHANGED until after the R6 verdict. Item 8 is reported by the reader.
 7. FND-0449 no longer reproduces (logged). FND-0438 stays open until the R6 verdict; then un-defer FND-0455 (and FND-0456 / 0458 / 0459).
 
 ## 3. Pitfalls met on 2026-11-27 (do not repeat)
@@ -43,5 +43,5 @@ Next step: **check the first 09:00 build (2026-11-28) and close what waits** (se
 
 ## 4. Starter prompt
 ```
-Read doc/backlog/HANDOFF_P3_AC_ADOPTION.md. Run the preflight first, leave SKILL.md alone, start the WSL keepalive before database work. Check read-only that the 2026-11-28 build wrote the first P3_BASELINE_SHADOW row with identity MATCH and no ERROR row, and whether my backup ran. Then report what still waits for me. No code change, live write, switch flip or promotion without my order; selection is frozen until the R6 verdict; do not read the shadow comparison fields. Replies in English, ultra-short, decision first.
+Read doc/backlog/HANDOFF_P3_AC_ADOPTION.md. Run the preflight first, leave SKILL.md alone, start the WSL keepalive before database work. Check read-only that the 2026-11-28 build wrote the first P3_BASELINE_SHADOW row with identity MATCH and no ERROR row, and whether my backup ran. Then take me through the reader readings of PKG_M section 2 for confirmation, and report what still waits for me. No code change, live write, switch flip or promotion without my order; selection is frozen until the R6 verdict; do not read the shadow comparison fields. Replies in English, ultra-short, decision first.
 ```
