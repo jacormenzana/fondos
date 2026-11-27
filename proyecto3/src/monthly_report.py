@@ -36,6 +36,8 @@ from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.backtesting import Backtester
 from shared.config import REPORT_DIRS, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT, PORTFOLIO_TARGET_SPREAD
 from shared.config import P3_FUND_NAV_MAX_AGE_DAYS, REPORT_RECONCILIATION_ENABLED, REPORT_RECONCILIATION_TOLERANCE_BP   # FND-0428
+from shared.config import P3_REPORT_P1_QUALITY_ENABLED   # FND-0456: report-only column of doubtful P1 quality (OFF until the R6 verdict)
+from shared.p1_quality import p1_quality_notes            # FND-0456
 from shared import config as _shared_config
 from shared.objective import net_band_text
 from shared import metric_labels as _metric_labels, report_reconciliation as _report_reconciliation   # FND-0428
@@ -306,7 +308,12 @@ def _build_cartera(ws, conn, scenario_id):
                # v24 short-horizon overlay (d1 metrics) ----------------
                _lab("short_max_drawdown", "rolling_6m", 0), _lab("short_vol_adj", "rolling_3m", 0),
                _lab("short_liquidity_flag", "rolling_6m", 0)]
-    _N_COLS = len(headers)                                   # 31
+    # FND-0456 (report only, owner ruling 2026-11-28): with P3_REPORT_P1_QUALITY_ENABLED ON a last column says why a held fund's P1 quality is
+    # doubtful (shared/p1_quality.py). It never changes the selection; OFF = the sheet as before, column for column.
+    _p1q_on = bool(P3_REPORT_P1_QUALITY_ENABLED)
+    if _p1q_on:
+        headers.append("Calidad P1")
+    _N_COLS = len(headers)                                   # 31 (32 with the FND-0456 column)
     _apply_header(ws, headers, row=2)
     ws.merge_cells(f"A1:{get_column_letter(_N_COLS)}1")
 
@@ -435,6 +442,7 @@ def _build_cartera(ws, conn, scenario_id):
         WHERE pw.scenario_id = {_ph}
         ORDER BY pw.block, pw.weight DESC
     """, (scenario_id,)).fetchall()
+    _p1q = p1_quality_notes(conn, [r[1] for r in rows]) if _p1q_on else {}      # FND-0456: {isin: note} of the doubtful ones
 
     sub_colors = {
         "Defensiva":   "D1ECF1",
@@ -581,6 +589,11 @@ def _build_cartera(ws, conn, scenario_id):
             _wc(31, sh_lq, sh_lq_bg)
         else:
             _wc(31, "")
+
+        # -- Col 32 (FND-0456, only with P3_REPORT_P1_QUALITY_ENABLED): why the fund's P1 quality is doubtful, amber; empty when clean
+        if _p1q_on:
+            _note = _p1q.get(r[1])
+            _wc(32, _note or "", AMBER_FILL if _note else None)
 
     ws.auto_filter.ref = f"A2:{get_column_letter(_N_COLS)}{ws.max_row}"
     ws.freeze_panes = "A3"

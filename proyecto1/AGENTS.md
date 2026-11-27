@@ -121,6 +121,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 | `dla2_xband_prototype.py` | `proyecto1/core` |
 | `dla_extractor.py` | `proyecto1/core` |
 | `dla_table_serializer.py` | `proyecto1/core` |
+| `dq_signals.py` | `proyecto1/core` |
 | `fund_characterizer.py` | `proyecto1/core` |
 | `fund_family_builder.py` | `proyecto1/core` |
 | `fund_writer.py` | `proyecto1/core` |

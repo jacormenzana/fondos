@@ -207,6 +207,7 @@ import re
 from core.io import get_kiid_for_isin
 from core.benchmark_normalizer import merge_benchmark_sources
 from core.kiid_parser import parse_kiid_generic, detect_wrong_kiid_document, resolve_stuck_wrong_doc
+from core import dq_signals as _dq_signals   # FND-0456: P1 quality signals as DQ detail rows (switch P1_DQ_SIGNAL_DETAIL_ROWS_ENABLED)
 from core.classify_utils import (
     detect_strategy        as _detect_strategy,
     detect_benchmark_type  as _detect_benchmark_type,
@@ -847,6 +848,7 @@ def run_block(
         print(f"[{ts}] {block_name} {isin} ({idx}/{total})")
 
         kiid_text = kiid_meta = parsed = classification = pdf_bytes = None
+        _nature_low_conf_msg = None   # FND-0456: carried to _dq_issues (created later) when P1_DQ_SIGNAL_DETAIL_ROWS_ENABLED is ON
 
         # BL-49/50: lector de valor efectivo (dict ciclo > BD > None) con
         # caché por ISIN. Centraliza el patrón de fallback a BD para todas
@@ -1054,12 +1056,15 @@ def run_block(
                 # Baja confianza → DQ flag (revisión). Sustituye el parcheo
                 # INTER-DBLCLAIM/VOTE3 por señalización explícita.
                 if _nat_conf < _NATURE_CONF_THRESHOLD and not _fam_override:
-                    log_ingestion(
-                        conn, isin, "NATURE_LOW_CONFIDENCE", "WARN",
-                        f"[OPT-B3] Fund_Nature={_voted_nature} con confianza baja "
-                        f"({_nat_conf} < {_NATURE_CONF_THRESHOLD}): "
-                        f"{_ev_trace['reason']} — revisar."
-                    )
+                    _nlc_msg = (f"[OPT-B3] Fund_Nature={_voted_nature} con confianza baja "
+                                f"({_nat_conf} < {_NATURE_CONF_THRESHOLD}): "
+                                f"{_ev_trace['reason']} — revisar.")
+                    # FND-0456: with the switch ON the signal becomes a DQ issue, and _finalize_data_quality_issues writes the same
+                    # ingestion_log row (step NATURE_LOW_CONFIDENCE, WARN); OFF = only the log row, as before.
+                    if _dq_signals.detail_rows_on():
+                        _nature_low_conf_msg = _nlc_msg
+                    else:
+                        log_ingestion(conn, isin, "NATURE_LOW_CONFIDENCE", "WARN", _nlc_msg)
             else:
                 # Structured override or all-abstain → restantes minimum classification
                 try:
@@ -1231,6 +1236,8 @@ def run_block(
             #     'INFERRED' -- una inferencia de fallback no es un evento de
             #     severidad WARNING, pero sí debe degradar el flag agregado).
             _dq_issues: list[tuple[str, str, str, str]] = []
+            if _nature_low_conf_msg is not None:       # FND-0456 (only set while P1_DQ_SIGNAL_DETAIL_ROWS_ENABLED is ON)
+                _dq_issues.append(_dq_signals.nature_low_confidence_issue(_nature_low_conf_msg))
 
             # BL-65: RESTANTES puede emitir Fund_Nature=None cuando no puede
             # determinar la naturaleza financiera real. En ese caso forzar DQ=WARN
@@ -3140,6 +3147,9 @@ def run_block(
             # FIX-DQ-1: rollup final de Data_Quality_Flag -- único punto de
             # escritura, tras acumular todos los issues detectados durante
             # el procesamiento de este ISIN (ver _dq_issues arriba).
+            # FND-0456: with P1_DQ_SIGNAL_DETAIL_ROWS_ENABLED ON the SRRI base level gets its own detail row (a WARN no longer arrives without one)
+            if _dq_signals.detail_rows_on():
+                _dq_issues.extend(_dq_signals.base_level_issues(parsed))
             fund_master_record["Data_Quality_Flag"] = _finalize_data_quality_issues(
                 conn, isin, _derive_data_quality_flag(parsed), _dq_issues,
             )

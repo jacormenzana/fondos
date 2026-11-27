@@ -826,6 +826,14 @@ CREDIT_QUALITY_HIGHYIELD_TOKEN_ENABLED: bool = False
 # format changes and no PRIIPs KID flips. It reaches the stored cost attributes only through the cost recompute (scripts/launch/p1_cost_recompute.py) or a re-download, not a plain P1
 # pass, and those attributes are P3 cost inputs. Rollback = False.
 KID_FORMAT_EN_UCITS_COST_SIGNALS_ENABLED: bool = False
+# FND-0456 (2026-11-28), two switches, both OFF by owner order until the R6 verdict on FND-0438:
+# - P1_DQ_SIGNAL_DETAIL_ROWS_ENABLED: P1 writes the two quality signals it now loses as fund_data_quality_issues rows: a low-confidence nature
+#   (today only an ingestion_log row) and the SRRI LOW_CONFLICT base level (today a WARN flag with no detail row). It moves Data_Quality_Flag
+#   OK -> WARN for the funds with a low-confidence nature (35 on 2026-11-27). Nothing in P3 reads either today.
+# - P3_REPORT_P1_QUALITY_ENABLED: the monthly report (1_Cartera) gains a last column saying why a held fund's P1 quality is doubtful
+#   (shared/p1_quality.py). Report only (owner ruling 2026-11-28): it never gates, ranks or excludes a fund.
+P1_DQ_SIGNAL_DETAIL_ROWS_ENABLED: bool = False
+P3_REPORT_P1_QUALITY_ENABLED: bool = False
 DATA_SUSPECT_MIN_DEV: float = 50.0
 # MIN_FLAGGED_METRICS 8 -> 4 -> 2 (owner orders 2026-11-08, WS3 recalibration). The 8 came from raw alarm counts; measured on the live panel with ADEQUATE samples only, the most any fund had was 5, so 8 never fired.
 # The 4 was set while stale regime rows were still stored; after the FND-0401 cleanup (applied 2026-11-08) the live panel has 2 funds with an adequate extreme metric: ES0116848013 with 2 and IE00B3L10570 with 1, so 4 would be dead code.
