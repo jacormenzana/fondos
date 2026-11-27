@@ -1,61 +1,58 @@
-# Backlog ranking for FND-0425 (rewritten 2026-11-17) - ONE page, rewritten in place
+# Backlog ranking for FND-0425 (rewritten 2026-11-28) - ONE page, rewritten in place
 
-Read-only analysis (skill `backlog-priorizer`). The analysis moved nothing; the closures and the ordering below are the owner's rulings. Facts are marked **[F]** (read from the backlog, the code or the database), inferences **[I]**, hypotheses **[H]**.
+Read-only analysis (skill `backlog-priorizer`) of 2026-11-27 night, followed by the owner's rulings and the work of the same session. Facts are marked **[F]** (read from the backlog, the code or the database), inferences **[I]**. The previous ranking (2026-11-17) is in this file's git history.
 
-## 1. Owner ordering (ruling 2026-11-17)
-1. **FND-0427 and FND-0428 (HIGH) first:** metric and report correctness take precedence over any refactoring.
-2. **FND-0426 (MEDIUM) after the two HIGH fixes:** the `ytd` horizon is restored once core metric and report integrity is settled.
-3. **FND-0429 (MEDIUM) is a GATE before the P3 refactor:** validate whether the scoring layer beats a baseline before executing "P3 first". The refactor scope follows the verdict.
-4. Everything else keeps the order of section 3.
+## 1. Executive verdict
+- **Risk: MEDIUM, driven by recovery, not by selection [I].** The off-box backup has not been verified since 2026-11-20 and the external disk fails (FND-0463, owner action) **[F]**. Everything that changes what P3 reads is frozen until the R6 verdict and now waits on it automatically.
+- **70 open items [F]** (2026-11-28 00:40): DEFERRED 28, BLOCKED 18, IN_PROGRESS 16, READY_FOR_DEPLOY 5, OPEN 2, TODO 1; HIGH 15, MEDIUM 27, LOW 28.
+- **No ticket waits for a manual un-deferral any more [F].** The 15 items gated on the R6 verdict are BLOCKED on FND-0438 with a CONFIRMED DEPENDS_ON link; the autopilot's UNBLOCK rule releases them when FND-0438 closes (it needs the autopilot ON). FND-0078 waits on FND-0100 the same way.
+- **Decision required:** the autopilot ON on 2026-12-03 after 20:37 (owner); the disk and the logical backup (FND-0463); the sign-off of FND-0457, 0461 and 0462 after the next P1 / P2 runs; this ticket (FND-0425) is ready to close on this page.
 
-## 2. Executive verdict
-- **Risk: MEDIUM.** The two HIGH items are about published numbers (rolling windows the NAV history does not cover; an excess return that mixes a real and a nominal figure), not about live selection failures **[F]**.
-- **45 open items [F]**: 30 DEFERRED with review dates, 6 IN_PROGRESS, 6 OPEN, 2 BLOCKED, 1 TODO (read at the time of writing; another session moves tickets of Package I meanwhile). The 9 closures of 2026-11-15 (0354, 0390, 0364, 0388, 0267, 0395, 0396 and the four of 17:14: 0033, 0035, 0180, 0206) are reflected.
-- **Package I code is already delivered by another session [F]** (commits `02c885e`, `c926984`, `209af91`, `b42ee0f`: rolling-window coverage rule, YTD metric, scoped report headers; `CALC_VERSION` 20261116, recomputed). 0426, 0427 and 0428 are still OPEN: what is left for them is **verification against the live data and the closing probes**, not new construction.
-- **Decision required:** confirm the verification work on 0427 / 0428 / 0426 (section 5, step 1-2) and run the full-universe PIT that opens the FND-0429 gate (owner-run, about 20-25 minutes cold).
-
-## 3. Evidence coverage
+## 2. Evidence coverage
 | Source | Scope | Retrieved | Limitations | Completeness |
 |---|---|---|---|---|
-| `gestion.backlog` | all non-CLOSED, 2026-11-17 | 45 of 45 | none | complete |
-| ticket logs | last non-system log of the candidates | partial by design | older history not read | partial |
-| confirmed links | between open items | 8 CONFIRMED, 3 PROPOSED | the 3 PROPOSED not read | complete for CONFIRMED |
-| `fund_metric_alerts` | 2026-07-31 .. 2026-11-15, aggregates | 18,376 rows, 3,706 funds | no ticket reference column: no alert-to-ticket correlation | complete (aggregates), no causal reading |
-| `fund_metrics` horizons | `ytd` and `rolling_*` return_ann, today | counts only | counts, not a value audit | indicative |
+| `gestion.backlog` | all non-CLOSED, 2026-11-27 23:15 and 2026-11-28 00:40 | 72 then 70 of 70 | none | complete |
+| links | CONFIRMED, between open items | 310 events read; 19 open-to-open at the start, 18 DEPENDS_ON on FND-0438 / FND-0100 at the end | PROPOSED links not read | complete for CONFIRMED |
+| ticket logs | last non-system log of each item | all open items | older history read only where needed | partial by design |
+| `fund_metric_alerts` | all rows, aggregates | 18,382 rows, 3,708 funds | no ticket column: no alert-to-ticket correlation | complete (aggregates) |
 
-## 4. Prioritised clusters
-| Rank | Cluster | Priority | Items | Evidence | Confidence |
-|---|---|---|---|---|---|
-| 1 | **Published-number correctness (Package I)**: windows beyond the NAV history, real vs nominal excess in the monthly report | **High** | **0427, 0428** | 0427: rolling coverage is now close to the NAV history (see section 6) **[F]**; 0428: report fix committed (`02c885e`), not verified by this analysis | Medium |
-| 2 | **YTD horizon restored** | Medium | **0426** | horizon `ytd` now has 7,386 rows (`return_cum`, `20261116.20261019`); it had 0 **[F]** | Medium |
-| 3 | **Gate: does scoring beat a baseline** | Medium (gate) | **0429** | parked by its own text until Package I recomputed P2 (done 11-16 for 3,699 funds, 458 still on the old version) and the owner re-runs the full-universe PIT **[F]** | High |
-| 4 | **P3 selection and risk policy** (to execute after the gate) | High (decision) | 0158, 0257, 0222, 0304, 0299, 0306 | the shadow wrote 2 rows, ON arm equals PRODUCTION, no ruling basis yet **[F]** | High |
-| 5 | **Delivery cost** (full receipts of 506-602 s, selector in SHADOW) | Medium | 0385, 0387, 0400 | none (not a data issue) | High |
-| 6 | **Manual and unscheduled operations (D-0)** | Medium | 0100, 0248, 0326, 0090, 0239 | 0078 DEPENDS_ON 0100 **[F]** | Medium |
-| 7 | **Cost and policy attribute residuals** | Low | 0384, 0410-0414, 0416-0418, 0421, 0424, 0281, 0282, 0415 | 295 ALARM rows have no value: all from the 2026-08-14 batch, where every row has none; the 2026-11-15 batch has none missing; the table is keyed on (isin, metric, window) and rows the new run does not rewrite stay **[F]** (whether a consumer reads them as current was NOT checked) | Medium |
-| 8 | **Classification semantics** | Low | 0397, 0398, 0402, 0324, 0325, 0185 | 0397: IE00008TZ2E8 held at 5.5 % in PRODUCTION, owner NO GO unchanged **[F]** | Medium |
-| 9 | **Data provenance and coverage** | Low | 0167, 0182, 0209, 0078, 0389 | none | Low |
-| 10 | **Blocked by population** | Low | 0029 | 5 WRONG_DOC funds, out of scope by standing rule | High |
-| - | Unclustered | - | 0425 (this task) | - | - |
+Alerts **[F]**: the 2026-11-27 batch holds 405 ALARM rows over 302 funds, all from the three tail-percentile rules (`RET_CAT_P05`, `DD_CAT_P03`, `VOL_CAT_P97`): threshold crossings by design, not defects. The 2026-08-14 batch still holds 7,246 rows without a value (FND-0415, now BLOCKED on FND-0438 because the promotion gate reads the table).
 
-## 5. Roadmap
-| Sequence | Priority | Action | Items | Dependencies | Exit criteria | Residual risk |
-|---|---|---|---|---|---|---|
-| 1 | **High** | **Verify the Package I fixes on the live data, then close with evidence**: rolling windows only where the NAV history covers them; the report's excess uses like-for-like returns and says what each column is | 0427, 0428 | the code and recompute already done by the other session | per ticket: a read-only check of the stored rows (and the report) against the ticket's own figures, a closing condition that passes, then the `Closes:` route | 458 funds still on the old `CALC_VERSION` until the next cycle |
-| 2 | Medium | **Close the YTD item after step 1**: check `ytd` for the incident fund (NAV-derived YTD 3.09 % per the ticket) and for the NAV-short funds | 0426 | step 1 | the stored `ytd` value equals the NAV-derived one for the named fund, no value where there is no base | none known |
-| 3 | Medium | **Gate**: owner re-runs the full-universe PIT, then the selection-quality question is answered with hysteresis ON in both arms (champion vs equal-weight pool) | 0429 | steps 1-2 (the recompute), the owner's PIT run | a written verdict: the scoring layer adds net value or does not, at selection and portfolio level | the PIT window is the test set already used (blind months start 2026-11) |
-| 4 | High (decision) | **P3 refactor, scope set by the gate verdict**; keep the `shadow_after_build` call; absorb 0158, 0257, 0222, 0304 into one ticket | cluster 4 | step 3, owner scope | one refactor ticket replaces four; shadow rows still written | scope creep |
-| 5 | Medium | Earn the selector's narrower receipt, then close | 0385, 0387 (0400 cascade stays) | a bounded change | one measured receipt, then close | full receipts stay the default until then |
-| 6 | Medium | Schedule the daily NAV load and harvest when the owner lifts "not now" | 0100, then 0078 | owner | task registered, one clean run | operator cost until then |
-| 7 | Low | Keep dated deferrals: 2026-11-29 (0411, 0415, 0248), 2026-12-15 (Package H residuals) | clusters 7-9 | review dates | decide each on its date | none |
+## 3. Prioritised clusters (state at the end of the session)
+| Rank | Cluster / cause | Priority | Items | State |
+|---|---|---|---|---|
+| 1 | **Recovery**: one failing backup disk, a deferred backup not retried the same day | High | 0463 | OPEN, owner action (disk, logical backup); excluded from this session by the owner |
+| 2 | **Closure queue**: delivered, not closed | High (leverage) | 0427, 0443, 0445, 0451, 0452, 0453, 0400 (IN_PROGRESS); 0431, 0433, 0446, 0447, 0448 (READY_FOR_DEPLOY) | waits for the autopilot ON (2026-12-03); 0449 and 0450 CLOSED 2026-11-28 by the owner (`R2026.11-FND-0449-0450`) |
+| 3 | **P1 attribute truth**: values imputed from Fund_Nature or name tokens; quality flags P3 never reads | High (silent) | 0457 (delivered 77a735d); 0456, 0458, 0459 (built behind switches OFF: 075775c, 76a6f7d); 0460, 0402, 0398, 0397, 0442 | the switches and the rest are BLOCKED on FND-0438 |
+| 4 | **Selection value and the R6 verdict** | High value, frozen | 0438 (the gate), 0429, 0430, 0158, 0444, 0454, 0455, 0389, 0434, 0306, 0222, 0257, 0304, 0299, 0436, 0437 | frozen until R6; reader readings of PKG_M section 2 confirmed (ba83977) and reading 4's per-month line built (d867ff7) |
+| 5 | **Ops automation and data provenance** | Medium | 0100, 0078, 0239, 0090, 0326, 0248, 0167, 0182, 0209, 0324, 0325, 0461 | 0461 delivered (1027ca7); 0100 deferred to 2027-01-15 by the owner (no new daily task before the 12-01 build) |
+| 6 | **Delivery and test speed** | Medium | 0385, 0387, 0400 | 0400 delivered (48c2e6a, Closes); 0387 deferred to 2027-01-15 |
+| 7 | **Cost and policy attribute residuals** | Low | 0281, 0282, 0384, 0410-0414, 0416-0418, 0421, 0424, 0462, 0185, 0029 | dated deferrals; 0462 items 2-3 delivered (1027ca7); 0411 returns to TODO on 2026-11-29 |
 
-## 6. Live checks behind steps 1-2 (2026-11-17, counts only)
-- `ytd`: 7,386 `return_cum` rows, all on `20261116.20261019`.
-- Rolling windows (nominal `return_ann`): 10y 2,549 funds against 2,571 funds with at least 120 monthly NAV rows; 5y 3,446 against 3,465 with at least 60; 1y 3,688, 2y 3,659, 3y 3,612. The small gaps are not explained here and belong to the verification of 0427.
+## 4. Dependency map (CONFIRMED links)
+- **FND-0438 (R6 verdict) -> 15 items**: 0158, 0389, 0397, 0398, 0402, 0415, 0434, 0442, 0444, 0454, 0455, 0456, 0458, 0459, 0460 (BLOCKED, released by UNBLOCK).
+- **FND-0100 -> FND-0078** (BLOCKED, released by UNBLOCK).
+- **FND-0427 -> FND-0443** (leftover), **FND-0445 <-> FND-0453** (RELATED).
+- Inferred **[I]**: FND-0463 open = no recent off-box restore point under any live write.
 
-## 7. Decisions and unresolved questions
-1. **Confirm steps 1-2** as verification and closure work (the build is done), not as new construction.
-2. **FND-0429 gate:** the full-universe PIT re-run is yours; the verdict decides the scope of the P3 refactor **[I]** (if scoring adds no net value, the refactor is about simplification rather than extension).
-3. **FND-0078:** confirm or drop (draft spec, DEPENDS_ON 0100).
-4. **Not checked:** whether any consumer (the ALARM_WATCH gate, dashboards) reads the stale 2026-08-14 alert rows as current (cluster 7).
-5. **Not touched:** 0281 and 0282 (CRITICAL residuals accepted to 2027-01-15), 0299 (tracker to 2028-09-01).
+## 5. Owner rulings of this session (2026-11-27 / 28)
+1. A ticket that waits on another goes to **BLOCKED on it, never DEFERRED with a manual un-deferral** (D-0): applied to the 15 + 1 above.
+2. Cluster 3 fixes that change P3 inputs are **built now behind switches OFF** and flipped after R6 (0456, 0458, 0459).
+3. **0456, P3 side: report only** (the monthly report's last column `Calidad P1`); never a gate, a ranking or an exclusion.
+4. **0462 stays unblocked**: its log-noise and unit items are worked; only the old-metric-row cleanup waits for R6.
+5. **0437** deferred to 2027-06-01 (after R6); **0100** to 2027-01-15; **0429**'s refactor scope held until after R6; **0248** OPEN for the owner's manual step by 2026-11-29.
+
+## 6. Roadmap
+| Sequence | Priority | Action | Items | Exit criteria |
+|---|---|---|---|---|
+| 1 | High | Disk and logical backup (owner) | 0463 | one verified off-box copy newer than 2026-11-20 |
+| 2 | High | Check the November rebuild (2026-11-28 09:00) | 0445 | first baseline row, identity MATCH, 0 ERROR |
+| 3 | High | Autopilot ON (2026-12-03 after 20:37), then verify the closures | cluster 2 | 0443, 0445, 0451, 0452, 0453, 0400 CLOSED with no reopening |
+| 4 | Medium | Sign off after the next runs | 0457, 0461, 0462 | the stored share of dated KIIDs re-measured; the P2-01 OK line; no false frequency rows |
+| 5 | Medium | Cycle telemetry | 0239 | its own plan, several sessions |
+| 6 | Low | Dated reviews | cluster 7 | each decided on its date |
+| 7 | - | After the R6 verdict (about 2027-05) | clusters 3 and 4 | FND-0438 closed releases the 15 by itself; flip the switches of 0456, 0458, 0459 (one config commit with a full receipt; 0458 also needs the cost recompute) |
+
+## 7. Open questions
+- **0458** narrows: the UCITS extractor finds no management fee in the 70 newly recognised documents (a classic KIID publishes ongoing charges), so the switch fixes `KID_Format` and the routing, not those empty fee columns **[F]**.
+- **0462 item 1** (201 funds with the legacy `Liquidity_Profile` `T5`): the root fix reads the dealing frequency from the KIID; P3 does not read the column, so it is outside the freeze. Not started.
