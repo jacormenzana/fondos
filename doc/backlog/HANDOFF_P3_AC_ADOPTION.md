@@ -29,6 +29,8 @@ Next step: **FND-0445** (owner: in a fresh session). Plan and rules: `PKG_M_ac_a
 4. FND-0438 stays open until the R6 verdict. FND-0444 (family key, root cause: five causes, 478 split pairs) is ordinary work; its closing check `family_class_collisions` is not built.
 5. FND-0447 / FND-0448 close by themselves after a real scheduled build / refresh logs OK.
 
+**The P2 run may still be pending (owner: later).** FND-0445 does not depend on it. Until it runs, the audit keeps failing and promotion stays blocked; nothing else changes. The cycle executes the shared working tree, one step after another: it must not be launched while a session holds uncommitted code, and a session must not edit code while it runs (check `preflight_check.py` for the cycle lock first). A run on 2026-12-01 or later builds December's counted DRAFT.
+
 ## 3. Pitfalls met on 2026-11-27 (do not repeat)
 - Adding a query to a gate or builder: run the matching `*_pg.py` tests before committing (36 failures once).
 - Adding an audit rule: run every audit test, **including `proyecto1/tests`** (canary list and critical-rule registry are pinned there).
@@ -38,5 +40,5 @@ Next step: **FND-0445** (owner: in a fresh session). Plan and rules: `PKG_M_ac_a
 
 ## 4. Starter prompt
 ```
-Read doc/backlog/HANDOFF_P3_AC_ADOPTION.md. Run the preflight first, leave SKILL.md alone, start the WSL keepalive before database work. First verify section 2 item 1 (FND-0443: P2 run and audit) read-only, then start FND-0445 as PKG_M section 2 defines it, tests first, switch OFF. No live write, switch flip or promotion without my order; do not read the shadow comparison fields. Replies in English, ultra-short, decision first.
+Read doc/backlog/HANDOFF_P3_AC_ADOPTION.md. Run the preflight first, leave SKILL.md alone, start the WSL keepalive before database work. Check read-only whether my P2 run for FND-0443 has happened: if it has, verify the audit (section 2 item 1); if not, leave it pending. Then start FND-0445 as PKG_M section 2 defines it, tests first, switch OFF. No live write, switch flip or promotion without my order; do not read the shadow comparison fields. Replies in English, ultra-short, decision first.
 ```
