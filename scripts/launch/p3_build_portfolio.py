@@ -130,6 +130,7 @@ def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: boo
         print(f"Escenario '{scenario_id}' creado como DRAFT. No se promueve solo: p3_promote_scenario.py {scenario_id}")
         _hysteresis_shadow(conn, builder, reg, scenario_id, portfolio)
         _fee_penalty_shadow(conn, builder, reg, scenario_id, portfolio)
+        _baseline_shadow(conn, builder, reg, scenario_id, portfolio)
 
     return 0
 
@@ -203,6 +204,36 @@ def _fee_penalty_shadow(conn, builder, reg, scenario_id, portfolio) -> None:
             print(line)
     except Exception as exc:                                  # noqa: BLE001 -- the shadow measures; it never refuses a build
         print(f"AVISO: fee-penalty shadow not run ({type(exc).__name__}: {str(exc)[:160]})")
+
+
+def _baseline_shadow(conn, builder, reg, scenario_id, portfolio) -> None:
+    """FND-0445: the BASELINE shadow (arm L: no fee penalty, no incumbents), after the DRAFT is persisted and after the other two shadows (its first chain row reads the AC row of an earlier build).
+    Fail-soft by construction: nothing here can change the DRAFT or the RC, and nothing is persisted but ingestion_log rows."""
+    try:
+        import pandas as pd
+        from shared.config import (P3_BASELINE_SHADOW_ENABLED, P3_L4_FEE_PENALTY_ENABLED, P3_L4_H_YEARS, PORTFOLIO_HYSTERESIS_ENABLED,
+                                   ROTATION_COST_GATE_ENABLED)
+        from proyecto3.src import baseline_shadow as baseline
+        from proyecto3.src import fund_scorer
+        from proyecto3.src import ranking_levers as RL
+        from proyecto3.src.portfolio_builder import estimate_rotation_cost
+        from proyecto3.src.score_candidates import load_current_candidates
+        ident = portfolio.macro_context.get("build_identity") or {}
+        line = baseline.shadow_after_build(
+            conn, builder, reg, scenario_id, portfolio, enabled=P3_BASELINE_SHADOW_ENABLED,
+            live_flags={"PORTFOLIO_HYSTERESIS_ENABLED": PORTFOLIO_HYSTERESIS_ENABLED, "P3_L4_FEE_PENALTY_ENABLED": P3_L4_FEE_PENALTY_ENABLED,
+                        "P3_L4_H_YEARS": P3_L4_H_YEARS},
+            rescore=lambda: baseline.rescore_candidates(
+                conn, reg.regime, load_metrics=fund_scorer.load_fund_metrics_for_scoring,
+                score_from_df=fund_scorer.score_funds_from_df, base_levers=RL.LeverConfig.from_config()),
+            # the live pool block by block, as build() read it: ties keep the order the DRAFT saw
+            live_order=lambda: pd.concat([load_current_candidates(conn, "v1", reg.regime, sub) for sub in reg.weights], ignore_index=True),
+            cost_fn=lambda out, into: estimate_rotation_cost(conn, out, into), identity=dict(ident), rotation_gate_enabled=ROTATION_COST_GATE_ENABLED)
+        if line:
+            print()
+            print(line)
+    except Exception as exc:                                  # noqa: BLE001 -- the shadow measures; it never refuses a build
+        print(f"AVISO: baseline shadow not run ({type(exc).__name__}: {str(exc)[:160]})")
 
 
 if __name__ == "__main__":

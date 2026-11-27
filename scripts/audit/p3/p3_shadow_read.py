@@ -7,6 +7,8 @@ frozen fee snapshot of a review, in a new folder.
     py -X utf8 scripts\audit\p3\p3_shadow_read.py                      integrity fields of the rows of P3_FEE_PENALTY_SHADOW (the default, and the only mode before the first review)
     py -X utf8 scripts\audit\p3\p3_shadow_read.py --review [--snapshot DIR] [--out FILE.json]
                                                                        the R6 cost review: REFUSED (exit 3, nothing about the comparison is printed) until the window exists
+    py -X utf8 scripts\audit\p3\p3_shadow_read.py --after-adoption [--snapshot DIR] [--out FILE.json]
+                                                                       the checks after an adoption (FND-0445): R12, R24, R36 and the revert trigger; refused until 12 post-adoption months
 
 Series, all rebuilt from stored rows: L = the live arm (`off` of each AC row = consecutive DRAFTs), AC = `chain` of the AC rows, B = `chain` of the band-only hysteresis rows (P3_HYSTERESIS_SHADOW).
 One row per calendar month (the LAST row of the month); a month COUNTS only when the previous calendar month has a row (the first row after a gap, and the first row ever, have no predecessor in the
@@ -20,6 +22,10 @@ sides; below it R6 is NOT INFORMATIVE and carried to the next review. The same s
 
 Readiness (R6): the rows span at least 6 calendar months and the last 6 calendar months have at most 1 gap (more postpones the review by a month). The statistics use the counted months of that window,
 common to the three series when B has rows. Reading choices this script makes where the amendment is silent are printed with the report ("reading").
+
+After an adoption (FND-0445, doc/backlog/PKG_M_ac_adoption.md section 2): the adoption month and arm come from the live flags recorded by the baseline stream (P3_BASELINE_SHADOW). Before it the series are
+the ones above; from it on the adopted arm = `off` of the baseline rows (the DRAFT) and L = their `chain`. A row of month m earns the return of month m+1 (month-end NAV to month-end NAV), net of the cost of
+its own trades. R12 is an alarm; R24 and R36 (non-inferiority and drawdown guard on the first 24 / 36 months of the series) and the revert trigger can say REVERT. Only the owner's order reverts.
 """
 import argparse
 import json
@@ -34,11 +40,15 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from proyecto3.src import baseline_shadow as bl  # noqa: E402
 from proyecto3.src import fee_penalty_shadow as fp  # noqa: E402
 from proyecto3.src import hysteresis_shadow as hs  # noqa: E402
 from proyecto3.src import pit_p37_snapshot as SNAP  # noqa: E402
+from proyecto3.src import ranking_levers as RL  # noqa: E402
+from proyecto3.src.pit_p35a_eval import noninferiority  # noqa: E402
 
 AC_STEP, AC_STEP_ERROR, B_STEP = fp.STEP, fp.STEP_ERROR, hs.STEP
+BASE_STEP, BASE_STEP_ERROR = bl.STEP, bl.STEP_ERROR
 FEE_COLUMNS = SNAP.FEE_COLUMNS                                     # the two exact fees, ratios (0.05 = 5 %)
 CEILING_COLUMNS = ["Entry_Fee_Pct_Max", "Exit_Fee_Pct_Max"]         # the declared ceilings, whole percent (5.0 = 5 %)
 SNAPSHOT_COLUMNS = [*FEE_COLUMNS, *CEILING_COLUMNS, "Fund_Nature"]
@@ -52,6 +62,19 @@ COST_DRAG_REDUCTION_MIN_PP = 0.50       # A5, rule 2
 AC_VS_BAND_SAVING_MIN_PP = 0.50         # N, rule 3
 _EPS = 1e-9
 ROWS_LIMIT = 600
+# -- after adoption (PREREG_P3_7 sections 13-14; the values of Amendment 5 of PREREG_FND-0193 reused) --
+ALARM_MONTH = 12                        # R12
+CHECK_MONTHS = (24, 36)                 # R24, R36
+REVERT_WINDOW = 12                      # consecutive post-adoption builds
+REVERT_RETURN_GAP_PP = 0.50             # a year, net return below L
+REVERT_DD_GAP = 0.02                    # maximum drawdown deeper than L's
+REVERT_TURNOVER_RATIO = 0.5             # realised turnover reduction below this share of the PIT one
+NI_MARGIN_PP = -0.10                    # net_return_tolerance
+NI_LEVEL = 0.05                         # one-sided
+DD_TOLERANCE = 0.01                     # max_dd_tolerance
+DD_CAP = 0.15                           # mandate_dd_cap
+DD_INFORMATIVE_MIN = 0.03               # the drawdown guard counts only if L's own drawdown reaches it
+PIT_TURNOVER = {"L": 32.2, "AC": 13.4, "B": 14.8}      # one-way, % a month (PREREG_P3_7 section 13)
 
 
 class NotReady(RuntimeError):
@@ -342,28 +365,264 @@ def render_review(res: dict, snapshot_id: str) -> str:
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------
+# after adoption (FND-0445)
+# --------------------------------------------------------------------------------------------------------------------------------------------------
+def _arm_of(flags: dict) -> "str | None":
+    """'L' (nothing adopted), 'AC' (band + penalty), 'B' (band alone) or None for a combination the preregistration does not name."""
+    band, penalty = bool(flags.get("PORTFOLIO_HYSTERESIS_ENABLED")), bool(flags.get("P3_L4_FEE_PENALTY_ENABLED"))
+    if not band and not penalty:
+        return "L"
+    return ("AC" if penalty else "B") if band else None
+
+
+def adoption(base_by: dict) -> "tuple[str, str] | None":
+    """(first month whose build did not run arm L, adopted arm) from the live flags of the baseline rows, or None while every row ran L."""
+    for m in sorted(base_by):
+        arm = _arm_of(base_by[m].get("live_flags") or {})
+        if arm != "L":
+            if arm is None:
+                raise NotReady(f"NOT READY: the build of {m} ran the fee penalty without the band, which is not a candidate of the preregistration")
+            return m, arm
+    return None
+
+
+def _until_change(base_by: dict, adopted_month: str, arm: str) -> "tuple[dict, str | None]":
+    """The baseline rows up to the first month AFTER the adoption that ran another arm (a revert or a further change), and that month."""
+    for m in sorted(base_by):
+        if m > adopted_month and _arm_of(base_by[m].get("live_flags") or {}) != arm:
+            return {k: v for k, v in base_by.items() if k < m}, m
+    return base_by, None
+
+
+def spliced_series(ac_by: dict, base_by: dict, adopted_month: str, b_by: "dict | None" = None) -> "tuple[dict, dict]":
+    """({month: weights} of the adopted arm, the same of L). Before the adoption: the `chain` of the arm's own shadow (`b_by` for B, else the AC rows) and the `off` of the AC rows. From it on: the
+    `off` (the DRAFT) and the `chain` of the baseline rows."""
+    own = b_by if b_by is not None else ac_by
+    arm = {m: r["chain"]["weights"] for m, r in own.items() if m < adopted_month}
+    low = {m: r["off"]["weights"] for m, r in ac_by.items() if m < adopted_month}
+    for m, r in base_by.items():
+        if m >= adopted_month:
+            arm[m], low[m] = r["off"]["weights"], r["chain"]["weights"]
+    return arm, low
+
+
+def monthly_returns(nav: pd.DataFrame, today: str) -> pd.DataFrame:
+    """Month-end NAV panel -> {return month 'YYYY-MM': ISIN returns}, closed months only (strictly before the month of `today`). A missing NAV is never filled."""
+    ends = RL.month_end_rows(nav)
+    if ends.empty:
+        return pd.DataFrame()
+    grid = pd.date_range(ends.index.min(), ends.index.max(), freq="ME")
+    out = ends.reindex(grid).pct_change(fill_method=None).iloc[1:]
+    out.index = out.index.strftime("%Y-%m")
+    return out[out.index < str(today)[:7]]
+
+
+def portfolio_return(rows: list, returns: pd.Series) -> "tuple[float, float]":
+    """(gross month return, share of the invested weight without a return). Funds without a return are renormalised away; the cash part earns nothing."""
+    w = hs.weights_of(rows)
+    invested = sum(w.values())
+    ok = {i: v for i, v in w.items() if np.isfinite(returns.get(i, np.nan))}
+    covered = sum(ok.values())
+    if not covered:
+        return float("nan"), 1.0
+    return float(invested * sum(v * float(returns[i]) for i, v in ok.items()) / covered), float(1.0 - covered / invested)
+
+
+def observation_months(arm: dict, low: dict, return_months) -> list:
+    """The months with a row in both series, the same in the previous calendar month, and a closed next month."""
+    have = set(arm) & set(low)
+    closed = set(return_months)
+    return [m for m in sorted(have) if _month(_ordinal(m) - 1) in have and _month(_ordinal(m) + 1) in closed]
+
+
+def observations(arm: dict, low: dict, returns: pd.DataFrame, fees: pd.DataFrame, optimistic: bool = False, adopted_month: "str | None" = None) -> list:
+    """One record per observation month: net return (month m+1 on the weights of m, less the cost of the trades of m) and one-way turnover of both series. At the adoption month the adopted arm trades
+    from the portfolio really held the month before (L's DRAFT), not from its own shadow chain: flagged `transition`."""
+    entry, exit_, de, dx = filled_fees(fees, optimistic=optimistic)
+    out = []
+    for m in observation_months(arm, low, returns.index):
+        prev, nxt = _month(_ordinal(m) - 1), _month(_ordinal(m) + 1)
+        transition = m == adopted_month
+        rec = {"month": m, "transition": transition}
+        for key, series, before in (("arm", arm, low[prev] if transition else arm[prev]), ("l", low, low[prev])):
+            gross, missing = portfolio_return(series[m], returns.loc[nxt])
+            cost, _unknown = pair_cost(series[m], before, entry, exit_, de, dx)
+            rec.update({f"{key}_net": gross - cost, f"{key}_cost": cost, f"{key}_turnover": one_way_turnover(series[m], before), f"{key}_no_return": missing})
+        out.append(rec)
+    return out
+
+
+def max_drawdown(net: list) -> float:
+    """The deepest fall of the cumulated net series below its running maximum (the start value included), as a positive fraction."""
+    value = peak = 1.0
+    worst = 0.0
+    for r in net:
+        value *= 1.0 + float(r)
+        peak = max(peak, value)
+        worst = max(worst, 1.0 - value / peak)
+    return worst
+
+
+def _gap_and_drawdowns(obs: list) -> "tuple[float, float, float]":
+    """(adopted minus L, mean monthly net return annualised in pp; maximum drawdown of the adopted arm; of L)."""
+    gap = 12 * 100 * float(np.mean([o["arm_net"] - o["l_net"] for o in obs]))
+    return gap, max_drawdown([o["arm_net"] for o in obs]), max_drawdown([o["l_net"] for o in obs])
+
+
+def alarm_r12(obs: list) -> dict:
+    """R12, the first 12 months of the series: an ALARM on a return gap or a deeper drawdown; no alarm is not a pass."""
+    if len(obs) < ALARM_MONTH:
+        return {"state": "NOT DUE", "causes": [], "months": len(obs)}
+    gap, dd_arm, dd_l = _gap_and_drawdowns(obs[:ALARM_MONTH])
+    causes = (["return"] if gap < -REVERT_RETURN_GAP_PP - _EPS else []) + (["drawdown"] if dd_l >= DD_INFORMATIVE_MIN - _EPS and dd_arm - dd_l > REVERT_DD_GAP + _EPS else [])
+    return {"state": "ALARM" if causes else "no alarm (not a pass)", "causes": causes, "months": ALARM_MONTH, "return_gap_pp": gap, "dd_arm": dd_arm, "dd_l": dd_l}
+
+
+def drawdown_guard(dd_arm: float, dd_l: float) -> str:
+    """NOT INFORMATIVE while L fell less than 3 %; else PASS only if the arm is no deeper than L + 1 pp and within the 15 % cap (when L itself is deeper than the cap: not worse than L)."""
+    if dd_l < DD_INFORMATIVE_MIN - _EPS:
+        return "NOT INFORMATIVE"
+    if dd_l > DD_CAP + _EPS:
+        return "PASS" if dd_arm <= dd_l + _EPS else "FAIL"
+    return "PASS" if dd_arm <= DD_CAP + _EPS and dd_arm - dd_l <= DD_TOLERANCE + _EPS else "FAIL"
+
+
+def check_return(obs: list, months: int) -> dict:
+    """R24 / R36 on the first `months` months of the series: non-inferiority of the net return (one-sided lower bound above -0.10 pp a year) and the drawdown guard."""
+    if len(obs) < months:
+        return {"months": months, "return": "NOT DUE", "drawdown": "NOT DUE", "verdict": "NOT DUE", "have": len(obs)}
+    head = obs[:months]
+    ni = noninferiority([o["arm_net"] - o["l_net"] for o in head], NI_LEVEL, NI_MARGIN_PP)
+    _gap, dd_arm, dd_l = _gap_and_drawdowns(head)
+    ret, dd = "PASS" if ni["pass"] else "FAIL", drawdown_guard(dd_arm, dd_l)
+    verdict = "FAIL" if "FAIL" in (ret, dd) else ("PASS" if (ret, dd) == ("PASS", "PASS") else "NOT INFORMATIVE")
+    return {"months": months, "return": ret, "drawdown": dd, "verdict": verdict, "mean_pp": ni["mean_pp"], "lb_pp": ni["lb_pp"], "dd_arm": dd_arm, "dd_l": dd_l}
+
+
+def turnover_floor(arm: str) -> float:
+    """The smallest realised turnover reduction that does not revert: half of the PIT one."""
+    return REVERT_TURNOVER_RATIO * (PIT_TURNOVER["L"] - PIT_TURNOVER[arm]) / PIT_TURNOVER["L"]
+
+
+def revert_trigger(post: list, arm: str) -> dict:
+    """Amendment 5's trigger over every post-adoption month (at least 12). The one-off trade of the adoption month stays in the returns and out of the turnover ratio."""
+    if len(post) < REVERT_WINDOW:
+        return {"state": "NOT DUE", "causes": [], "months": len(post)}
+    gap, dd_arm, dd_l = _gap_and_drawdowns(post)
+    steady = [o for o in post if not o.get("transition")]
+    to_l = float(np.mean([o["l_turnover"] for o in steady]))
+    reduction = (to_l - float(np.mean([o["arm_turnover"] for o in steady]))) / to_l if to_l else None
+    floor = turnover_floor(arm)
+    causes = ((["return"] if gap < -REVERT_RETURN_GAP_PP - _EPS else []) + (["drawdown"] if dd_arm - dd_l > REVERT_DD_GAP + _EPS else [])
+              + (["turnover"] if reduction is not None and reduction < floor - _EPS else []))
+    return {"state": "REVERT" if causes else "not triggered", "causes": causes, "months": len(post), "return_gap_pp": gap, "dd_arm": dd_arm, "dd_l": dd_l,
+            "turnover_reduction": reduction, "turnover_floor": floor}
+
+
+def _checks(obs: list, adopted_month: str, arm: str) -> dict:
+    res = {"R12": alarm_r12(obs), "revert": revert_trigger([o for o in obs if o["month"] >= adopted_month], arm)}
+    res.update({f"R{n}": check_return(obs, n) for n in CHECK_MONTHS})
+    reasons = [f"R{n}" for n in CHECK_MONTHS if res[f"R{n}"]["verdict"] == "FAIL"] + (["revert trigger"] if res["revert"]["state"] == "REVERT" else [])
+    res["verdict"] = f"REVERT ({', '.join(reasons)})" if reasons else "no revert"
+    return res
+
+
+def review_after_adoption(ac_rows: list, b_rows: list, base_rows: list, returns: "pd.DataFrame | None", fees: "pd.DataFrame | None") -> dict:
+    """The post-adoption numbers. Raises NotReady without an adoption or before 12 post-adoption months with a closed next month, so nothing is computed early. With `fees` None only the readiness is
+    judged (the caller freezes the fees after it)."""
+    ac_by, base_by = last_per_month(ac_rows), last_per_month(base_rows)
+    found = adoption(base_by)
+    if found is None:
+        raise NotReady("NOT READY: no adoption recorded in the baseline stream (every row's build ran arm L)")
+    adopted_month, arm = found
+    base_by, changed = _until_change(base_by, adopted_month, arm)
+    arm_series, low = spliced_series(ac_by, base_by, adopted_month, b_by=last_per_month(b_rows) if arm == "B" else None)
+    months = observation_months(arm_series, low, [] if returns is None else returns.index)
+    n_post = len([m for m in months if m >= adopted_month])
+    if returns is not None and n_post < REVERT_WINDOW:
+        raise NotReady(f"NOT READY: {n_post} post-adoption month(s) with a closed next month, the checks need {REVERT_WINDOW}")
+    if returns is None or fees is None:
+        return {"arm": arm, "adopted_month": adopted_month}
+    primary = observations(arm_series, low, returns, fees, adopted_month=adopted_month)
+    optimistic = observations(arm_series, low, returns, fees, optimistic=True, adopted_month=adopted_month)
+    return {"arm": arm, "adopted_month": adopted_month, "changed_month": changed, "months": months, "n_post": n_post, "gaps": gaps({m: 1 for m in arm_series}),
+            "max_no_return": max(max(o["arm_no_return"], o["l_no_return"]) for o in primary), "checks": _checks(primary, adopted_month, arm),
+            "checks_optimistic": _checks(optimistic, adopted_month, arm)}
+
+
+def _line_check(name: str, c: dict) -> str:
+    if c["verdict"] == "NOT DUE":
+        return f"{name}: NOT DUE ({c['have']} of {c['months']} months)"
+    return (f"{name}: return {c['return']} (mean {c['mean_pp']:+.2f} pp a year, lower bound {c['lb_pp']:+.2f} against {NI_MARGIN_PP:+.2f}); drawdown {c['drawdown']} "
+            f"({c['dd_arm']:.1%} against L {c['dd_l']:.1%}); verdict {c['verdict']}" + (" (carried to the next review, not a pass)" if c["verdict"] == "NOT INFORMATIVE" else ""))
+
+
+def render_after_adoption(res: dict, snapshot_id: str) -> str:
+    c, o = res["checks"], res["checks_optimistic"]
+    lines = [f"after adoption: adopted arm {res['arm']} since {res['adopted_month']}; {len(res['months'])} month(s) {res['months'][0]} .. {res['months'][-1]}, {res['n_post']} post-adoption; "
+             f"gap(s) {', '.join(res['gaps']) if res['gaps'] else 'none'}; fee snapshot {snapshot_id[:12]}",
+             "reading: a row of month m earns month m+1 net of its own trades; R12 / R24 / R36 use the first 12 / 24 / 36 months of the series (one-sided level 0.05); the adoption month trades from L's "
+             f"DRAFT and stays out of the turnover ratio; a fund without a return is renormalised away (at most {res['max_no_return']:.1%} of the invested weight in a month)"]
+    if res["changed_month"]:
+        lines.append(f"the build of {res['changed_month']} ran another arm: the months from it on are not read")
+    r12 = c["R12"]
+    lines.append(f"R12 (alarm only): {r12['state']}" + (f" [{', '.join(r12['causes'])}]" if r12["causes"] else "")
+                 + (f"; return gap {r12['return_gap_pp']:+.2f} pp a year" if "return_gap_pp" in r12 else ""))
+    lines += [_line_check(f"R{n}", c[f"R{n}"]) for n in CHECK_MONTHS]
+    rt = c["revert"]
+    lines.append(f"revert trigger: {rt['state']}" + (f" [{', '.join(rt['causes'])}]" if rt["causes"] else ""))
+    if "return_gap_pp" in rt:
+        reduction = "n/a" if rt["turnover_reduction"] is None else f"{rt['turnover_reduction']:.0%}"
+        lines.append(f"    return gap {rt['return_gap_pp']:+.2f} pp a year; drawdown {rt['dd_arm']:.1%} against L {rt['dd_l']:.1%}; turnover reduction {reduction} (floor {rt['turnover_floor']:.0%})")
+    lines.append(f"optimistic variant (a fund with no figure costs 0; never gating): {o['verdict']}")
+    lines.append(f"verdict: {c['verdict']}" + (". Only the owner's order switches the flags OFF; the baseline shadow keeps running." if c["verdict"] != "no revert" else ""))
+    return "\n".join(lines)
+
+
+def render_baseline_integrity(rows: list, n_errors: int) -> str:
+    """The whitelist view of the baseline stream: identity verdict, scenario, funds per sub-portfolio and weight sums. No comparison value."""
+    by = last_per_month(rows)
+    lines = [f"{BASE_STEP}: {len(rows)} SHADOW row(s), {len(by)} calendar month(s), {n_errors} ERROR row(s)"]
+    try:
+        found = adoption(by)
+        lines.append(f"adoption: {'none' if found is None else f'{found[1]} from {found[0]}'}; gap(s): {', '.join(gaps(by)) if gaps(by) else 'none'}")
+    except NotReady as exc:
+        lines.append(f"adoption: {exc}")
+    for m in sorted(by):
+        r = by[m]
+        arms = ("off", "one_step", "chain")
+        lines.append(f"- {m}  identity {r.get('identity_check')}  scenario {r.get('scenario_id')}  built {r.get('built_at')}")
+        lines.append("    funds per sub-portfolio: " + "; ".join(f"{a} {_funds_per_sub(r[a]['weights'])}" for a in arms))
+        lines.append("    weight sums: " + "; ".join(f"{a} {sum(float(w['weight']) for w in r[a]['weights']):.4f}" for a in arms))
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------------------------------------------------------------------------------
 # entry points
 # --------------------------------------------------------------------------------------------------------------------------------------------------
-def run(argv: list, *, rows_ac: list, rows_b: list, n_errors: int, fees: "pd.DataFrame | None" = None, pool: "tuple | None" = None) -> "tuple[int, str]":
-    """The whole program on already-read rows: (exit code, text). 0 = shown, 3 = review refused (window not ready), 2 = a review needs the fees."""
+def run(argv: list, *, rows_ac: list, rows_b: list, n_errors: int, fees: "pd.DataFrame | None" = None, pool: "tuple | None" = None, rows_base: "list | None" = None,
+        n_base_errors: int = 0, returns: "pd.DataFrame | None" = None) -> "tuple[int, str]":
+    """The whole program on already-read rows: (exit code, text). 0 = shown, 3 = review refused (window not ready), 2 = a review needs the fees (or the returns)."""
     ap = argparse.ArgumentParser(prog="p3_shadow_read")
     ap.add_argument("--review", action="store_true", help="the R6 cost review (refused until the window exists)")
     ap.add_argument("--snapshot", default=None, help="folder of the frozen fee snapshot (frozen from the live fund_master when it does not exist)")
     ap.add_argument("--out", default=None, help="write the review as JSON")
+    ap.add_argument("--after-adoption", action="store_true", help="the checks after an adoption (refused until 12 post-adoption months)")
     args = ap.parse_args(argv)
+    if args.after_adoption:
+        return _run_after_adoption(args, rows_ac, rows_b, rows_base or [], returns, fees)
     if not args.review:
-        return 0, render_integrity(rows_ac, n_errors, pool)
+        text = render_integrity(rows_ac, n_errors, pool)
+        if rows_base or n_base_errors:
+            text += "\n\n" + render_baseline_integrity(rows_base or [], n_base_errors)
+        return 0, text
     ready = readiness(last_per_month(rows_ac))
     if not ready["ready"]:
         return 3, ready["reason"]
-    folder = Path(args.snapshot) if args.snapshot else _ROOT / "out" / "audit" / "p3_shadow" / f"{datetime.now(timezone.utc):%Y%m%d}_R6" / "snapshot"
-    if folder.exists():
-        frozen, snapshot_id = load_fees(folder)
-    else:
-        if fees is None:
-            return 2, "a review needs the stated fees: none given and no snapshot folder to load"
-        snapshot_id = freeze_fees(folder, fees)["snapshot_id"]
-        frozen, _ = load_fees(folder)
+    got = _snapshot(args.snapshot, "R6", fees)
+    if got is None:
+        return 2, "a review needs the stated fees: none given and no snapshot folder to load"
+    frozen, snapshot_id = got
     try:
         res = review_r6(rows_ac, rows_b, frozen)
     except NotReady as exc:
@@ -373,16 +632,54 @@ def run(argv: list, *, rows_ac: list, rows_b: list, n_errors: int, fees: "pd.Dat
     return 0, render_review(res, snapshot_id)
 
 
+def _snapshot(path: "str | None", label: str, fees: "pd.DataFrame | None") -> "tuple[pd.DataFrame, str] | None":
+    """(fees, snapshot id) of the frozen snapshot at `path` (or today's folder of `label`), freezing `fees` there when it does not exist; None when there is neither."""
+    folder = Path(path) if path else _ROOT / "out" / "audit" / "p3_shadow" / f"{datetime.now(timezone.utc):%Y%m%d}_{label}" / "snapshot"
+    if folder.exists():
+        return load_fees(folder)
+    if fees is None:
+        return None
+    snapshot_id = freeze_fees(folder, fees)["snapshot_id"]
+    return load_fees(folder)[0], snapshot_id
+
+
+def _run_after_adoption(args, rows_ac: list, rows_b: list, rows_base: list, returns, fees) -> "tuple[int, str]":
+    """Readiness first (no fee frozen, no value computed before it), then the frozen fees, then the checks."""
+    returns = None if returns is None or returns.empty else returns
+    try:
+        review_after_adoption(rows_ac, rows_b, rows_base, returns, None)                  # raises NotReady: adoption and months
+        if returns is None:
+            return 2, "the checks need monthly NAV returns: none were read"
+        got = _snapshot(args.snapshot, "POST", fees)
+        if got is None:
+            return 2, "the checks need the stated fees: none given and no snapshot folder to load"
+        frozen, snapshot_id = got
+        res = review_after_adoption(rows_ac, rows_b, rows_base, returns, frozen)
+    except NotReady as exc:
+        return 3, str(exc)
+    if args.out:
+        Path(args.out).write_text(json.dumps({"snapshot_id": snapshot_id, **res}, indent=2, default=str), encoding="utf-8")
+    return 0, render_after_adoption(res, snapshot_id)
+
+
 def _read_live(argv: list):
-    """(rows of the AC stream, rows of the band-only stream, ERROR row count, live fees or None, candidate-pool counts or None). SELECT only."""
+    """The keyword arguments of `run` from the database. SELECT only: the streams, their ERROR counts, and the live fees and month-end returns of the held funds when a review asks for them."""
     from shared.db import get_connection
     conn = get_connection()
     try:
+        review, after = "--review" in argv, "--after-adoption" in argv
         rows_ac = hs.read_rows(conn, ROWS_LIMIT, step=AC_STEP)
-        rows_b = hs.read_rows(conn, ROWS_LIMIT, step=B_STEP) if "--review" in argv else []
+        rows_b = hs.read_rows(conn, ROWS_LIMIT, step=B_STEP) if review or after else []
+        rows_base = hs.read_rows(conn, ROWS_LIMIT, step=BASE_STEP)
         n_errors = int(conn.execute("SELECT COUNT(*) FROM ingestion_log WHERE step = %s", (AC_STEP_ERROR,)).fetchone()[0])
-        fees = pool = None
-        if "--review" in argv:
+        n_base_errors = int(conn.execute("SELECT COUNT(*) FROM ingestion_log WHERE step = %s", (BASE_STEP_ERROR,)).fetchone()[0])
+        fees = pool = returns = None
+        if after:
+            from proyecto3.src.pit_inputs import load_nav_panel
+            held = sorted({w["isin"] for r in [*rows_ac, *rows_b, *rows_base] for k in ("off", "chain") for w in (r.get(k) or {}).get("weights", [])})
+            if held:
+                returns = monthly_returns(load_nav_panel(conn, held), today=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        if review or after:
             snap = _arg_value(argv, "--snapshot")
             if not (snap and Path(snap).exists()):
                 rows = conn.execute("SELECT ISIN, Entry_Fee_Pct, Exit_Fee_Pct, Entry_Fee_Pct_Max, Exit_Fee_Pct_Max, Fund_Nature FROM fund_master").fetchall()
@@ -392,7 +689,7 @@ def _read_live(argv: list):
             pool = tuple(conn.execute(
                 "SELECT COUNT(*), COUNT(*) FILTER (WHERE (Entry_Fee_Pct IS NOT NULL OR Entry_Fee_Pct_Max IS NOT NULL) AND (Exit_Fee_Pct IS NOT NULL OR Exit_Fee_Pct_Max IS NOT NULL)) "
                 "FROM fund_master WHERE ISIN IN (SELECT DISTINCT isin FROM fund_scores WHERE eligible = 1 AND calculated_at = (SELECT MAX(calculated_at) FROM fund_scores))").fetchone())
-        return rows_ac, rows_b, n_errors, fees, pool
+        return {"rows_ac": rows_ac, "rows_b": rows_b, "n_errors": n_errors, "fees": fees, "pool": pool, "rows_base": rows_base, "n_base_errors": n_base_errors, "returns": returns}
     finally:
         conn.close()
 
@@ -403,8 +700,7 @@ def _arg_value(argv: list, name: str):
 
 def main(argv: "list | None" = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    rows_ac, rows_b, n_errors, fees, pool = _read_live(argv)
-    rc, text = run(argv, rows_ac=rows_ac, rows_b=rows_b, n_errors=n_errors, fees=fees, pool=pool)
+    rc, text = run(argv, **_read_live(argv))
     print(text)
     return rc
 

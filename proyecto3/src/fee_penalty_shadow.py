@@ -104,23 +104,28 @@ def rescore_candidates(conn, regime: str, h_years: float, *, load_metrics, score
     the median penalty of their cell). Returns (candidates, info). Raises ShadowSkip when another lever is ON or there are no metrics."""
     if other_levers_on(base_levers):
         raise ShadowSkip("another ranking lever (L1-L3) is ON: the AC arm is defined over the ranking with only L4 added, so the stream does not mix arms")
-    with contextlib.redirect_stdout(io.StringIO()):                          # the loader and the scorer print: the build log shows only the live arm
-        df = load_metrics(conn, regime=regime)
-        if df is None or df.empty:
-            raise ShadowSkip("no metrics to score: the penalty arm has no candidates")
-        scores = score_from_df(df, regime, verbose=False, levers=shadow_levers(base_levers, h_years))
+    cands, scores, df = rescore_with_levers(conn, regime, shadow_levers(base_levers, h_years), load_metrics=load_metrics, score_from_df=score_from_df)
     unknown = None
     if count_unknown_fees is not None:
         try:
             unknown = int(count_unknown_fees(df, float(h_years))[1])
         except Exception:                                                     # noqa: BLE001 -- information only; a missing count never loses the row
             unknown = None
+    return cands, {"n_scored": int(len(scores)) if scores is not None else 0, "n_candidates": int(len(cands)), "n_fee_unknown": unknown}
+
+
+def rescore_with_levers(conn, regime: str, levers, *, load_metrics, score_from_df) -> "tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]":
+    """The live loader and the live scorer with `levers`, NOTHING persisted: (candidates, scores, metrics frame). Shared with the baseline shadow (FND-0445). Raises ShadowSkip without metrics."""
+    with contextlib.redirect_stdout(io.StringIO()):                          # the loader and the scorer print: the build log shows only the live arm
+        df = load_metrics(conn, regime=regime)
+        if df is None or df.empty:
+            raise ShadowSkip("no metrics to score: the shadow arm has no candidates")
+        scores = score_from_df(df, regime, verbose=False, levers=levers)
     isins = sorted({str(i) for i in scores["isin"]}) if scores is not None and not scores.empty else []
     mgr: dict = {}
     if isins:
         mgr = {r[0]: r[1] for r in conn.execute("SELECT ISIN, Management_Company FROM fund_master WHERE ISIN = ANY(%s)", (isins,)).fetchall()}
-    cands = candidates_from_scores(scores, mgr)
-    return cands, {"n_scored": int(len(scores)) if scores is not None else 0, "n_candidates": int(len(cands)), "n_fee_unknown": unknown}
+    return candidates_from_scores(scores, mgr), scores, df
 
 
 def run_shadow(conn, builder, regime_result, scenario_id: str, live_portfolio, *, band: float, h_years: float, rescore, cost_fn=None, identity=None,

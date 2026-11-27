@@ -266,6 +266,10 @@ P3_HYSTERESIS_SHADOW_ENABLED: bool = True
 # evidence). H is the preregistered 0.58 years (7 months), deliberately not P3_L4_H_YEARS (the OFF live lever). Ships ON like the hysteresis shadow: it only appends a log row. Rollback = False.
 P3_FEE_PENALTY_SHADOW_ENABLED: bool = True
 P3_FEE_PENALTY_SHADOW_H_YEARS: float = 0.58
+# FND-0445 (doc/backlog/PKG_M_ac_adoption.md section 2): the BASELINE shadow. After a real build persisted its DRAFT, arm L (the live scorer with L4 off, the builder with no incumbents) is built IN MEMORY
+# and ONE `P3_BASELINE_SHADOW` row is appended to ingestion_log, so R24, R36 and the revert trigger keep a baseline once AC is live. While the live arm is still L the arm must equal the DRAFT (identity
+# check; a mismatch adds a P3_BASELINE_SHADOW_ERROR row). Ships OFF: the owner switches it ON for the identity check before adoption. It never changes the DRAFT or the build's return code. Rollback = False.
+P3_BASELINE_SHADOW_ENABLED: bool = False
 # Owner order 2026-11-27 (pre-registration integrity, PREREG_P3_7 section 13 / Amendment 5 of PREREG_FND-0193): the build output of BOTH forward shadows shows only month and row
 # counts. Turnover, cost and selection-difference values are not displayed before the first review. The stored rows are unchanged. Switch ON at the first review (about 2027-05).
 P3_SHADOW_COMPARISON_DISPLAY_ENABLED: bool = False
