@@ -62,7 +62,7 @@ def test_the_group_and_duplicate_fixtures_are_flagged_by_the_runs_own_code():
     assert runner._timeseries_duplicate_finding([("I", False, "2020-01", "2020-12", 12, 12, 0, 0)], "m|w") is None     # a clean series is not a duplicate
 
 
-@pytest.mark.parametrize("domain,expected_ids", [("p2_metrics", {r.rule_id for r in HARD_P2} | {"TIMESERIES_DUPLICATE", "ROLLING_COVERAGE"}),
+@pytest.mark.parametrize("domain,expected_ids", [("p2_metrics", {r.rule_id for r in HARD_P2} | {"TIMESERIES_DUPLICATE", "ROLLING_COVERAGE", "TIMESERIES_WINDOW_COVERAGE"}),
                                                   ("cost_attributes", {r.rule_id for r in HARD_COST} | {g.rule_id for g in COST_GROUP_CHECKS})])
 def test_on_healthy_code_every_canary_fires_and_the_run_is_not_made_incomplete(domain, expected_ids):
     run = runner.AuditRun(domain=domain)
@@ -79,7 +79,7 @@ def test_a_detector_that_stopped_evaluating_marks_the_run_incomplete(monkeypatch
     monkeypatch.setattr(runner, "check_invariant", blind)
     run = runner.AuditRun(domain="p2_metrics")
     summary = runner.run_canaries(run)
-    assert set(summary["failed"]) == {r.rule_id for r in HARD_P2} and summary["fired"] == 2       # only the duplicate-series and the rolling-coverage detectors do not go through check_invariant
+    assert set(summary["failed"]) == {r.rule_id for r in HARD_P2} and summary["fired"] == 3       # only the duplicate-series and the two window-coverage detectors do not go through check_invariant
     assert {s.check for s in run.skips} == {"CANARY"} and all(s.kind == cpl.KIND_MISSING for s in run.skips)
     assert cpl.run_status(run.skips, run.findings, cpl.SCOPE_FULL, "p2_metrics") == "INCOMPLETE"
     assert len(cpl.missing(run.skips, cpl.SCOPE_FULL)) == len(HARD_P2)

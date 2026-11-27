@@ -549,3 +549,29 @@ def test_rolling_coverage_not_flagged_when_the_history_covers_the_window(monkeyp
     run = runner.AuditRun(domain="p2_metrics")
     runner._run_rolling_coverage(run, *_coverage_inputs("2015-01-31"))
     assert "ROLLING_COVERAGE" not in _finding_ids(run)
+
+
+class _CoverageConn:
+    """The two statements of _run_timeseries_coverage: the earliest stored point per (fund, window) and the first NAV per fund."""
+    def __init__(self, first_nav):
+        self.first_nav = first_nav
+
+    def execute(self, sql, params=()):
+        rows = [("LU1", "rolling_5y", pd.Timestamp("2026-10-31").date())] if "fund_metric_timeseries" in sql else [("LU1", pd.Timestamp(self.first_nav).date())]
+        return type("C", (), {"fetchall": lambda _s: rows})()
+
+
+def test_timeseries_coverage_flagged_when_a_stored_point_is_older_than_the_history_supports(monkeypatch):
+    from shared import config as _cfg
+    monkeypatch.setattr(_cfg, "ROLLING_UNCOVERED_PRUNE_ENABLED", True)
+    run = runner.AuditRun(domain="p2_metrics")
+    runner._run_timeseries_coverage(run, _CoverageConn("2023-10-31"))
+    assert _finding_ids(run) == ["TIMESERIES_WINDOW_COVERAGE"] and run.findings[0]["violating_isins"] == ("LU1",)
+
+
+def test_timeseries_coverage_not_flagged_when_the_history_covers_the_stored_points(monkeypatch):
+    from shared import config as _cfg
+    monkeypatch.setattr(_cfg, "ROLLING_UNCOVERED_PRUNE_ENABLED", True)
+    run = runner.AuditRun(domain="p2_metrics")
+    runner._run_timeseries_coverage(run, _CoverageConn("2015-01-31"))
+    assert "TIMESERIES_WINDOW_COVERAGE" not in _finding_ids(run)
