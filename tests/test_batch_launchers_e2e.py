@@ -461,6 +461,49 @@ def test_monthly_draft_waits_while_another_cycle_holds_the_lock(tree):
     assert "p3_monthly_draft" not in tree.tools()                                                # the refused run ran nothing
 
 
+# FND-0454: the helper's `status` answers alone with the scenario's code; `record` succeeds.
+_STATUS_ONLY_STUB = (
+    "import os, sys\n"
+    "with open(os.environ['STUB_TRACE'], 'a') as f:\n"
+    "    f.write('p3_monthly_draft %s\\n' % ' '.join(sys.argv[1:]))\n"
+    "sys.exit(int(os.environ.get('STUB_STATUS_RC', '0')) if 'status' in sys.argv else 0)\n")
+
+
+def _status_rc(tree, rc, *args, **env):
+    (tree.root / "scripts" / "launch" / "p3_monthly_draft.py").write_text(_STATUS_ONLY_STUB)
+    return tree.run("P3_monthlyDraft", *args, STUB_STATUS_RC=str(rc), **env)
+
+
+@pytest.mark.parametrize("rc, audit, report", [(8, True, False), (9, False, True), (10, True, True)])
+def test_monthly_draft_retries_the_audit_or_the_report_without_building(tree, rc, audit, report):
+    r = _status_rc(tree, rc)
+    assert r.returncode == 0, r.stdout + r.stderr
+    tools = tree.tools()
+    assert "p3_build_portfolio" not in tools, tree.lines()
+    assert ("run_statistical_audit" in tools) is audit and ("generate_report" in tools) is report, tree.lines()
+    if audit:
+        line = next(x for x in tree.lines() if x.startswith("run_statistical_audit"))
+        assert "--persist" in line and "--run-id post_" in line and "_p2" in line
+    assert tree.lines()[-1] == "p3_monthly_draft record --rc 0 --followup", tree.lines()
+
+
+def test_monthly_draft_that_gave_up_on_a_stream_builds_nothing_and_says_so_in_its_rc(tree):
+    r = _status_rc(tree, 7)
+    assert r.returncode == 7, r.stdout + r.stderr
+    assert tree.lines() == ["p3_monthly_draft status"]
+
+
+def test_monthly_draft_check_runs_no_followup(tree):
+    r = _status_rc(tree, 10, "--check")
+    assert r.returncode == 0 and tree.lines() == ["p3_monthly_draft status"], r.stdout + r.stderr
+
+
+def test_monthly_draft_propagates_a_failed_followup_and_records_it(tree):
+    r = _status_rc(tree, 8, STUB_RC_RUN_STATISTICAL_AUDIT="2")
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert tree.lines()[-1] == "p3_monthly_draft record --rc 2 --followup", tree.lines()
+
+
 # ─── P1P2_monthlyRefresh: the scheduled NAV refresh of the monthly build (FND-0448) ────────────
 
 def test_monthly_refresh_runs_the_p1p2_cycle_when_due_and_records_after(tree):

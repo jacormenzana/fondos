@@ -1,5 +1,6 @@
 """FND-0447: the scheduled monthly DRAFT-only P3 build. The capture check and the record (scripts/launch/p3_monthly_draft.py), and the property the owner's
-standing order of 2026-11-26 rests on: nothing in the scheduled chain promotes a scenario to PRODUCTION. No database: fake connections only (R-7)."""
+standing order of 2026-11-26 rests on: nothing in the scheduled chain promotes a scenario to PRODUCTION. FND-0454: a stream that keeps failing stops being rebuilt after a few attempts, and a
+missing audit or draft report is retried without rebuilding. No database: fake connections only (R-7)."""
 from __future__ import annotations
 
 import ast
@@ -101,7 +102,9 @@ def _rows(*months):
 @pytest.fixture()
 def fake(monkeypatch):
     from proyecto3.src import hysteresis_shadow as hs
-    state = {"rows": {}, "conn": None}
+    state = {"rows": {}, "conn": None, "follow": [], "attempts": 0}
+    monkeypatch.setattr(M, "followup_items", lambda conn, now: list(state["follow"]))
+    monkeypatch.setattr(M, "stream_attempts", lambda conn, now: state["attempts"])
     monkeypatch.setattr(hs, "read_rows", lambda conn, limit=120, step=hs.STEP: state["rows"].get(step, []))
     import shared.db
     monkeypatch.setattr(shared.db, "get_connection", lambda: state["conn"])
@@ -214,3 +217,83 @@ def test_the_registration_names_the_task_the_ticket_probes_and_runs_the_monthly_
     assert "--allow-stale" not in text
     assert "C:\\desarrollo" not in text and "c:\\desarrollo" not in text.lower(), "the repo path is derived from the script's own location"
     assert "-Register" in text and "-Unregister" in text                       # a dry run by default
+
+
+# ------------------------------------------------------------------------------------- FND-0454 item 5: a stream that keeps failing is not rebuilt for ever
+@pytest.mark.parametrize("missing, follow, attempts, want", [
+    ([], [], 0, "captured"),
+    (["DRAFT"], [], 9, "build"),                                           # no DRAFT: always build, whatever failed before
+    (["P3_FEE_PENALTY_SHADOW"], [], 2, "build"),
+    (["P3_FEE_PENALTY_SHADOW"], [], 3, "gave_up"),
+    (["P3_FEE_PENALTY_SHADOW"], ["AUDIT"], 3, "audit"),                    # the existing DRAFT still gets its evidence
+    ([], ["AUDIT"], 0, "audit"),
+    ([], ["REPORT"], 0, "report"),
+    ([], ["AUDIT", "REPORT"], 0, "both"),
+    (["P3_FEE_PENALTY_SHADOW"], ["REPORT"], 1, "build"),                    # a build produces the audit and the report anyway
+])
+def test_what_the_launcher_is_told_to_do(missing, follow, attempts, want):
+    codes = {"captured": M.EXIT_CAPTURED, "build": 0, "gave_up": M.EXIT_GAVE_UP, "audit": M.EXIT_NEEDS_AUDIT, "report": M.EXIT_NEEDS_REPORT, "both": M.EXIT_NEEDS_BOTH}
+    assert M.plan(missing, follow, attempts) == codes[want]
+
+
+def test_the_new_codes_are_distinct_and_in_the_tool_range():
+    codes = (M.EXIT_CAPTURED, M.EXIT_NOT_CAPTURED, M.EXIT_GAVE_UP, M.EXIT_NEEDS_AUDIT, M.EXIT_NEEDS_REPORT, M.EXIT_NEEDS_BOTH)
+    assert codes[2:] == (7, 8, 9, 10) and len(set(codes)) == 6 and 2 not in codes
+
+
+def test_only_builds_that_still_lacked_a_stream_row_count_as_attempts():
+    rows = [json.dumps({"kind": "build", "missing": ["P3_FEE_PENALTY_SHADOW"]}),
+            json.dumps({"missing": ["P3_HYSTERESIS_SHADOW", "AUDIT"]}),                 # a row written before `kind` existed was a build
+            json.dumps({"kind": "build", "missing": ["AUDIT", "REPORT"]}),              # the shadows were fine
+            json.dumps({"kind": "followup", "missing": ["P3_FEE_PENALTY_SHADOW"]}),
+            "not json"]
+    assert M.count_stream_attempts(rows) == 2
+
+
+# ------------------------------------------------------------------------------------- FND-0454 item 7: audit and report of the month's DRAFT
+BUILT = datetime(2026, 12, 1, 9, 5, tzinfo=timezone.utc)
+LATER, EARLIER = BUILT + timedelta(minutes=5), BUILT - timedelta(minutes=5)
+
+
+@pytest.mark.parametrize("draft, audit_ts, report, want", [
+    (None, None, False, []),                                                  # nothing built yet: the build's own business
+    (("s1", BUILT, "DRAFT"), LATER, True, []),
+    (("s1", BUILT, "DRAFT"), EARLIER, True, ["AUDIT"]),                       # an audit that read the data before the build is no evidence
+    (("s1", BUILT, "DRAFT"), None, True, ["AUDIT"]),
+    (("s1", BUILT, "DRAFT"), LATER, False, ["REPORT"]),
+    (("s1", BUILT, "DRAFT"), None, False, ["AUDIT", "REPORT"]),
+    (("s1", BUILT, "PRODUCTION"), None, False, []),                           # the owner took it over
+])
+def test_the_followups_of_the_months_draft(draft, audit_ts, report, want):
+    assert M.followups(draft, audit_ts, report) == want
+
+
+def test_the_report_is_found_by_the_scenario_id_in_the_drafts_folder(tmp_path):
+    (tmp_path / "informe_cartera_20261201_cartera_x_b1.xlsx").write_text("x")
+    assert M.report_exists("cartera_x_b1", tmp_path) is True and M.report_exists("cartera_x_b2", tmp_path) is False
+    assert M.report_exists("cartera_x_b1", tmp_path / "absent") is False
+
+
+def test_status_asks_for_the_audit_alone_when_the_month_is_captured_without_one(fake):
+    fake["conn"] = _Conn(drafts_this_month=1)
+    fake["rows"] = {"P3_FEE_PENALTY_SHADOW": _rows("2026-12"), "P3_HYSTERESIS_SHADOW": _rows("2026-12")}
+    fake["follow"] = ["AUDIT"]
+    assert M.main(["status"]) == M.EXIT_NEEDS_AUDIT
+
+
+def test_a_build_that_ends_0_without_its_audit_is_incomplete_not_ok(fake):
+    fake["conn"] = _Conn(drafts_this_month=1)
+    fake["rows"] = {"P3_FEE_PENALTY_SHADOW": _rows("2026-12"), "P3_HYSTERESIS_SHADOW": _rows("2026-12")}
+    fake["follow"] = ["AUDIT"]
+    assert M.main(["record", "--rc", "0"]) == M.EXIT_NOT_CAPTURED
+    step, status, message = [s for s in fake["conn"].sql if s[0].lstrip().upper().startswith("INSERT")][0][1]
+    body = json.loads(message)
+    assert status == "INCOMPLETE" and body["missing"] == ["AUDIT"] and body["kind"] == "build"
+
+
+def test_a_followup_record_says_so(fake):
+    fake["conn"] = _Conn(drafts_this_month=1)
+    fake["rows"] = {"P3_FEE_PENALTY_SHADOW": _rows("2026-12"), "P3_HYSTERESIS_SHADOW": _rows("2026-12")}
+    assert M.main(["record", "--rc", "0", "--followup"]) == 0
+    _step, status, message = [s for s in fake["conn"].sql if s[0].lstrip().upper().startswith("INSERT")][0][1]
+    assert status == "OK" and json.loads(message)["kind"] == "followup"
