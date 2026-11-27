@@ -291,6 +291,23 @@ def test_kiid_upsert_preserves_raw_text_on_cached_cycle(pg_conn):
     assert after_srri == before_srri, "SRRI was overwritten to NULL on a CACHED cycle"
 
 
+def test_kiid_upsert_preserves_published_date_when_a_pass_finds_none(pg_conn):
+    """FND-0457 / P#1: KIID_Published_Date used a blind `= excluded` and was erased by every pass whose parser found no date.
+    A pass with None keeps the stored date; a pass with a date replaces it."""
+    pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+    fake_isin = "TEST00000003"
+
+    def stored():
+        return pg_conn.execute("SELECT kiid_published_date FROM fund_kiid_metadata WHERE isin = %s AND kiid_class = 1", (fake_isin,)).fetchone()[0]
+
+    upsert_kiid_metadata(pg_conn, _minimal_kiid_record(fake_isin, KIID_Status="OK", Raw_KIID_Text="t", KIID_Published_Date="2026-02-16"))
+    assert str(stored()) == "2026-02-16"
+    upsert_kiid_metadata(pg_conn, _minimal_kiid_record(fake_isin))
+    assert str(stored()) == "2026-02-16", "a pass that found no date erased the stored one"
+    upsert_kiid_metadata(pg_conn, _minimal_kiid_record(fake_isin, KIID_Published_Date="2026-04-29"))
+    assert str(stored()) == "2026-04-29"
+
+
 def test_kiid_upsert_insert_path_creates_new_row(pg_conn):
     """A brand-new (ISIN, KIID_Class) pair must insert cleanly — confirms the ON CONFLICT(ISIN,
     KIID_Class) two-column conflict target (not just ISIN alone, unlike fund_master) works."""

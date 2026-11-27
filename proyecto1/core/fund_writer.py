@@ -664,7 +664,8 @@ def upsert_kiid_metadata(conn: "psycopg.Connection",
         Language            = excluded.Language,
         -- COALESCE: preservar texto existente si el nuevo es NULL
         Raw_KIID_Text       = COALESCE(excluded.Raw_KIID_Text, fund_kiid_metadata.Raw_KIID_Text),
-        KIID_Published_Date = excluded.KIID_Published_Date,
+        -- P#1 (FND-0457): a pass that finds no date keeps the stored one instead of erasing it
+        KIID_Published_Date = COALESCE(excluded.KIID_Published_Date, fund_kiid_metadata.KIID_Published_Date),
         -- Preservar fecha de descarga real: solo actualizar si el nuevo valor no es NULL
         KIID_Downloaded_At  = COALESCE(excluded.KIID_Downloaded_At, fund_kiid_metadata.KIID_Downloaded_At),
         -- SRRI: preservar valor existente si el nuevo es NULL

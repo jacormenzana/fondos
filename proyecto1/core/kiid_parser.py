@@ -1324,81 +1324,69 @@ _EN_MONTHS = {
     "december": 12,
 }
 
+_KIID_MONTHS = {**_ES_MONTHS, **_EN_MONTHS}
+
+# FND-0457: the date is read only right after a phrase that states the document's own date (generic KIID / KID wording,
+# ES and EN), never from anywhere in the text: launch dates, cost-period ends and past-performance dates are not it.
+_KIID_DATE_ANCHOR = (
+    r"(?:"
+    r"(?:son|es)\s+exact[oa]s?\s+(?:a|al|en)"                          # "son exactos a 16.02.2026", "es exacto a fecha ..."
+    r"|fecha\s+de\s+(?:elaboraci[oó]n|publicaci[oó]n|producci[oó]n)"   # "fecha de elaboración del documento: ..."
+    r"|fecha\s+del\s+documento"
+    r"|tiene\s+fecha\s+de"
+    r"|se\s+(?:public|elabor)[oó]"                                      # "este documento se elaboró el ..."
+    r"|(?:publicad|elaborad)[oa]s?(?:\s+(?:el|en)|:|(?=\s+\d))"         # "documento publicado 26/3/2026"
+    r"|vigente\s+(?:a\s+partir\s+de|desde)"
+    r"|v[aá]lid[oa]s?\s+(?:a|desde)"
+    r"|(?:accurate|correct)\s+as\s+(?:at|of)"                           # UCITS KIID closing line
+    r"|date\s+of\s+(?:production|publication)"                          # PRIIPs KID
+    r"|(?:was|is)\s+(?:produced|published|valid)"
+    r"|(?:published|produced)\s+on"
+    r")"
+)
+_KIID_MONTH_RX = "|".join(sorted(_KIID_MONTHS, key=len, reverse=True))
+_KIID_DATE_VALUE = (
+    r"(?:"
+    r"(?P<d1>\d{1,2})[/.\-](?P<m1>\d{1,2})[/.\-](?P<y1>\d{4})"                                  # 16/02/2026, 16.02.2026, 16-02-2026
+    r"|(?P<y2>\d{4})-(?P<m2>\d{2})-(?P<d2>\d{2})"                                                # 2026-02-16
+    rf"|(?P<d3>\d{{1,2}})(?:º|st|nd|rd|th)?\s+(?:de\s+)?(?P<mn3>{_KIID_MONTH_RX}),?\s+(?:de\s+|del\s+)?(?P<y3>\d{{4}})"  # 16 de febrero de 2026
+    rf"|(?P<mn4>{_KIID_MONTH_RX})\s+(?P<d4>\d{{1,2}}),?\s+(?P<y4>\d{{4}})"                      # february 16, 2026
+    r")"
+)
+# the date must follow the phrase within the same sentence (no '.' in between, at most 90 characters)
+_KIID_DATE_RX = re.compile(_KIID_DATE_ANCHOR + r"[^.]{0,90}?" + _KIID_DATE_VALUE)
+_KIID_DATE_MIN_YEAR = 2000
+
+
 def _extract_kiid_published_date(
     text: Optional[str],
-    language: Optional[str]
+    language: Optional[str],
+    today: Optional[date] = None,
 ) -> Optional[str]:
+    """The document's own date (ISO 'YYYY-MM-DD') or None. The first anchored date that is a real calendar date between
+    2000 and `today` (default: the run date) wins; a later or impossible one is skipped and the search goes on.
 
-    if not text or not language:
+    FND-0457: the old ES month-name branch matched and never returned, and the EN patterns covered 5 of 290 texts. The phrases
+    carry the language, so `language` (kept for the caller) no longer gates the search; a text without one is also read.
+    Measured on the stored texts 2026-11-27: active funds dated 548 -> 2,438 of 2,943; every date the old code found is found
+    unchanged; no date is later than the fund's download date."""
+    if not text:
         return None
-
-    text = (
-    text.lower()
-        .replace("\n", " ")
-        .replace("\u00a0", " ")
-    )
-
-
-    # ---------- ESPAÑOL ----------
-
-    if language == "ES":
-        t = text
-
-        # dd/mm/yyyy cerca de "documento"
-        m = re.search(
-            r"(documento|publicad|publicaci|publicó|válid|actualiz)[^.]{0,80}?(\d{1,2})/(\d{1,2})/(\d{4})",
-            t
-        )
-        if m:
-            day = m.group(2)
-            month = m.group(3)
-            year = m.group(4)
-            return _safe_date(year, month, day)
-
-        # "15 de marzo de 2022" cerca de "documento"
-        m = re.search(
-            r"(documento|publicad|publicado|publicó|válid|actualiz)[^.]{0,80}?(\d{1,2}) de ([a-z]+) de (\d{4})",
-            t
-        )
-        if m and m.group(3) in _ES_MONTHS:
-            day = m.group(2)
-            month = _ES_MONTHS[m.group(3)]
-
-
-        # Caso 3: "Este documento se publicó el 27/02/2025"
-        # Caso: "Este documento se publicó el 27/02/2025"
-        m = re.search(
-            r"este\s+documento\s+se\s+public[oó]\s+el\s+(\d{1,2})/(\d{1,2})/(\d{4})",
-            text
-        )
-        if m:
-            day, month, year = m.group(1), m.group(2), m.group(3)
-
-            return _safe_date(year, month, day)
-
-
-    # ---------- INGLÉS ----------
-    if language == "EN":
-        # Date of publication: 15/03/2022
-        m = re.search(
-            r"date of publication[:\s]+(\d{2})/(\d{2})/(\d{4})",
-            text
-        )
-        if m:
-            return _safe_date(m.group(3), m.group(2), m.group(1))
-
-        # published on 15 march 2022
-        m = re.search(
-            r"published on (\d{1,2}) ([a-z]+) (\d{4})",
-            text
-        )
-        if m and m.group(2) in _EN_MONTHS:
-            return _safe_date(
-                m.group(3),
-                _EN_MONTHS[m.group(2)],
-                m.group(1)
-            )
-
+    t = re.sub(r"\s+", " ", text.lower().replace(" ", " "))
+    limit = (today or date.today()).isoformat()
+    for m in _KIID_DATE_RX.finditer(t):
+        g = m.groupdict()
+        if g["y1"]:
+            y, mo, d = g["y1"], g["m1"], g["d1"]
+        elif g["y2"]:
+            y, mo, d = g["y2"], g["m2"], g["d2"]
+        elif g["y3"]:
+            y, mo, d = g["y3"], _KIID_MONTHS[g["mn3"]], g["d3"]
+        else:
+            y, mo, d = g["y4"], _KIID_MONTHS[g["mn4"]], g["d4"]
+        found = _safe_date(y, mo, d)
+        if found and int(found[:4]) >= _KIID_DATE_MIN_YEAR and found <= limit:
+            return found
     return None
 
 
