@@ -176,6 +176,36 @@ def get_isins_with_nav(conn: "psycopg.Connection") -> list[str]:
     return [r[0] for r in rows]
 
 
+def nav_universe_exclusions(conn: "psycopg.Connection") -> dict:
+    """FND-0461: why ISINs of fund_nav_monthly are outside get_isins_with_nav, by cause (the two exclusions of that reader, disjoint):
+    {"nav_all": ISINs with NAV, "no_master": without a fund_master row (P1 has not classified them), "stale_frozen": with a fund_master row
+    and nav_sources.data_status = 'STALE_FROZEN' (excluded on purpose)}."""
+    row = conn.execute(
+        """SELECT COUNT(DISTINCT n.ISIN),
+                  COUNT(DISTINCT n.ISIN) FILTER (WHERE m.ISIN IS NULL),
+                  COUNT(DISTINCT n.ISIN) FILTER (WHERE m.ISIN IS NOT NULL AND s.data_status = 'STALE_FROZEN')
+           FROM fund_nav_monthly n
+           LEFT JOIN fund_master m USING (ISIN)
+           LEFT JOIN nav_sources s USING (ISIN)"""
+    ).fetchone()
+    return {"nav_all": int(row[0] or 0), "no_master": int(row[1] or 0), "stale_frozen": int(row[2] or 0)}
+
+
+def p2_01_check(exclusions: dict, n_universe: int) -> "tuple[bool, str]":
+    """(is_warning, message) of the P2-01 universe check. Pure. A warning only for what needs action: ISINs without a fund_master row (run P1),
+    or counts that do not reconcile (universe + both exclusions != ISINs with NAV). The STALE_FROZEN exclusion is by design and is reported as INFO
+    (FND-0461: it was reported as 'missing from fund_master' on every run)."""
+    nav_all, no_master, frozen = exclusions["nav_all"], exclusions["no_master"], exclusions["stale_frozen"]
+    if n_universe + no_master + frozen != nav_all:
+        return True, (f"[P2-01] los conteos no cuadran: universo {n_universe} + sin fund_master {no_master} + STALE_FROZEN {frozen} "
+                      f"!= {nav_all} ISINs en fund_nav_monthly")
+    if no_master:
+        return True, (f"[P2-01] {no_master} ISINs en fund_nav_monthly sin entrada en fund_master (excluidos del universo P2). "
+                      f"Ejecuta P1 para clasificar esos fondos.")
+    return False, (f"[P2-01] ISIN match OK: {n_universe}/{nav_all} ISINs de fund_nav_monthly en el universo P2 "
+                   f"({frozen} STALE_FROZEN excluidos a proposito, 0 sin fund_master).")
+
+
 def load_nav_daily(conn: "psycopg.Connection", isin: str) -> pd.DataFrame:
     """
     Carga la serie NAV diaria de un fondo desde fund_nav_daily (v24).

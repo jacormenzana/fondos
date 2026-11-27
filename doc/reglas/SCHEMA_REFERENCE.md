@@ -139,11 +139,14 @@ Migración: `db/migrations/20261126_fund_master_geography_source.sql`.
 | Derivatives_Usage | TEXT | `None` \| `Hedging Only` \| `Investment` \| `Both` (MODIFY #12; legacy: `NO`→`None`, `LIMITED`→`Hedging Only`) |
 | Benchmark_Declared | TEXT | Nombre del índice/benchmark declarado |
 
-### Costes y condiciones (9 columnas)
+### Costes y condiciones
+
+Unidades: las columnas de coste **no comparten unidad** (FND-0462). `Ongoing_Charge_Recurrent`, `Entry_Fee_Pct` y `Exit_Fee_Pct` van en **RATIO**; `Management_Fee_Pct`, `Entry_Fee_Pct_Max` y `Exit_Fee_Pct_Max` van en **porcentaje**. Compararlas exige convertir una de las dos (×100 o ÷100); los valores almacenados no se convierten.
 
 | Columna | Tipo | Nota |
 |---------|------|------|
 | Ongoing_Charge_Recurrent | REAL | Gasto corriente **sin costes de transacción**, en **RATIO** (0,0075 = 0,75 %). Lo escribe un único escritor por pase, `cost_scale.resolve_ongoing_charge` (FND-0034): fila de gestión del PRIIPs / OCF del UCITS; nunca el ACI ni el coste de operación |
+| Management_Fee_Pct | REAL | Comisión de gestión, en **porcentaje** (1,45 = 1,45 %; universo activo 2026-11-27: mediana 1,45, máximo 4,3), **no en ratio** como `Ongoing_Charge_Recurrent` |
 | Accumulation_Policy | TEXT | `Accumulation` \| `Distribution` \| `Mixed` |
 | Entry_Fee_Pct | REAL | Comisión de entrada **aplicada**, en **RATIO** (0,05 = 5 %), no en %. Par con `Entry_Fee_Pct_Max` (`shared/fee_state.py`); NULL = sin valor puntual (con techo: condicional) |
 | Exit_Fee_Pct | REAL | Comisión de salida **aplicada**, en **RATIO** (0,01 = 1 %). Par con `Exit_Fee_Pct_Max` |

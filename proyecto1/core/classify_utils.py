@@ -7308,6 +7308,8 @@ def validate_all_semantic_consistency(
         "Leverage_Used":       {"YES": "Yes", "NO": "No", "LIMITED": "Limited"},
         "Accumulation_Policy": {"ACCUMULATION": "Accumulation", "DISTRIBUTION": "Distribution"},
         "Hedging_Policy":      {"HEDGED": "Hedged", "UNHEDGED": "Unhedged"},
+        # FND-0462 (2): the extractor emits upper case; the writer stores Title case, so 157 'not in allowed values' rows per pass were false
+        "Distribution_Frequency": {"MONTHLY": "Monthly", "QUARTERLY": "Quarterly", "SEMI-ANNUAL": "Semi-Annual", "ANNUAL": "Annual"},
     }
     for _cn_col, _cn_map in _CASING_NORM.items():
         _cn_val = cr.get(_cn_col)

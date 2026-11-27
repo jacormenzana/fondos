@@ -87,7 +87,7 @@ from shared import config as shared_config                    # FND-0243: switch
 from shared.eur_nav import is_excluded as eur_excluded, ATTR as EUR_ATTR   # FND-0243
 from shared.eur_nav import assert_release_coupling                          # FND-0243 D4
 from src.readers.db_readers import (
-    load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
+    load_nav, get_isins_with_nav, nav_universe_exclusions, p2_01_check, load_ipc, ipc_available, load_nav_daily,
     load_rf_rate,                    # §4g — historical risk-free rate (€STR proxy)
     count_isins_with_new_nav,        # P2-04 preflight
     load_ts_cohort,                  # observability: load_ts cohort (two-timestamp model)
@@ -1160,26 +1160,17 @@ def run(
         # -- Universo de ISINs -------------------------------------
         _isins_explicit = isins is not None  # P2-04: bypass preflight on targeted runs
         if isins is None:
-            # P2-01 fix: get_isins_with_nav filters to ISINs present in
-            # fund_master (INNER JOIN). Compare against the raw count to
-            # surface any future mismatch early.
-            _nav_all = conn.execute(
-                "SELECT COUNT(DISTINCT ISIN) FROM fund_nav_monthly"
-            ).fetchone()[0]
+            # P2-01 fix: get_isins_with_nav keeps ISINs present in fund_master
+            # (INNER JOIN) and not STALE_FROZEN. FND-0461: each exclusion is
+            # counted by its cause, so only a missing fund_master row (or counts
+            # that do not reconcile) is a warning; STALE_FROZEN is by design.
             isins = get_isins_with_nav(conn)
-            _nav_master = len(isins)
-            if _nav_master < _nav_all:
+            _p201_warn, _p201_msg = p2_01_check(nav_universe_exclusions(conn), len(isins))
+            if _p201_warn:
                 n_warnings += 1
-                logger.warning(
-                    f"[P2-01] {_nav_all - _nav_master} ISINs en fund_nav_monthly "
-                    f"sin entrada en fund_master (excluidos del universo P2). "
-                    f"Ejecuta P1 para clasificar esos fondos."
-                )
+                logger.warning(_p201_msg)
             else:
-                logger.info(
-                    f"[P2-01] ISIN match OK: {_nav_master}/{_nav_all} ISINs "
-                    f"de fund_nav_monthly presentes en fund_master."
-                )
+                logger.info(_p201_msg)
 
         if not isins:
             logger.info(

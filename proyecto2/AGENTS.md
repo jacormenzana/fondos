@@ -116,6 +116,7 @@ proyecto2/
     readers/
       test_db_readers_misc_pg.py
       test_eur_nav_readers_fnd0243_pg.py
+      test_p2_01_universe_fnd0461.py
       test_preflight.py
       test_preflight_pg.py
       test_reliability_signals.py
