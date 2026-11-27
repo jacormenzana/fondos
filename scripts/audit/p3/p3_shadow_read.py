@@ -20,8 +20,9 @@ with no figure costs 0) is reported next to the verdict and never gates. Cost dr
 Coverage (section 14, item 3): at least FEE_COVERAGE_MIN of AC's bought notional in the window (positive weight changes between consecutive counted rows) must be in funds with an exact fee or a ceiling on BOTH
 sides; below it R6 is NOT INFORMATIVE and carried to the next review. The same share is reported for L and B, and the exit coverage of sold notional for all three.
 
-Readiness (R6): the rows span at least 6 calendar months and the last 6 calendar months have at most 1 gap (more postpones the review by a month). The statistics use the counted months of that window,
-common to the three series when B has rows. Reading choices this script makes where the amendment is silent are printed with the report ("reading").
+Readiness (R6, FND-0453): the last 6 COUNTED months exist (common to AC and, when it has rows, to B); the window from the first of them to the newest row holds at most 1 month without
+a row (more postpones the review by a month). Six counted months therefore need at least seven months of rows. Reading choices this script makes where the amendment is silent are printed with
+the report ("reading").
 
 After an adoption (FND-0445, doc/backlog/PKG_M_ac_adoption.md section 2): the adoption month and arm come from the live flags recorded by the baseline stream (P3_BASELINE_SHADOW). Before it the series are
 the ones above; from it on the adopted arm = `off` of the baseline rows (the DRAFT) and L = their `chain`. A row of month m earns the return of month m+1 (month-end NAV to month-end NAV), net of the cost of
@@ -121,20 +122,25 @@ def counted_months(by_month: dict) -> list:
     return [_month(o) for o in sorted(present) if (o - 1) in present]
 
 
-def readiness(by_month: dict, n: int = REVIEW_MONTHS, max_gaps: int = MAX_GAPS) -> dict:
-    """May the review run? The rows span at least `n` calendar months and the last `n` calendar months have at most `max_gaps` months without a row."""
+def readiness(by_month: dict, n: int = REVIEW_MONTHS, max_gaps: int = MAX_GAPS, b_by: "dict | None" = None) -> dict:
+    """May the review run? It takes the last `n` COUNTED months (common to the band-only stream when it has rows); the window stretches from the first of them to the newest row, and at most
+    `max_gaps` months of it may lack a row (else the review is postponed). The seed month and the month after a gap are never counted, so six counted months need at least seven months of rows."""
     if not by_month:
-        return {"ready": False, "span": 0, "gaps_in_window": 0, "window": [], "reason": "NOT READY: no SHADOW row yet"}
+        return {"ready": False, "span": 0, "gaps_in_window": 0, "window": [], "months": [], "reason": "NOT READY: no SHADOW row yet"}
     ords = sorted(_ordinal(m) for m in by_month)
-    span = ords[-1] - ords[0] + 1
-    window = [_month(o) for o in range(ords[-1] - n + 1, ords[-1] + 1)]
+    counted = counted_months(by_month)
+    if b_by:
+        both = set(counted_months(b_by))
+        counted = [m for m in counted if m in both]
+    months = counted[-n:]
+    window = [_month(o) for o in range(_ordinal(months[0]), ords[-1] + 1)] if months else []
     missing = [m for m in window if m not in by_month]
-    if span < n:
-        return {"ready": False, "span": span, "gaps_in_window": len(missing), "window": window, "reason": f"NOT READY: the rows span {span} calendar month(s), the review needs {n}"}
+    out = {"ready": False, "span": ords[-1] - ords[0] + 1, "gaps_in_window": len(missing), "window": window, "months": months}
+    if len(months) < n:
+        return {**out, "reason": f"NOT READY: {len(months)} counted month(s), the review needs {n}"}
     if len(missing) > max_gaps:
-        return {"ready": False, "span": span, "gaps_in_window": len(missing), "window": window,
-                "reason": f"NOT READY: {len(missing)} gap(s) in the last {n} months ({', '.join(missing)}); the review is postponed by a month"}
-    return {"ready": True, "span": span, "gaps_in_window": len(missing), "window": window, "reason": "ready"}
+        return {**out, "reason": f"NOT READY: {len(missing)} gap(s) in the window of the last {n} counted months ({', '.join(missing)}); the review is postponed by a month"}
+    return {**out, "ready": True, "reason": "ready"}
 
 
 def mixed_builds(one: dict, other: dict, months) -> list:
@@ -329,15 +335,10 @@ def _arm_stats(weights_by_month: dict, months: list, entry, exit_, de, dx) -> di
 def review_r6(ac_rows: list, b_rows: list, fees: pd.DataFrame) -> dict:
     """The R6 numbers. Raises NotReady before the window exists, so no comparison value can be obtained early."""
     ac_by, b_by = last_per_month(ac_rows), last_per_month(b_rows)
-    ready = readiness(ac_by)
+    ready = readiness(ac_by, b_by=b_by)
     if not ready["ready"]:
         raise NotReady(ready["reason"])
-    window = set(ready["window"])
-    months = [m for m in counted_months(ac_by) if m in window]
-    if b_by:
-        months = [m for m in months if m in set(counted_months(b_by))]
-    if not months:
-        raise NotReady("NOT READY: no counted month common to the series in the window")
+    months = ready["months"]
     series = {"L": _series_rows(ac_by, "L"), "AC": _series_rows(ac_by, "AC")}
     if b_by:
         series["B"] = _series_rows(b_by, "B")
@@ -654,7 +655,7 @@ def run(argv: list, *, rows_ac: list, rows_b: list, n_errors: int, fees: "pd.Dat
         if rows_base or n_base_errors:
             text += "\n\n" + render_baseline_integrity(rows_base or [], n_base_errors)
         return 0, text
-    ready = readiness(last_per_month(rows_ac))
+    ready = readiness(last_per_month(rows_ac), b_by=last_per_month(rows_b))
     if not ready["ready"]:
         return 3, ready["reason"]
     got = _snapshot(args.snapshot, "R6", fees)

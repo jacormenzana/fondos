@@ -24,7 +24,7 @@
 **State.**
 - The first live row (#1569488, 2026-11-22) was verified on integrity fields only (`HANDOFF_P3_AFTER_AC_SHADOW.md`).
 - The reader exists, built test-first (22 tests).
-- Its default mode prints only the whitelisted integrity fields. `--review` is refused (exit 3) until the rows span 6 calendar months with at most 1 gap.
+- Its default mode prints only the whitelisted integrity fields. `--review` is refused (exit 3) until there are 6 counted months (common to AC and B; the seed month and the month after a gap are not counted), with at most 1 gap in the window that holds them (FND-0453, 2026-11-27).
 - It applied Amendment 1 only: it filled an unknown fee with the median of the known fees of the funds held (a reading the owner validated on 11-22, replaced on 11-26) and had no coverage condition.
 - **DONE 2026-11-27 (`Refs: FND-0438`): changes (a) to (e) below are built** (31 tests; the two that pinned the old rule, the median fill and the two-column snapshot, were rewritten to the new one; the other 20 are unchanged apart from the snapshot columns). Integrity mode on live data: candidate pool 940 funds, 97.4 % with a fee or a ceiling on both sides. The review itself still waits for its window.
 

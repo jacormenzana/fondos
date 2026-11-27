@@ -105,14 +105,51 @@ def test_year_boundary_months_are_consecutive():
 
 
 # ================================================================ (2) readiness: the review refuses early ================================================================
-def test_readiness_needs_a_six_month_span_and_at_most_one_gap_in_the_window():
-    ok = {m: 1 for m in SIX[:6]}
-    assert R.readiness(ok)["ready"] is True
-    assert R.readiness({m: 1 for m in SIX[:5]})["ready"] is False                                          # five months
-    assert R.readiness({m: 1 for m in ["2027-01", "2027-03", "2027-04", "2027-05", "2027-06"]})["ready"] is True    # span 6, one gap
-    two = R.readiness({m: 1 for m in ["2027-01", "2027-03", "2027-05", "2027-06"]})                        # two gaps in the window
-    assert two["ready"] is False and "postpone" in two["reason"].lower()
+def _have(*months):
+    return {m: 1 for m in months}
+
+
+def _run_of(first, n):
+    return [str(p) for p in pd.period_range(first, periods=n, freq="M")]
+
+
+def test_readiness_needs_six_counted_months_the_seed_month_is_not_one():
+    assert R.readiness(_have(*_run_of("2027-01", 6)))["ready"] is False                                    # six months of rows = five counted
+    r = R.readiness(_have(*_run_of("2027-01", 7)))
+    assert r["ready"] is True and r["months"] == _run_of("2027-02", 6) and r["window"] == r["months"] and r["gaps_in_window"] == 0
     assert R.readiness({})["ready"] is False
+
+
+def test_the_first_review_with_rows_from_november_2026_is_the_may_2027_build():
+    assert R.readiness(_have(*_run_of("2026-11", 6)))["ready"] is False                                    # ..2027-04: five counted (FND-0453)
+    r = R.readiness(_have(*_run_of("2026-11", 7)))
+    assert r["ready"] is True and r["months"] == _run_of("2026-12", 6)
+
+
+def test_one_gap_is_allowed_and_the_window_stretches_to_hold_six_counted_months():
+    rows = [m for m in _run_of("2027-01", 9) if m != "2027-03"]                                            # 03 missing, so 04 is not counted either
+    assert R.readiness(_have(*rows[:-1]))["ready"] is False
+    r = R.readiness(_have(*rows))
+    assert r["ready"] is True and r["months"] == ["2027-02", "2027-05", "2027-06", "2027-07", "2027-08", "2027-09"]
+    assert r["window"] == _run_of("2027-02", 8) and r["gaps_in_window"] == 1
+
+
+def test_two_gaps_in_the_window_postpone_until_the_older_one_leaves_it():
+    gone = {"2027-03", "2027-06"}
+    r = R.readiness(_have(*[m for m in _run_of("2027-01", 11) if m not in gone]))                          # six counted, two gaps among them
+    assert r["ready"] is False and r["gaps_in_window"] == 2 and "postpone" in r["reason"].lower()
+    r = R.readiness(_have(*[m for m in _run_of("2027-01", 12) if m not in gone]))
+    assert r["ready"] is True and r["gaps_in_window"] == 1 and len(r["months"]) == 6
+
+
+def test_a_month_the_band_stream_cannot_count_is_replaced_by_an_older_or_later_one():
+    ac = _have(*_run_of("2027-01", 7))
+    b = _have(*[m for m in _run_of("2027-01", 7) if m != "2027-04"])
+    assert R.readiness(ac, b_by=b)["ready"] is False                                                       # only four months common to both
+    ac = _have(*_run_of("2027-01", 9))
+    b = _have(*[m for m in _run_of("2027-01", 9) if m != "2027-04"])
+    r = R.readiness(ac, b_by=b)
+    assert r["ready"] is True and r["months"] == ["2027-02", "2027-03", "2027-06", "2027-07", "2027-08", "2027-09"] and r["gaps_in_window"] == 0
 
 
 def test_review_mode_refuses_before_the_window_exists_and_shows_nothing():
@@ -236,11 +273,13 @@ def test_review_end_to_end_on_a_ready_window(tmp_path):
 
 
 def test_review_uses_only_months_counted_for_all_three_series():
-    ac_rows, b_rows = _ready_rows()
+    months = [str(p) for p in pd.period_range("2027-01", periods=9, freq="M")]
+    hold = lambda i: _w(("A", 0.5), ("B", 0.5))
+    ac_rows, b_rows = _rows(months, hold, hold), _rows(months, hold, hold)
     b_rows = [r for r in b_rows if r["built_at"][:7] != "2027-04"]                                         # B misses a month: its counted set shrinks
     fees = _fees({i: (0.02, 0.01, np.nan, np.nan, "Mixtos") for i in "ABCD"})
     res = R.review_r6(ac_rows, b_rows, fees)
-    assert "2027-04" not in res["months"] and "2027-05" not in res["months"]                               # 2027-05 follows B's gap: excluded as well
+    assert len(res["months"]) == 6 and "2027-04" not in res["months"] and "2027-05" not in res["months"]    # 2027-05 follows B's gap: excluded as well
 
 
 # ================================================================ (7) the frozen snapshot ===============================================================================
