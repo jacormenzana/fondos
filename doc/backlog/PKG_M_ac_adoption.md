@@ -69,11 +69,11 @@
 - Recorder `proyecto3/src/baseline_shadow.py`, hooked last in `p3_build_portfolio.py`. Reader: `p3_shadow_read.py --after-adoption`; the default view adds an integrity block once baseline rows exist.
 - Identity check: while the live arm is L, funds, weights and scores must equal the DRAFT. A mismatch keeps the `SHADOW` row (so the monthly schedule does not rebuild every day) and adds one `P3_BASELINE_SHADOW_ERROR` row.
 - Funds with equal scores are ordered as the live query ordered them (that order is arbitrary; 1 such tie touched a held fund on 2026-11-27).
-- Readings where the preregistration is silent (assistant's; **owner to confirm before the first counted use**):
+- Readings where the preregistration is silent (assistant's proposal; **all 8 confirmed by the owner on 2026-11-27**, before the first counted month):
   - the R24 / R36 lower bound is one-sided at 5 %;
   - R12 / R24 / R36 use the first 12 / 24 / 36 months of the spliced series (shadow months before adoption included);
   - in the adoption month the adopted arm trades from L's DRAFT; that trade is in the returns and out of the turnover ratio;
-  - a fund without a month's return is renormalised away;
+  - a fund without a month's return is renormalised away; **the owner added:** the reader also prints, per month, the weight that was dropped (descriptive, not gating; not built yet, on the owner's order);
   - months after a revert are not read;
   - the adopted arm is AC only at H = 0.58 (both flags with another H is not a candidate);
   - a fund's latest observed month is provisional and not read; a month in which nothing held has a return is no observation;
