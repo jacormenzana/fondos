@@ -121,6 +121,9 @@ def validate_db_check(args) -> list:
     elif name == "p2_run_summary":
         if len(p) != 2 or not _is_int(p[0]) or not _is_int(p[1], 1):
             return ["p2_run_summary needs [minimum processed funds >= 0, a number of days >= 1]"]
+    elif name == "family_class_collisions":
+        if p:
+            return ["family_class_collisions takes no argument"]
     elif name == "audit_rule_clear":
         if len(p) < 3 or p[0] not in AUDIT_DOMAINS or not (isinstance(p[1], str) and _RULE_ID.fullmatch(p[1])) \
                 or not all(isinstance(i, str) and _ISIN.fullmatch(i) for i in p[2:]):
@@ -133,7 +136,7 @@ def validate_db_check(args) -> list:
         if not p or len(p) % 2 or not all(isinstance(n, str) and _NATURE.fullmatch(n) for n in natures) or len(set(natures)) != len(natures) or not all(_is_int(v) for v in p[1::2]):
             return ["geography_default_global needs pairs [fund nature, its level at delivery >= 0], each nature once"]
     else:
-        return [f"unknown db_check {name!r} (known: audit_rule_clear, geography_default_global, geography_without_source, ingestion_events, p2_run_summary, table_rows)"]
+        return [f"unknown db_check {name!r} (known: audit_rule_clear, family_class_collisions, geography_default_global, geography_without_source, ingestion_events, p2_run_summary, table_rows)"]
     return []
 
 
@@ -328,6 +331,16 @@ def probe_db_check(conn, *args) -> tuple:
         value = conn.execute("SELECT COUNT(*) FROM p2_pipeline_log WHERE step = 'RUN_SUMMARY' AND created_at >= now() - make_interval(days => %s) "
                              "AND COALESCE(substring(message from 'processed=([0-9]+)')::int, -1) >= %s", (days, minimum)).fetchone()[0]
         return value > 0, f"{value} P2 RUN_SUMMARY row(s) in the last {days} d with processed >= {minimum}"
+    if name == "family_class_collisions":                              # FND-0444: the rule and its allowlist live in proyecto3/src/duplicate_holdings.py (one definition with the promotion gate, P#11)
+        sys.path.insert(0, str(ROOT))
+        from datetime import date
+        from proyecto3.src import duplicate_holdings as dh
+        found = dh.family_collisions(conn, date.today())
+        if found is None:
+            return None, "cannot tell: the EUR view is off or no fund has enough months of returns"
+        sample = ", ".join(f"{a}/{b}" for a, b in found["examples"])
+        return found["split"] == 0, (f"{found['split']} same-manager return-twin pair(s) with a different fund_family_id (needs 0; {found['allowed']} more allowlisted as distinct sub-funds)"
+                                     + (f", e.g. {sample}" if sample else ""))
     # audit_rule_clear: the latest FINISHED run of the domain persists no violation of THIS rule for any of the funds. A held-out fund is not an obstacle here: the claim is about one rule, and the persisted
     # rows are per rule. An acceptance that hides a partly accepted rule makes it unverifiable (as in audit_isins_clear).
     domain, rule_id, isins = p[0], p[1], p[2:]

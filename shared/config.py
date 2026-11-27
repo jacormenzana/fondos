@@ -581,6 +581,38 @@ DUPLICATE_FUND_MIN_VOL: float = 0.005
 # acts on every live build and on the forward shadows (they share the builder); the PIT backtest dedupes by family only. Unreadable inputs fail the build.
 # Rollback = False (the selection dedupes by fund_family_id only, as before). Retire when FND-0444 repairs the key.
 P3_BUILDER_DUPLICATE_FUND_ENABLED: bool = True
+# FND-0444 (owner rulings 2026-11-27): couples of DIFFERENT sub-funds of one manager, proven by their documents, whose returns the duplicate rule cannot tell apart. Used ONLY by the closing check
+# `db_check family_class_collisions` (duplicate_holdings.family_collisions): the builder's twin skip, GATE:DUPLICATE_FUND and the shadows do NOT read it (selection frozen until the R6 verdict, FND-0455).
+# Every fund of side `a` is distinct from every fund of side `b`. At most 180 days; after `until` the pairs count again. Pre-audit of 2026-11-27; the 5 unresolved pairs are deliberately absent.
+FAMILY_COLLISION_ALLOWLIST: tuple = (
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("IE00BL6KD459",), "b": ("IE00B1W56J03", "IE00BD0NCT25", "IE00BYQQ1F19"),
+     "evidence": "KIID product names: iShares North America Index Fund (IE) / iShares US Index Fund (IE)"},
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("IE00B45H7020",), "b": ("IE00B4KZ8V93",),
+     "evidence": "KIID product names: BlackRock ICS US Treasury Fund / ICS US Dollar Liquidity Fund"},
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("LU0157929810",), "b": ("LU1434521826",),
+     "evidence": "KIID product names: Candriam Bonds Euro Short Term / Candriam Sustainable Euro Short Term"},
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("LU1965928226",), "b": ("LU1546474658", "LU1546477677", "LU1673813595"),
+     "evidence": "KIID product names: DWS Invest ESG Floating Rate Notes / DWS USD Floating Rate Notes"},
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("LU2001241384", "LU2001241897", "LU2001242275"), "b": ("LU0300357554", "LU0300357638", "LU0300357802", "LU0441433728", "LU1663872726", "LU1663874342"),
+     "evidence": "KIID product names: DWS Invest ESG Euro Corporate Bonds / DWS Invest Euro Corporate Bonds"},
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("LU2132879748", "LU2132879821", "LU2132880084"), "b": ("LU2132882965", "LU2132883005", "LU2258449417"),
+     "evidence": "KIID product names: DB Balanced SAA (EUR) Plus / DB Growth SAA (EUR)"},
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("LU0011815304", "LU0161687693"), "b": ("LU0323456466", "LU0616802848"),
+     "evidence": "KIID product names: JPM USD Standard Money Market VNAV / JPM Income Opportunity"},
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("LU1873130741", "LU1873131046", "LU1873131392"), "b": ("LU1873132101", "LU1873132366", "LU1873132523"),
+     "evidence": "KIID product names: JPM USD Liquidity LVNAV / JPM USD Treasury CNAV"},
+    {"ap": "FND-0444", "since": "2026-11-27", "until": "2027-05-26",
+     "a": ("IE00BDFB7308",), "b": ("IE00BH65QN23", "IE00BN71SS04"),
+     "evidence": "KIID product names: Vanguard Global Short-Term Corporate Bond Index / Global Short-Term Bond Index"},
+)
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
 # cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.
 AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30

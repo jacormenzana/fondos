@@ -19,13 +19,22 @@ different money-market or floating-rate funds of one manager match), so rule 2 d
 The same rule serves the portfolio BUILDER (twins_of), the fallback for the split family key (FND-0444): the shared selection function skips a candidate
 whose twin is already chosen.
 
+family_collisions counts the split pairs of the whole universe for the closing check of FND-0444; it is the only reader of the allowlist of distinct sub-funds, which selection does not use.
+
 The top of the module is pure (R-7); the loaders import the database helpers inside their functions.
 """
 from __future__ import annotations
 
 import math
+import re
+from datetime import date, timedelta
 
 VIEWS = ("eur", "loc")
+ALLOWLIST_MAX_DAYS = 180
+_ISIN = re.compile(r"[A-Z]{2}[A-Z0-9]{9}[0-9]")
+_TICKET = re.compile(r"FND-[0-9]{4}")
+Q_UNIVERSE_HOLDINGS = ("SELECT isin, fund_family_id, management_company FROM fund_master "
+                       "WHERE in_current_universe = 1 AND management_company IS NOT NULL AND btrim(management_company) <> ''")
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -128,6 +137,45 @@ def monthly_returns(rows) -> dict:
     return out
 
 
+def _couple_problems(e: dict) -> list:
+    a, b = tuple(e.get("a") or ()), tuple(e.get("b") or ())
+    out = []
+    if not _TICKET.fullmatch(str(e.get("ap", ""))):
+        out.append(f"'ap' {e.get('ap')!r} is not a ticket id")
+    if not a or not b:
+        out.append("each side needs at least one fund")
+    if set(a) & set(b):
+        out.append("a fund is on both sides")
+    if any(not _ISIN.fullmatch(str(i)) for i in (*a, *b)):
+        out.append("an entry is not an ISIN")
+    if len(str(e.get("evidence", "")).strip()) < 20:
+        out.append("'evidence' must say what proves the two are different sub-funds")
+    try:
+        since, until = date.fromisoformat(str(e.get("since"))), date.fromisoformat(str(e.get("until")))
+    except ValueError:
+        return out + ["'since' and 'until' must be ISO dates"]
+    if until <= since:
+        out.append("'until' must be after 'since'")
+    elif until - since > timedelta(days=ALLOWLIST_MAX_DAYS):
+        out.append(f"a couple lasts at most {ALLOWLIST_MAX_DAYS} days")
+    return out
+
+
+def allowlist_problems(allowlist) -> list:
+    """What is wrong with the allowlist of distinct sub-funds (empty = fine)."""
+    return [f"couple {n}: {why}" for n, e in enumerate(allowlist, 1) for why in _couple_problems(e)]
+
+
+def allowed_pairs(allowlist, on: date) -> set:
+    """{frozenset((isin, isin))} of the well-formed couples in force on `on` (since <= on <= until): every fund of side a with every fund of side b."""
+    out = set()
+    for e in allowlist:
+        if _couple_problems(e) or not date.fromisoformat(e["since"]) <= on <= date.fromisoformat(e["until"]):
+            continue
+        out |= {frozenset((a, b)) for a in e["a"] for b in e["b"]}
+    return out
+
+
 # ---------------------------------------------------------------------------------------------------------------------------------------------------
 # database
 # ---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -149,6 +197,34 @@ def load_returns(conn, isins: list, window_months: int) -> dict:
         frame["nav"] = frame["nav"].astype(float)
     eur = apply_eur_view_frame(conn, frame.copy()) if not frame.empty else frame
     return {"loc": monthly_returns(rows), "eur": monthly_returns(eur[["isin", "date", "nav"]].itertuples(index=False, name=None))}
+
+
+def family_collisions(conn, on: date) -> "dict | None":
+    """{'split': n, 'allowed': n, 'examples': [(isin, isin)]} over the active universe: pairs of one manager that rule 2 calls one fund while their fund_family_id differ or are missing; `allowed` are
+    the pairs of an allowlist couple in force on `on` (not counted). None when it cannot be judged: the EUR view is off (a EUR and a USD class would never match) or no fund has enough months."""
+    from shared import config as cfg
+    if not cfg.EUR_NAV_CONVERSION_ENABLED:
+        return None
+    groups: dict = {}
+    for isin, family, manager in conn.execute(Q_UNIVERSE_HOLDINGS).fetchall():
+        groups.setdefault(_manager_key(manager), []).append({"isin": isin, "family": family, "manager": manager})
+    groups = {k: v for k, v in groups.items() if len(v) > 1 and (len({h["family"] for h in v}) > 1 or any(not h["family"] for h in v))}
+    isins = sorted(h["isin"] for v in groups.values() for h in v)
+    returns = load_returns(conn, isins, cfg.DUPLICATE_FUND_WINDOW_MONTHS) if isins else {}
+    if not any(len(series) >= cfg.DUPLICATE_FUND_MIN_MONTHS for series in (returns.get("loc") or {}).values()):
+        return None
+    allowed = allowed_pairs(cfg.FAMILY_COLLISION_ALLOWLIST, on)
+    split, excused = [], 0
+    for holdings in groups.values():
+        family = {h["isin"]: h["family"] for h in holdings}
+        for a, b, _why in _pairs(holdings, returns):
+            if family[a] and family[a] == family[b]:
+                continue
+            if frozenset((a, b)) in allowed:
+                excused += 1
+            else:
+                split.append((a, b))
+    return {"split": len(split), "allowed": excused, "examples": sorted(split)[:5]}
 
 
 def check_scenario(conn, isins) -> "tuple[list | None, str | None]":
