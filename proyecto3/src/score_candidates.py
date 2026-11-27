@@ -105,24 +105,27 @@ def load_current_candidates(conn: "psycopg.Connection",
 
     Columnas: CANDIDATE_COLUMNS. DataFrame vacio (con esas columnas) si no hay
     ninguno. Filtra ademas a fondos con In_Current_Universe = 1.
+
+    FND-0450: la ultima ejecucion de cada bloque se resuelve UNA vez (subconsulta agrupada, unida por bloque y fecha). Antes era un SELECT MAX correlacionado que
+    Postgres evaluaba por cada fila del historial (cerca de un minuto por llamada). Mismas filas y mismo orden: tests/test_candidate_query_fnd0450_pg.py.
     """
     rows = conn.execute("""
         SELECT fs.block, fs.isin, fs.score_total,
                fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
                fm.fund_family_id
-        FROM fund_scores fs
+        FROM (SELECT cur.block, MAX(cur.as_of_date) AS as_of_date
+              FROM fund_scores cur
+              WHERE cur.score_version = %s
+                AND cur.regime = %s
+                AND (%s::text IS NULL OR cur.block = %s::text)
+              GROUP BY cur.block) run
+        JOIN fund_scores fs ON fs.block = run.block AND fs.as_of_date = run.as_of_date
         JOIN fund_master fm ON fm.ISIN = fs.isin
         WHERE fs.score_version = %s
           AND fs.regime = %s
-          AND (%s::text IS NULL OR fs.block = %s::text)
-          AND fs.as_of_date = (
-              SELECT MAX(cur.as_of_date) FROM fund_scores cur
-              WHERE cur.block = fs.block
-                AND cur.score_version = fs.score_version
-                AND cur.regime = fs.regime)
           AND fs.eligible = 1
           AND fs.score_total > 0
           AND fm.In_Current_Universe = 1
         ORDER BY fs.block, fs.score_total DESC
-    """, (score_version, regime, subportfolio, subportfolio)).fetchall()
+    """, (score_version, regime, subportfolio, subportfolio, score_version, regime)).fetchall()
     return pd.DataFrame([tuple(r) for r in rows], columns=CANDIDATE_COLUMNS)
