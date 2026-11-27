@@ -72,6 +72,8 @@ FLAG_FAMILIES: dict = {
     "NAV_MONTH_END_ALIGN_ENABLED": ("risk", "macro", "persistence", "rolling"),
     # FND-0427: window_coverage_ok gates the risk family's rolling horizons, the rolling timeseries and the momentum windows.
     "ROLLING_WINDOW_COVERAGE_ENABLED": ("risk", "rolling", "momentum"),
+    # FND-0443: the pruner also clears the windows the coverage rule rejects entirely. Switching it ON recomputes the rolling family, which removes the leftovers.
+    "ROLLING_UNCOVERED_PRUNE_ENABLED": "rolling",
     # FND-0426: the ytd horizon (metric return_cum) is written by the risk family.
     "YTD_METRIC_ENABLED": "risk",
 }

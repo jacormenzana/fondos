@@ -215,3 +215,38 @@ class TestYtd:
     def test_the_real_series_uses_the_same_function(self):
         real = self._series([("2025-12-31", 100.0), ("2026-10-31", 101.5)])
         assert ytd_return(real)["value"] == pytest.approx(0.015)
+
+
+# ------------------------------------------- FND-0443: which windows did the coverage rule reject? (the pruner needs them) ------------------------------------------
+class TestUncoveredWindows:
+    WINDOWS = {"rolling_1y": 12, "rolling_10y": 120}
+
+    def _run(self, nav, monkeypatch, on=True, **kw):
+        from shared import config
+        from src.calculations.rolling_stats import compute_rolling_rows
+        monkeypatch.setattr(config, "ROLLING_WINDOW_COVERAGE_ENABLED", on, raising=False)
+        uncovered: set = set()
+        rows = compute_rolling_rows("X", nav, self.WINDOWS, min_obs=12, uncovered_windows=uncovered, **kw)
+        return rows, uncovered
+
+    def test_a_window_with_no_covered_point_is_reported_although_it_writes_no_row(self, monkeypatch):
+        rows, uncovered = self._run(_monthly("2023-10-31", "2026-10-31"), monkeypatch)
+        assert "rolling_10y" in uncovered and not [r for r in rows if r["window"] == "rolling_10y"]
+
+    def test_reporting_changes_no_row(self, monkeypatch):
+        from src.calculations.rolling_stats import compute_rolling_rows
+        nav = _monthly("2023-10-31", "2026-10-31")
+        rows, _ = self._run(nav, monkeypatch)
+        assert rows == compute_rolling_rows("X", nav, self.WINDOWS, min_obs=12)
+
+    def test_too_few_observations_is_not_a_coverage_rejection(self, monkeypatch):
+        rows, uncovered = self._run(_monthly("2026-05-31", "2026-10-31"), monkeypatch)           # 6 rows: nothing reaches the coverage rule
+        assert rows == [] and uncovered == set()                                                   # a short computation never wipes a series
+
+    def test_switch_off_reports_nothing(self, monkeypatch):
+        _rows, uncovered = self._run(_monthly("2023-10-31", "2026-10-31"), monkeypatch, on=False)
+        assert uncovered == set()
+
+    def test_a_daily_series_is_not_judged(self, monkeypatch):
+        _rows, uncovered = self._run(_monthly("2023-10-31", "2026-10-31"), monkeypatch, periods_per_year=252)
+        assert uncovered == set()

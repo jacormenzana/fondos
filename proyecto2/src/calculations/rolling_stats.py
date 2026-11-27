@@ -219,6 +219,7 @@ def compute_rolling_rows(
     risk_free_rate: float = 0.0,
     rf_series: pd.DataFrame | None = None,
     deflation_diagnostics: list[dict] | None = None,
+    uncovered_windows: set | None = None,
 ) -> list[dict]:
     """
     Calcula las series rolling de las 5 métricas curadas para un ISIN.
@@ -247,6 +248,9 @@ def compute_rolling_rows(
                       cada punto rolling usa la tasa activa en esa fecha (forward-fill),
                       eliminando la distorsión histórica del Sharpe/Sortino con tipo plano.
                       (§4g del plan de re-ingeniería 2026-08.)
+    uncovered_windows : opcional, keyword-only (FND-0443). Si se pasa un set, recibe el nombre de cada ventana en la que la regla de cobertura (FND-0427) rechazo
+                      algun punto. Una ventana rechazada por entero no produce filas, y el podador (metrics_writer.prune_timeseries) necesita saberlo para
+                      borrar las filas antiguas. Un rechazo por min_obs NO se anota: un calculo corto nunca borra una serie.
     deflation_diagnostics : opcional, keyword-only, backward-compatible (default None -- ningun
                       llamador existente lo pasa). Si se provee una lista, y hay ipc_df pero
                       deflate_nav() (FND-0114, 2026-09-28) no puede producir una serie real
@@ -346,6 +350,8 @@ def compute_rolling_rows(
                 continue
             if _cov_on and (not window_span_ok(dates[0], dates[i], w)
                             or reason_for_months(_cov_months[start : i + 1], _cov_min, _cov_gap) is not None):
+                if uncovered_windows is not None:
+                    uncovered_windows.add(window_name)          # FND-0443
                 continue
             date_str = dates[i].date().isoformat()
 

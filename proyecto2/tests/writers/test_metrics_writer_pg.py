@@ -489,3 +489,24 @@ def test_write_metrics_batch_noop_cases(pg_session_conn, pg_conn_module_schema):
     assert write_metrics_batch(conn, _items(), dry_run=True, **_KW) == 0
     assert write_metrics_batch(conn, [("ES0001", "rolling_1y", [])], dry_run=False, **_KW) == 0
     assert _dump(conn) == []
+
+
+def test_prune_timeseries_removes_a_window_the_coverage_rule_rejected_entirely(pg_session_conn, pg_conn_module_schema):
+    """FND-0443: a window with no covered point is absent from the computed rows, so FND-0301's prune left every old row in it. The windows the computation
+    rejected are passed in and cleared; a window neither computed nor rejected (a failed or short computation) is still left alone."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metric_timeseries(conn)
+    old = [_pr("ES0001", "rolling_10y", "2026-09-30"), _pr("ES0001", "rolling_10y", "2026-10-31"), _pr("ES0001", "rolling_1y", "2026-10-31"),
+           _pr("ES0001", "rolling_5y", "2026-10-31"), _pr("ES0002", "rolling_10y", "2026-10-31")]
+    write_timeseries(conn, old, dry_run=False, algorithm_version="V1", batch_id="B1")
+    computed = [_pr("ES0001", "rolling_1y", "2026-10-31")]
+    assert prune_timeseries(conn, "ES0001", computed, dry_run=False) == 0                                    # without the rejected windows: nothing goes
+    assert prune_timeseries(conn, "ES0001", computed, dry_run=True, uncovered_windows={"rolling_10y"}) == 2
+    assert prune_timeseries(conn, "ES0001", computed, dry_run=False, uncovered_windows={"rolling_10y"}) == 2
+    assert _ts_dates(conn, "ES0001", "rolling_10y") == []
+    assert _ts_dates(conn, "ES0001", "rolling_1y") == ["2026-10-31"] and _ts_dates(conn, "ES0001", "rolling_5y") == ["2026-10-31"]
+    assert _ts_dates(conn, "ES0002", "rolling_10y") == ["2026-10-31"]                                        # another fund is untouched
+    # every window rejected: no computed row at all, and the rejected one is still cleared
+    assert prune_timeseries(conn, "ES0001", [], dry_run=False, uncovered_windows={"rolling_5y"}) == 1
+    assert _ts_dates(conn, "ES0001", "rolling_5y") == [] and _ts_dates(conn, "ES0001", "rolling_1y") == ["2026-10-31"]

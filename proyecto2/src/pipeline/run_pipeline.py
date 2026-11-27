@@ -1677,6 +1677,7 @@ def run(
                 # eliminating the post-loop full-table read for the self-percentile.
                 if _wantf("rolling") and ROLLING_STATS_ENABLED:
                     _defl_diag: list[dict] = []
+                    _uncovered: set = set()          # FND-0443: windows the coverage rule rejected; the pruner clears their old rows
                     roll_rows = compute_rolling_rows(
                         isin, nav_df,
                         rolling_windows=ROLLING_WINDOWS,
@@ -1686,6 +1687,7 @@ def run(
                         risk_free_rate=RISK_FREE_RATE_ANN,         # fallback scalar
                         rf_series=rf_rate_df if not rf_rate_df.empty else None,  # §4g
                         deflation_diagnostics=_defl_diag,
+                        uncovered_windows=_uncovered,
                     )
                     # v27 pivot follow-up (§pivot plan "Deflation detection"): rolling_stats.py's
                     # exact-date IPC merge can skip a whole ISIN's real series (never a single date
@@ -1705,7 +1707,9 @@ def run(
                     # FND-0301: the fund's rolling history is replaced, not only upserted: dates this run no longer computes (provisional
                     # open-month rows, business-day stamps now on a month-end label) are removed in the same per-fund transaction. With
                     # --dry-run nothing is deleted and the count is what WOULD go (the pre-flight preview).
-                    ts_pruned = _prune_timeseries(conn, isin, roll_rows, dry_run)
+                    if not shared_config.ROLLING_UNCOVERED_PRUNE_ENABLED:      # FND-0443 (OFF): deleting the leftovers is the owner's order
+                        _uncovered.clear()
+                    ts_pruned = _prune_timeseries(conn, isin, roll_rows, dry_run, uncovered_windows=_uncovered)
                     ts_pruned_total += ts_pruned
                     if ts_pruned:
                         _log(conn, isin, "ROLLING", "PRUNE", "all_windows",

@@ -840,6 +840,11 @@ REPORT_RECONCILIATION_ENABLED: bool = True
 REPORT_RECONCILIATION_TOLERANCE_BP: float = 5.0
 ROLLING_WINDOW_COVERAGE_ENABLED: bool = True      # ON with CALC_VERSION 20261116 (owner order 2026-11-16, FND-0427)
 ROLLING_WINDOW_COVERAGE_TOLERANCE_DAYS: int = 35
+# FND-0443: a window the coverage rule rejects ENTIRELY produces no row, so the rolling prune (FND-0301) never reached it and its older partial-window points
+# stayed in gold.fund_metric_timeseries (the WINDOW_FISHER_IDENTITY failure of the audit, 904 funds on 2026-11-27). ON = the pruner receives the rejected
+# windows and deletes their old rows. Ships OFF: switching it ON DELETES live rows on the next P2 run (the bundle flag recomputes the rolling family), so it is
+# the owner's order, after the export of the rows. Rollback = False stops further deletions; deleted rows come back only from the export.
+ROLLING_UNCOVERED_PRUNE_ENABLED: bool = False
 
 # FND-0426 (selection-quality package I): the `ytd` horizon documented in SCHEMA_REFERENCE had no producer. `returns.ytd_return` is the cumulative (never annualized)
 # nominal and real return since the last NAV on or before the prior Dec 31, which must lie within YTD_BASE_MAX_STALENESS_BDAYS business days of it (else no row); a fund
@@ -939,7 +944,7 @@ P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENA
                           "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
                           "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED",
                           "EUR_NAV_CONVERSION_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED",
-                          "NAV_MONTH_END_ALIGN_ENABLED", "ROLLING_WINDOW_COVERAGE_ENABLED", "YTD_METRIC_ENABLED")
+                          "NAV_MONTH_END_ALIGN_ENABLED", "ROLLING_WINDOW_COVERAGE_ENABLED", "YTD_METRIC_ENABLED", "ROLLING_UNCOVERED_PRUNE_ENABLED")
 # FND-0240: annualise a NAV window over its INTERVALS (N points span N - 1 periods) instead of its points. OFF = the stored
 # convention (years = N / 12), bit-for-bit. ON changes the stored return_ann / sharpe / sortino of the risk family and the
 # rolling timeseries: about +0.5 pp on rolling_1y, -1.2 pp on the crisis windows, +0.04 pp since inception -- and nothing in the

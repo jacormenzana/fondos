@@ -294,24 +294,26 @@ _TS_PRUNE_DELETE_PG = "DELETE FROM fund_metric_timeseries t WHERE" + _TS_PRUNE_W
 _TS_PRUNE_COUNT_PG = "SELECT COUNT(*) FROM fund_metric_timeseries t WHERE" + _TS_PRUNE_WHERE
 
 
-def _prune_params(isin: str, rows: list[dict]) -> "tuple | None":
-    """(isin, windows, metrics, windows-per-key, dates) for the keys `rows` computed; None when there is nothing to anchor a prune on."""
+def _prune_params(isin: str, rows: list[dict], uncovered_windows=()) -> "tuple | None":
+    """(isin, windows, metrics, windows-per-key, dates) for the keys `rows` computed; None when there is nothing to anchor a prune on. The windows pruned are those
+    `rows` computed plus `uncovered_windows` (FND-0443: windows the coverage rule rejected, which may have no row at all)."""
     keys = sorted({(r["metric"], r["window"], r["date"]) for r in rows}, key=lambda k: (k[1], k[0], str(k[2])))
-    if not keys:
+    windows = sorted({k[1] for k in keys} | set(uncovered_windows))
+    if not windows:
         return None
-    windows = sorted({k[1] for k in keys})
     return isin, windows, [k[0] for k in keys], [k[1] for k in keys], [k[2] for k in keys]
 
 
-def prune_timeseries(conn: "psycopg.Connection", isin: str, rows: list[dict], dry_run: bool) -> int:
+def prune_timeseries(conn: "psycopg.Connection", isin: str, rows: list[dict], dry_run: bool, uncovered_windows=()) -> int:
     """Delete the fund's stored rolling rows that the current computation (`rows`, long format as for write_timeseries) no longer produces.
 
-    Scope, deliberately narrow: only the WINDOWS present in `rows` (a window the run did not compute -- too short, failed -- keeps whatever
-    it had, so a short or failed computation never wipes a series), only this fund. Returns the rows deleted; with `dry_run` nothing is
-    deleted and it returns the rows that WOULD be (the pre-flight preview). Empty `rows` is a no-op (0).
+    Scope, deliberately narrow: only the WINDOWS present in `rows`, plus those in `uncovered_windows` (the coverage rule of FND-0427 rejected their points:
+    FND-0443), only this fund. A window the run neither computed nor rejected for coverage -- too short a NAV for min_obs, or a failed computation -- keeps
+    whatever it had, so a short or failed computation never wipes a series. Returns the rows deleted; with `dry_run` nothing is deleted and it returns the rows
+    that WOULD be (the pre-flight preview). Empty `rows` and no uncovered window is a no-op (0).
 
     Runs inside the caller's per-fund transaction when there is one (EFF-2), so the prune and the upsert that follows are atomic."""
-    params = _prune_params(isin, rows) if rows else None
+    params = _prune_params(isin, rows, uncovered_windows)
     if params is None:
         return 0
     if dry_run:

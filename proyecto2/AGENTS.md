@@ -170,7 +170,7 @@ recompute. The build-time continuity guard (`FUND_DATA_ELIGIBILITY_ENABLED`, `P3
 
 `momentum_1y` / `momentum_3y` = the fund's ANNUALISED return over `returns.trailing_window(nav, N months)` (the one definition of a rolling window,
 shared with the rolling horizons) minus the mean of its peers' stored `rolling_Ny` `return_ann`: same window, same units. A fund's rolling time series
-is REPLACED on every run (`metrics_writer.prune_timeseries` before `write_timeseries`), so a date the run no longer computes disappears.
+is REPLACED on every run (`metrics_writer.prune_timeseries` before `write_timeseries`), so a date the run no longer computes disappears. A window the coverage rule rejects ENTIRELY produces no row; with `ROLLING_UNCOVERED_PRUNE_ENABLED` (FND-0443, ships OFF: switching it ON deletes live rows on the next run and is the owner's order, after an export) the pruner receives those windows and clears them too.
 
 ### Idempotency & caching
 
