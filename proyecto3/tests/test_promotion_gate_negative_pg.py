@@ -51,7 +51,13 @@ class _KeepOpen:
 def world(db, monkeypatch):
     conn = db
     conn.execute("ALTER TABLE fund_master ADD COLUMN fund_currency text, ADD COLUMN hedging_policy text, "
-                 "ADD COLUMN asset_currency text, ADD COLUMN in_current_universe smallint NOT NULL DEFAULT 1")
+                 "ADD COLUMN asset_currency text, ADD COLUMN in_current_universe smallint NOT NULL DEFAULT 1, "
+                 "ADD COLUMN fund_family_id text, ADD COLUMN management_company text")
+    # FND-0446 (T-DUPLICATE-FUND): the gate reads the monthly NAV (and the FX rates of the EUR view). Empty here: nothing is compared by returns.
+    conn.execute("CREATE TABLE fund_nav_monthly (LIKE bronze.fund_nav_monthly INCLUDING ALL)")
+    conn.execute("CREATE TABLE series_macro (LIKE bronze.series_macro INCLUDING ALL)")
+    from shared import eur_nav
+    eur_nav.reset_cache()                                      # rates and currencies are cached per process: never those of another test
     for t in ("audit_finding", "audit_finding_isin", "audit_accepted_finding", "audit_run", "audit_exception_event"):
         conn.execute(f"CREATE TABLE {t} (LIKE control.{t} INCLUDING ALL)")          # real CHECK constraints and defaults, no FK
     # FND-0261 (AUDIT_COMPLETENESS_CONTRACT_ENABLED ON): the evidence is the run's header, written with its rows by --persist
@@ -166,6 +172,59 @@ def test_control_the_reasoned_override_with_a_ticket_promotes_a_defect_on_a_sele
 
 
 # ---------------- negative matrix: every case must refuse ----------------
+
+def _nav(conn, isin, returns):
+    """A monthly NAV path of `isin` ending last month, from a list of monthly returns."""
+    nav, d = 100.0, TODAY.replace(day=1)
+    months = []
+    for _ in range(len(returns) + 1):
+        d = (d - timedelta(days=1)).replace(day=1)
+        months.append(d)
+    for i, month in enumerate(reversed(months)):
+        if i:
+            nav *= 1.0 + returns[i - 1]
+        conn.execute("INSERT INTO fund_nav_monthly (isin, date, nav) VALUES (%s, %s, %s)", (isin, month, nav))
+
+
+PATH_A = [0.012, -0.034, 0.021, 0.008, -0.015, 0.027, 0.004, -0.022, 0.031, 0.011, -0.009, 0.018] * 3
+PATH_B = [-0.011, 0.025, -0.004, 0.019, 0.002, -0.028, 0.014, 0.006, -0.017, 0.023, 0.009, -0.002] * 3
+
+
+def test_two_holdings_of_one_fund_family_refuse_and_no_override_helps(world, capsys):
+    conn, _ = world
+    conn.execute("UPDATE fund_master SET fund_family_id = 'FAM_X' WHERE isin = ANY(%s)", (FUNDS[:2],))
+    conn.commit()
+    rc = cli.main([SCENARIO, "--accept-alarms", "un motivo suficientemente largo", "--ap", "FND-0446"])
+    _assert_refused(conn, rc, capsys, "DUPLICATE_FUND")
+
+
+def test_two_holdings_the_family_key_split_with_identical_returns_refuse(world, capsys):
+    conn, _ = world
+    conn.execute("UPDATE fund_master SET management_company = 'ACME AM', fund_family_id = isin WHERE isin = ANY(%s)", (FUNDS[:2],))
+    for isin in FUNDS[:2]:
+        _nav(conn, isin, PATH_A)
+    conn.commit()
+    _assert_refused(conn, cli.main([SCENARIO]), capsys, "DUPLICATE_FUND")
+
+
+def test_control_two_different_funds_of_one_manager_promote(world, capsys):
+    conn, _ = world
+    conn.execute("UPDATE fund_master SET management_company = 'ACME AM', fund_family_id = isin WHERE isin = ANY(%s)", (FUNDS[:2],))
+    _nav(conn, FUNDS[0], PATH_A)
+    _nav(conn, FUNDS[1], PATH_B)
+    conn.commit()
+    rc = cli.main([SCENARIO])
+    out = capsys.readouterr().out
+    assert rc == cli.RC_OK, out
+    assert "0 par(es) de clases del mismo fondo" in out and statuses(conn)[SCENARIO] == "PRODUCTION"
+
+
+def test_an_unreadable_duplicate_check_refuses(world, capsys):
+    conn, _ = world
+    conn.execute("DROP TABLE fund_nav_monthly")
+    conn.commit()
+    _assert_refused(conn, cli.main([SCENARIO]), capsys, "DUPLICATE_FUND")
+
 
 def test_a_hard_invariant_on_a_selected_fund_refuses(world, capsys):
     conn, _ = world
