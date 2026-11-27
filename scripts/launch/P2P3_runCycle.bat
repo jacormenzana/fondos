@@ -7,7 +7,7 @@ call "%COMMON%" :utf8_on
 :: ============================================================
 :: P2P3_runCycle.bat -- Ciclo P2 + P3: preflight -> auditoria P2 PRE -> snapshot de betas -> macro + NAV -> recalculo P2
 ::                      -> puerta de betas -> diagnosticos -> P3 (cartera + auditoria POST + informe)
-::                      -> push opcional -> prueba opcional del loader de benchmarks
+::                      -> prueba opcional del loader de benchmarks (sin push: master se publica solo)
 ::
 :: Subconjunto P2+P3 del ciclo maestro (P1P2P3_runCycle.bat): las fases son las del maestro filtradas por proyecto, en su orden
 :: (scripts/launch/cycle_sequence.py; tests/test_cycle_sequence_e2e.py lo comprueba ejecutando cada orquestador).
@@ -21,7 +21,6 @@ call "%COMMON%" :utf8_on
 ::     out\audit\P2; la variable P1P2_AUDIT_DIR cambia la raiz out\audit), de modo que la comparacion
 ::     mide exactamente lo que este recalculo cambia. --baseline CSV usa uno existente (p. ej. el
 ::     macro_betas_pre_*.csv que P1P2_runCycle.bat guarda al empezar un ciclo).
-::   - El numero de commits pendientes de push se cuenta en el momento (git).
 :: Comparte el bloqueo de instancia unica con P1P2_runCycle.bat (ambos recalculan P2): mientras
 :: uno corre, el otro se rechaza con RC 105. La suspension se gestiona como en aquel.
 ::
@@ -40,7 +39,7 @@ call "%COMMON%" :utf8_on
 ::   P2P3_runCycle.bat --p3-dry-run        P3 no persiste (debug): sin informe ni preguntas; auditoria POST de respaldo
 ::   P2P3_runCycle.bat --allow-stale       salta la puerta de frescura de P3 (con criterio)
 ::   P2P3_runCycle.bat --no-pause         sin pausa final (ejecucion programada)
-::   P2P3_runCycle.bat --no-prompts        sin las preguntas finales (push y prueba del loader): ninguna se ejecuta
+::   P2P3_runCycle.bat --no-prompts        sin la pregunta final (prueba del loader): no se ejecuta
 ::   P2P3_runCycle.bat -h                 esta ayuda
 :: Codigos de salida: 0 OK | 100 argumentos invalidos | 101 interprete no encontrado |
 ::   104 preflight fallido | 105 otra instancia en ejecucion | 106 driver PostgreSQL bloqueado | 107 baseline (auditoria PRE) no valido |
@@ -396,33 +395,11 @@ if !P3R_RC! NEQ 0 (
     goto :finish
 )
 
-:: -- 5. Push opcional (siempre con confirmacion) -----------------------------------
+:: -- 5. Sin push: un push plano saltaba el recibo de tests (2026-11-27); master se publica solo con
+::       scripts\gov\delivery\auto_publish.py. -------------------------------------------------------
 if defined NO_PROMPTS (
-    echo --no-prompts: sin push ni prueba del loader.
+    echo --no-prompts: sin prueba del loader.
     goto :finish
-)
-echo.
-set "BRANCH="
-set "AHEAD="
-for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "BRANCH=%%b"
-if defined BRANCH for /f "delims=" %%n in ('git rev-list --count origin/!BRANCH!..!BRANCH! 2^>nul') do set "AHEAD=%%n"
-if not defined AHEAD (
-    echo No se pudo contar los commits pendientes de push: se omite el push.
-) else if "!AHEAD!"=="0" (
-    echo No hay commits pendientes de push en !BRANCH!.
-) else (
-    set "PUSH_CHOICE="
-    set /p "PUSH_CHOICE=Estas satisfecho con los reportes? Hacer git push de !AHEAD! commits a origin/!BRANCH!? (S/N): "
-    if /i "!PUSH_CHOICE!"=="S" (
-        echo Haciendo push a origin !BRANCH!...
-        git push origin !BRANCH!
-        if errorlevel 1 (
-            set "RC=!ERRORLEVEL!"
-            goto :finish
-        )
-    ) else (
-        echo Saltando el paso de git push.
-    )
 )
 
 :: -- 6. Prueba opcional del loader de benchmarks (FND-0088) -------------------------
@@ -509,6 +486,6 @@ echo   --allow-stale        salta la puerta de frescura de P3
 echo   --allow-no-baseline  si la auditoria P2 PRE no es valida: avisar y seguir (por defecto RC 107)
 echo   --baseline CSV   comparar las betas contra un snapshot existente (por defecto se toma uno antes del recalculo)
 echo   --no-pause       sin pausa final
-echo   --no-prompts      sin las preguntas finales (push y prueba del loader)
+echo   --no-prompts      sin la pregunta final (prueba del loader)
 echo   -h, --help       esta ayuda
 exit /b 0

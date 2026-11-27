@@ -122,6 +122,16 @@ def test_launchers_that_reject_arguments_also_answer_help():
     _per_file("help", chk, "Add `-h`/`--help` (usage, RC 0).")
 
 
+def test_no_launcher_pushes():
+    """2026-11-27 (owner order): the end-of-cycle push prompt of two launchers ran a plain `git push`, which skips the test receipt, and published a failing commit.
+    Master publishes itself (scripts/gov/delivery/auto_publish.py, run by the deploy watcher): no launcher pushes, asked or not."""
+    pat = re.compile(r"\bgit\b[^\r\n]*\bpush\b", re.IGNORECASE)
+
+    def chk(p):
+        return [(n, "git push: " + ln.strip()[:80]) for n, ln in _code(p) if pat.search(ln)]
+    _per_file("no_push", chk, "Remove the push: master is published by auto_publish.py, which checks the receipt.")
+
+
 def test_no_launcher_invokes_the_legacy_block_path():
     """2026-10-08: the by-block path (`run_block.py --block X --master <Excel>`) classifies with the legacy paradigm and takes its universe and labels from the
     Excel master; one accidental run rewrote 37 live rows and re-activated ~277 retired funds. Launchers use `--nature-first --master-db` only."""

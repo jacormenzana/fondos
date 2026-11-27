@@ -18,8 +18,8 @@ call "%COMMON%" :utf8_on
 ::                                recalcula, a diferencia de P2P3_runCycle.bat, que lo repite.)
 ::   FASE C  P3                   P3_buildPortfolio.bat (con su propia puerta de frescura) y
 ::                                P3_generateReport.bat.
-::   FASE D  confirmaciones       push opcional (cuenta los commits pendientes, siempre con
-::                                confirmacion) y prueba opcional del loader de benchmarks (FND-0088).
+::   FASE D  confirmacion         prueba opcional del loader de benchmarks (FND-0088). Ningun lanzador
+::                                hace push: master se publica solo (auto_publish.py, con su recibo).
 :: Se detiene en la primera fase que falla y devuelve su codigo tal cual.
 ::
 :: Uso:  P1P2P3_runCycle.bat [opciones del ciclo P1+P2] [opciones de P3] [-- argumentos_para_run_pipeline]
@@ -30,7 +30,7 @@ call "%COMMON%" :utf8_on
 ::   --baseline CSV     FASE B contra este snapshot de betas en vez del que tomo el ciclo
 ::   --scenario ID      scenario_id de la cartera (por defecto autogenerado: cartera_<regimen>_<YYYYMM>)
 ::   --report-dir DIR   directorio de salida del informe (por defecto out\reports\p3)
-::   --p3-dry-run       P3 no persiste (debug); omite el informe y el push
+::   --p3-dry-run       P3 no persiste (debug); omite el informe y la confirmacion
 ::   --allow-stale      salta la puerta de frescura de P3 (con criterio)
 ::   --no-prompts       sin las confirmaciones de la FASE D (ejecucion programada)
 ::   --no-pause         sin pausa final
@@ -323,33 +323,10 @@ if !RC! NEQ 0 (
 )
 
 :: ============================================================
-:: FASE D: confirmaciones (push y prueba del loader); --no-prompts las omite
+:: FASE D: confirmacion (prueba del loader); --no-prompts la omite. SIN push: un push plano saltaba el
+:: recibo de tests (2026-11-27); master se publica solo con scripts\gov\delivery\auto_publish.py.
 :: ============================================================
 if defined FLAG_no_prompts goto :finish
-echo.
-set "BRANCH="
-set "AHEAD="
-for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "BRANCH=%%b"
-if defined BRANCH for /f "delims=" %%n in ('git rev-list --count origin/!BRANCH!..!BRANCH! 2^>nul') do set "AHEAD=%%n"
-if not defined AHEAD (
-    echo No se pudo contar los commits pendientes de push: se omite el push.
-) else if "!AHEAD!"=="0" (
-    echo No hay commits pendientes de push en !BRANCH!.
-) else (
-    set "PUSH_CHOICE="
-    set /p "PUSH_CHOICE=Estas satisfecho con los reportes? Hacer git push de !AHEAD! commits a origin/!BRANCH!? (S/N): "
-    if /i "!PUSH_CHOICE!"=="S" (
-        echo Haciendo push a origin !BRANCH!...
-        git push origin !BRANCH!
-        if errorlevel 1 (
-            set "RC=!ERRORLEVEL!"
-            goto :finish
-        )
-    ) else (
-        echo Saltando el paso de git push.
-    )
-)
-
 echo.
 echo ===================================================
 echo D. Test FND-0088 loader
@@ -430,9 +407,9 @@ echo   --only-p3          solo puerta de betas + P3, sobre el ultimo ciclo si te
 echo   --baseline CSV     puerta de betas contra este snapshot (por defecto, el del ciclo)
 echo   --scenario ID      scenario_id de la cartera (por defecto autogenerado)
 echo   --report-dir DIR   directorio de salida del informe
-echo   --p3-dry-run       P3 no persiste (sin informe ni push)
+echo   --p3-dry-run       P3 no persiste (sin informe ni confirmacion)
 echo   --allow-stale      salta la puerta de frescura de P3
-echo   --no-prompts       sin confirmaciones de push ni de la prueba del loader
+echo   --no-prompts       sin la confirmacion de la prueba del loader
 echo   --no-pause         sin pausa final
 echo   -h, --help         esta ayuda (con las opciones del ciclo)
 exit /b 0
