@@ -15,7 +15,7 @@
    - T2, T3 and T4 are new tickets;
    - T3 is kept separate from FND-0444.
 3. **Standing order:** scheduled monthly builds are authorised strictly in DRAFT-only mode. They generate the DRAFT and the shadow rows and never promote to PRODUCTION without the owner's explicit order. This replaces "an order per run" for these builds only; P1 / P2 runs are not covered.
-4. FND-0443 and FND-0444 are HARD gates before any live promotion (logged on both tickets).
+4. FND-0443 and FND-0444 are HARD gates before any live promotion (logged on both tickets). **Amended 2026-11-27 (owner):** FND-0444 is REMOVED from the hard gates and stays open as ordinary work, because the harm it guarded against is now prevented twice (the builder skips twins, `cf46f1c`; `GATE:DUPLICATE_FUND` refuses them). **FND-0443 remains a hard gate.**
 5. **Standing order extended (2026-11-26, second ruling):** the monthly NAV refresh is automated, and the standing order is extended EXCLUSIVELY to the P1/P2 ingestion and calculation cycle (`P1P2_runCycle.bat`, harvest read-only), scheduled from day 25 and retried until the data will pass the P3 gate on the next build. Promotions, switch flips, KIID sync / retire and every other run still need his order. Ticket FND-0448.
 
 **Open point (for the owner, not worked):** FND-0444 has no closing condition yet, so "CLOSED on its probe" cannot be evaluated by a machine. It gets one when the ticket is started (`NORMAS_BACKLOG.md` section 4).
@@ -71,11 +71,10 @@
 - `P3_BASELINE_SHADOW_ENABLED` = True (already ON since the identity check);
 - `P3_FEE_PENALTY_SHADOW_ENABLED` and `P3_HYSTERESIS_SHADOW_ENABLED` = False, because they would compare the live arm with itself. Their rows stay stored.
 
-## 3. Live promotion gated on FND-0443 and FND-0444
+## 3. Live promotion gated on FND-0443 (FND-0444 removed 2026-11-27)
 Adoption is not promotion. The flags change the NEXT DRAFT. PRODUCTION changes only through `scripts/launch/p3_promote_scenario.py` and the verdict of `shared/governance/orchestrator.py::authorise_promotion` (`GOBIERNO_CONTROLES.md` section 8). No DRAFT is promoted, AC or not, before all of the following hold:
 - **FND-0443 (HIGH) CLOSED** on its probe: no `fund_metric_timeseries` point of a window the NAV does not cover, and a POST audit without that FAIL. Today the promotion catches it only indirectly: the data gate (`data_suspects`) refuses a DRAFT that holds an affected fund, and only while the audit is fresh (3 days).
-- **FND-0444 (MEDIUM) CLOSED** on its probe: the classes of one sub-fund share one `fund_family_id`. Today NO promotion gate catches a portfolio that holds one fund twice (the DRAFTs of 11-21 and 11-22 hold ABN US ESG in EUR and in USD).
-- **Generic guard proposed (P#5, P#11):** a HARD promotion gate `GATE:DUPLICATE_FUND`: a scenario holds at most one class per sub-fund. It catches this class of defect for any fund, not only the ABN case, and it stays after FND-0444 closes.
+- ~~FND-0444 CLOSED~~ **No longer required (owner 2026-11-27).** A portfolio holding one fund twice is prevented by the builder (`P3_BUILDER_DUPLICATE_FUND_ENABLED`) and refused by the HARD gate `GATE:DUPLICATE_FUND` (`1c757a9`, FND-0446), which stays after FND-0444 closes.
 - A fresh POST audit (at most 3 days) and the usual gates (D1 code, manifest, cost).
 - The first AC DRAFT is promoted by the owner's order, like every promotion.
 
