@@ -69,16 +69,62 @@ def _require_pg() -> str:
     return dsn
 
 
+# FND-0400 (the cascade): every shared session connection, so the per-test hygiene below can heal it after ANY test that used it
+# (48 test files take `pg_session_conn` directly, not only through `pg_conn`).
+_SESSION_CONNS: list = []
+
+
 @pytest.fixture(scope="session")
 def pg_session_conn() -> Iterator["psycopg.Connection"]:
     """One connection per test session — never used directly by test functions (see `pg_conn`
     below); this is what the per-test savepoint fixture nests inside."""
     dsn = _require_pg()
     conn = psycopg.connect(dsn, autocommit=False)
+    _SESSION_CONNS.append(conn)
     try:
         yield conn
     finally:
+        if conn in _SESSION_CONNS:
+            _SESSION_CONNS.remove(conn)
         conn.close()
+
+
+def heal_session_conn(conn) -> "str | None":
+    """FND-0400: put a shared connection back in a usable state after a test. A test whose code under test committed or rolled back the
+    shared connection (so its savepoint is gone) and then failed leaves it in an ABORTED transaction; every later test on the same session
+    then failed at its first statement ('current transaction is aborted'), so one real failure was reported as many (mutation evidence of
+    FND-0385: 10 and 6 victims that pass alone). Rolling the aborted transaction back ends the cascade. A clean open transaction (INTRANS,
+    the normal state between `pg_conn` tests) and a closed connection are left as they are. Returns what it did, or None."""
+    if conn is None or conn.closed:
+        return None
+    if conn.info.transaction_status == psycopg.pq.TransactionStatus.INERROR:
+        conn.rollback()
+        return "rolled back an aborted transaction left by the previous test"
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _pg_session_conn_hygiene() -> Iterator[None]:
+    """FND-0400: after every test (autouse: it is set up first, so it is torn down LAST, after the test's own fixtures), heal each shared
+    session connection. A no-op when no Postgres connection was opened (the SQLite-era and pure tests)."""
+    yield
+    for conn in list(_SESSION_CONNS):
+        heal_session_conn(conn)
+
+
+def close_savepoint(conn, savepoint: str) -> None:
+    """The `pg_conn` teardown: discard everything the test did. FND-0400: when the savepoint no longer exists (the code under test committed or
+    rolled back the shared connection) or the transaction is aborted outside it, the whole transaction is rolled back so the NEXT test starts clean,
+    and the error is raised so THIS test is reported (its isolation really was broken: such a test belongs on `pg_conn_module_schema`)."""
+    try:
+        conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+    except psycopg.Error as exc:
+        if not conn.closed:
+            conn.rollback()
+        raise RuntimeError(f"pg_conn teardown: savepoint {savepoint} could not be rolled back ({type(exc).__name__}: {str(exc).splitlines()[0][:160]}); "
+                           "the code under test probably committed or rolled back the shared connection -- use pg_conn_module_schema for it. "
+                           "The shared connection was rolled back, so the following tests are not affected.") from exc
 
 
 def _private_schema_first(conn: "psycopg.Connection") -> str:
@@ -118,14 +164,14 @@ def pg_conn(pg_session_conn: "psycopg.Connection") -> Iterator["psycopg.Connecti
     belongs on `pg_conn_module_schema` instead, not here.
     """
     conn = pg_session_conn
+    heal_session_conn(conn)                          # FND-0400: never start inside an aborted transaction
     savepoint = f"pytest_sp_{uuid.uuid4().hex[:8]}"
     conn.execute(f"SAVEPOINT {savepoint}")
     try:
         _private_schema_first(conn)                  # FND-0400: unqualified CREATE TABLE of a test cannot collide with another shard
         yield conn
     finally:
-        conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-        conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        close_savepoint(conn, savepoint)             # FND-0400: a lost savepoint rolls the connection back and reports THIS test
 
 
 @pytest.fixture()
