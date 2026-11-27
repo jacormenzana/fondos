@@ -1,9 +1,11 @@
 """FND-0448: the scheduled monthly P1+P2 cycle (the NAV refresh of the monthly DRAFT-only build). The window and freshness rule and the record
 (scripts/launch/p1p2_monthly_refresh.py), and the limits of the owner's standing order of 2026-11-26 (ingestion and calculation only): the chain never
-promotes, never syncs or retires KIIDs. No database: fake connections only (R-7)."""
+promotes, never syncs or retires KIIDs. FND-0451: a cycle that loaded NAV and died before the P2 calculation is retried. FND-0452: while this month has no DRAFT the refresh also acts outside
+the window. No database: fake connections only (R-7)."""
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 from datetime import date, datetime, timezone
@@ -94,10 +96,16 @@ class _Conn:
     def close(self): self.closed = True
 
 
+def _t(hour, day=20):
+    return datetime(2026, 11, day, hour, 0, tzinfo=timezone.utc)
+
+
 @pytest.fixture()
 def fake(monkeypatch):
-    state = {"today": date(2026, 11, 26), "newest": {}, "conn": _Conn()}
+    state = {"today": date(2026, 11, 26), "newest": {}, "conn": _Conn(), "captured": True, "stamps": (_t(8), _t(21))}
     monkeypatch.setattr(M, "newest_dates", lambda conn, today: state["newest"])
+    monkeypatch.setattr(M, "draft_captured", lambda conn, now: state["captured"])
+    monkeypatch.setattr(M, "p2_stamps", lambda conn: state["stamps"])
     import shared.db
     monkeypatch.setattr(shared.db, "get_connection", lambda: state["conn"])
 
@@ -113,11 +121,11 @@ def fake(monkeypatch):
     return state
 
 
-def test_status_outside_the_window_touches_no_database(fake, monkeypatch):
+def test_status_outside_the_window_with_the_month_captured_has_nothing_to_do(fake):
     fake["today"] = date(2026, 11, 10)
-    import shared.db
-    monkeypatch.setattr(shared.db, "get_connection", lambda: (_ for _ in ()).throw(AssertionError("no database outside the window")))
+    fake["newest"] = {}                                   # even with no data at all
     assert M.main(["status"]) == M.EXIT_NOTHING_TO_DO
+    assert fake["conn"].closed and not fake["conn"].sql
 
 
 def test_status_in_the_window_with_stale_nav_says_run(fake):
@@ -180,3 +188,73 @@ def test_the_registration_names_the_task_the_ticket_probes_and_runs_the_monthly_
     text = REG.read_text(encoding="utf-8")
     assert "Name = 'FondosP1P2MonthlyRefresh'; Bat = 'P1P2_monthlyRefresh.bat'" in text     # task_ok condition of FND-0448
     assert "c:\\desarrollo" not in text.lower(), "the repo path is derived from the script's own location"
+
+
+# ------------------------------------------------------------------------- FND-0452: this month's build is still missing
+@pytest.mark.parametrize("today, captured, want", [
+    (date(2026, 12, 25), True, date(2027, 1, 4)),           # in the window: the next build, whatever this month's state
+    (date(2026, 12, 25), False, date(2027, 1, 4)),
+    (date(2027, 1, 7), True, None),                         # outside, captured
+    (date(2027, 1, 7), False, date(2027, 1, 8)),            # outside, missing: tomorrow morning's build must pass
+    (date(2027, 1, 24), False, date(2027, 1, 25)),
+])
+def test_the_day_the_data_must_still_pass_on(today, captured, want):
+    assert M.plan_day(today, captured) == want
+
+
+@pytest.mark.parametrize("today, nav, want", [
+    (date(2027, 1, 2), date(2026, 12, 23), M.EXIT_NOTHING_TO_DO),    # tomorrow's build still accepts the data
+    (date(2027, 1, 7), date(2026, 12, 23), 0),                       # age 16 on the 8th: refresh instead of waiting for the 25th
+])
+def test_a_missed_january_build_is_refreshed_outside_the_window(fake, today, nav, want):
+    fake["today"], fake["captured"] = today, False
+    fake["newest"] = {"nav_p10": nav, "harvest": date(2026, 12, 26)}
+    assert M.main(["status"]) == want
+
+
+# ------------------------------------------------------------------------- FND-0451: NAV loaded, P2 calculation not completed
+@pytest.mark.parametrize("nav_write, full_run, stale", [
+    (_t(8), _t(21), False),
+    (_t(21), _t(8), True),                 # NAV written after the newest full run: the calculation did not complete
+    (_t(8), None, True),                   # no full run on record
+    (None, _t(8), True),                   # no NAV at all
+])
+def test_a_p2_run_must_follow_the_newest_nav_write(nav_write, full_run, stale):
+    got = M.p2_reasons(nav_write, full_run)
+    assert bool(got) is stale and all(r.startswith("p2") for r in got)
+
+
+def test_fresh_dates_with_an_unfinished_calculation_run_the_cycle_again(fake):
+    fake["newest"] = {"nav_p10": date(2026, 11, 24), "harvest": date(2026, 11, 25)}
+    fake["stamps"] = (_t(21), _t(8))
+    assert M.main(["status"]) == 0
+
+
+def test_a_cycle_that_ends_0_without_a_full_p2_run_is_recorded_stale(fake):
+    fake["newest"] = {"nav_p10": date(2026, 11, 24), "harvest": date(2026, 11, 25)}
+    fake["stamps"] = (_t(21), None)
+    assert M.main(["record", "--rc", "0"]) == M.EXIT_STILL_STALE
+
+
+def test_a_cycle_that_crosses_midnight_into_the_new_month_is_judged_for_that_months_build(fake):
+    fake["today"], fake["captured"] = date(2027, 1, 1), False
+    fake["newest"] = {"nav_p10": date(2026, 12, 30), "harvest": date(2026, 12, 31)}
+    assert M.main(["record", "--rc", "0"]) == 0
+    assert json.loads(fake["conn"].sql[0][1][2])["judge_day"] == "2027-01-02"
+
+
+# ------------------------------------------------------------------------- the stamps
+def test_a_full_run_is_one_that_processed_the_active_universe():
+    class _C:
+        def __init__(self): self.calls = []
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, params))
+            value = _t(8) if "ingested_at" in sql else (2000 if "COUNT(DISTINCT" in sql else _t(21))
+            return type("Cur", (), {"fetchone": lambda s: (value,)})()
+
+    from shared.config import P3_MIN_UNIFORM_METRICS_SHARE
+    c = _C()
+    assert M.p2_stamps(c) == (_t(8), _t(21))
+    (sql, params) = c.calls[-1]
+    assert "RUN_SUMMARY" in sql and params == (math.ceil(2000 * P3_MIN_UNIFORM_METRICS_SHARE),)       # a 40-fund sample run is not a full run

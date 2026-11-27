@@ -13,6 +13,8 @@ call "%COMMON%" :utf8_on
 ::   2. P1P2_runCycle.bat                el ciclo P1+P2 con sus opciones por defecto (harvest en solo lectura: nunca --harvest-sync ni --harvest-retire)
 ::   3. p1p2_monthly_refresh.py record   una fila de ingestion_log (paso P1P2_MONTHLY_REFRESH): OK, FAILED o STALE
 :: Un dia fallido (otra instancia, BD caida, fuentes de NAV aun sin datos) se reintenta solo al dia siguiente. Comparte el bloqueo de instancia unica.
+:: Datos viejos incluye un ciclo que cargo NAV y no termino el calculo P2 (FND-0451). Mientras el mes en curso no tenga DRAFT tambien actua fuera de la
+:: ventana (FND-0452).
 :: La orden permanente del propietario cubre SOLO este ciclo de ingestion y calculo: nada aqui promueve, cambia interruptores ni sincroniza KIID.
 ::
 :: Uso:  P1P2_monthlyRefresh.bat [--check]

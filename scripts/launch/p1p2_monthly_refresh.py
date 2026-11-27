@@ -5,7 +5,7 @@ so that the scheduled DRAFT-only P3 build (FND-0447, P3_monthlyDraft.bat) does n
 ingestion and calculation cycle. This helper refreshes nothing itself: `P1P2_monthlyRefresh.bat` asks it whether the cycle is due, runs `P1P2_runCycle.bat` when it
 is, and asks it to record the outcome.
 
-    python scripts/launch/p1p2_monthly_refresh.py status            exit 0 = run the cycle, 3 = nothing to do (EXIT_NOTHING_TO_DO: outside the window, or fresh enough)
+    python scripts/launch/p1p2_monthly_refresh.py status            exit 0 = run the cycle, 3 = nothing to do (EXIT_NOTHING_TO_DO: nothing to prepare, or fresh enough)
     python scripts/launch/p1p2_monthly_refresh.py record --rc N     one ingestion_log row (step P1P2_MONTHLY_REFRESH); exit 0, or 6 (EXIT_STILL_STALE) when the cycle
                                                                     ended RC 0 and the data would still fail the P3 gate on the build's last retry day
 
@@ -13,10 +13,15 @@ The rule: from day WINDOW_START_DAY to the end of the month, the cycle runs whil
 (shared/config.py P3_FRESHNESS_MAX_AGE_DAYS) on the LAST RETRY DAY of the next monthly build (day 1 + BUILD_RETRY_DAYS of the next month). The ages are the gate's
 own arithmetic (proyecto3/src/data_freshness.py). Once the data is fresh enough, the task does nothing for the rest of the month; a day that fails, or a cycle
 that leaves the data still too old (the NAV sources lag), is retried the next day.
+
+FND-0451: dates alone do not show that the cycle finished. The data is also stale while no full P2 run follows the newest NAV write (a cycle that loaded NAV and died
+before or during the calculation left the previous month's metrics, which the gate's version-uniformity check accepts).
+FND-0452: while THIS month still has no DRAFT (a missed or failed build), the task also acts outside the window, on the data tomorrow morning's build needs.
 """
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -66,6 +71,20 @@ def outcome(cycle_rc: int, reasons: list) -> "tuple[str, int]":
     return ("OK", 0) if not reasons else ("STALE", EXIT_STILL_STALE)
 
 
+def plan_day(today: date, captured: bool) -> "date | None":
+    """The day the data must still pass on, or None when there is nothing to prepare. In the window: the next build's last retry day. Outside it, only while this month has no DRAFT: tomorrow."""
+    if in_window(today):
+        return judge_day(today)
+    return None if captured else today + timedelta(days=1)
+
+
+def p2_reasons(nav_write, full_run) -> list:
+    """Stale while no full P2 run follows the newest NAV write (either stamp missing is stale)."""
+    if nav_write is not None and full_run is not None and full_run > nav_write:
+        return []
+    return [f"p2: no full successful P2 run after the newest NAV write (nav written {nav_write}, newest full run {full_run})"]
+
+
 # ---------------------------------------------------------------------------------------------------------------------------------------------------
 # database
 # ---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -76,6 +95,24 @@ def newest_dates(conn, today: date) -> dict:
     nav_dates, harvest_ts, _versions = load_freshness_inputs(conn)
     checks = evaluate_freshness(nav_dates, {}, harvest_ts, today, P3_FRESHNESS_MAX_AGE_DAYS, P3_NAV_UNIVERSE_PERCENTILE, ())
     return {c.name: c.newest for c in checks if c.name in CHECKS}
+
+
+def p2_stamps(conn) -> tuple:
+    """(newest NAV row written, newest full successful P2 run). A full run processed at least P3_MIN_UNIFORM_METRICS_SHARE of the active universe with NAV, so a sample or a one-fund backfill is not one."""
+    from shared.config import P3_MIN_UNIFORM_METRICS_SHARE
+    nav_write = conn.execute("SELECT MAX(ingested_at) FROM fund_nav_monthly").fetchone()[0]
+    active = conn.execute("SELECT COUNT(DISTINCT n.isin) FROM fund_nav_monthly n JOIN fund_master fm ON fm.isin = n.isin WHERE fm.in_current_universe = 1").fetchone()[0]
+    full_run = conn.execute("SELECT MAX(created_at) FROM p2_pipeline_log WHERE step = 'RUN_SUMMARY' AND status = 'OK' "
+                            "AND COALESCE(substring(message from 'processed=([0-9]+)')::int, -1) >= %s",
+                            (math.ceil(int(active) * P3_MIN_UNIFORM_METRICS_SHARE),)).fetchone()[0]
+    return nav_write, full_run
+
+
+def draft_captured(conn, now: datetime) -> bool:
+    """Does the current month (UTC, the monthly build's own rule) already have its DRAFT?"""
+    import p3_monthly_draft as draft
+    month = draft.month_of(now)
+    return month in draft.months_by_item(conn, [draft.DRAFT_ITEM], now).get(draft.DRAFT_ITEM, set())
 
 
 def main(argv=None) -> int:
@@ -90,15 +127,17 @@ def main(argv=None) -> int:
     import p3_monthly_draft as draft
     now = datetime.now(timezone.utc)
     today = now.astimezone().date()                    # the local calendar day the task fires on
-    on = judge_day(today)
-    if args.cmd == "status" and not in_window(today):
-        print(f"[P1P2_MONTHLY_REFRESH] {today}: outside the window (from day {WINDOW_START_DAY}); nothing to do")
-        return EXIT_NOTHING_TO_DO
     from shared.db import get_connection
     conn = get_connection()
     try:
+        on = plan_day(today, draft_captured(conn, now))
+        if on is None:
+            if args.cmd == "status":
+                print(f"[P1P2_MONTHLY_REFRESH] {today}: outside the window (from day {WINDOW_START_DAY}) and this month has its DRAFT; nothing to do")
+                return EXIT_NOTHING_TO_DO
+            on = today + timedelta(days=1)             # record after a cycle that was due: this month's build was captured meanwhile
         newest = newest_dates(conn, today)
-        reasons = stale_reasons(newest, P3_FRESHNESS_MAX_AGE_DAYS, on)
+        reasons = stale_reasons(newest, P3_FRESHNESS_MAX_AGE_DAYS, on) + p2_reasons(*p2_stamps(conn))
         if args.cmd == "status":
             if reasons:
                 print(f"[P1P2_MONTHLY_REFRESH] {today}: cycle due, the next build (until {on}) would refuse: {reasons}")

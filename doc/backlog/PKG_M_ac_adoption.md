@@ -112,6 +112,7 @@ FND-0443 and FND-0444 are worked on their own tickets, in the order the owner se
   - `scripts/launch/P1P2_monthlyRefresh.bat` (daily task `FondosP1P2MonthlyRefresh`, 20:00, same registration script) acts from day 25 to the end of the month. It runs `P1P2_runCycle.bat` (defaults: harvest read-only) while the NAV or the harvest would fail the gate on the next build's last retry day (day 4 of the next month), computed with the gate's own functions.
   - It retries daily until the data is fresh enough, writes one `P1P2_MONTHLY_REFRESH` row per attempt (OK / FAILED / STALE), and shares the single-instance lock.
   - Window: the owner's "25th to 28th", extended to the end of the month so a failed day still has a retry.
+  - Added 2026-11-27: the data also counts as stale while no full P2 run follows the newest NAV write (FND-0451), and while the current month has no DRAFT the refresh also acts outside the window, judged on the next morning's build (FND-0452).
   - No recurring manual step is left in the monthly capture.
 
 ## 6. Timeline (if builds run monthly)
