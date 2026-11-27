@@ -86,6 +86,12 @@ def rolling_coverage_fixture() -> tuple:
     return (pd.DataFrame({"isin": CANARY_ISIN, "date": dates}), pd.DataFrame({"isin": [CANARY_ISIN], "horizon": ["rolling_5y"]}), {"rolling_5y": 60})
 
 
+def timeseries_coverage_fixture() -> tuple:
+    """(first_nav, stored_first, windows): a stored `rolling_5y` point two years after the fund's first NAV, the signature TIMESERIES_WINDOW_COVERAGE flags. Pure."""
+    return ({CANARY_ISIN: pd.Timestamp("2024-01-31").date()},
+            pd.DataFrame({"isin": [CANARY_ISIN], "window": ["rolling_5y"], "first_point": [pd.Timestamp("2025-12-31").date()]}), {"rolling_5y": 60})
+
+
 def fired(findings: Iterable, rule_id: str) -> bool:
     """True when the scratch run's findings contain one for `rule_id`. Pure."""
     return any(f.get("rule_id") == rule_id for f in findings)

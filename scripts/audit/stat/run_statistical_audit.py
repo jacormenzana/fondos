@@ -862,6 +862,45 @@ def _run_rolling_coverage(run: AuditRun, long_df: pd.DataFrame, nav_dates: pd.Da
         run.findings.append(finding)
 
 
+def _timeseries_coverage_finding(violations: pd.DataFrame, n_checked: int) -> "dict | None":
+    """The TIMESERIES_WINDOW_COVERAGE finding (FND-0443), None when no stored point is older than its NAV supports. One definition for the run and for its liveness canary."""
+    if violations is None or violations.empty:
+        return None
+    n_pairs, n_funds = len(violations), violations["isin"].nunique()
+    by_window = violations.groupby("window").size().to_dict()
+    return {
+        "block": "BLOCK5", "rule_id": "TIMESERIES_WINDOW_COVERAGE", "rule_class": "HARD_INVARIANT", "severity": "ALARM",
+        "group_key": "TIMESERIES_WINDOW_COVERAGE", "value": None, "reference_value": None, "threshold": None,
+        "distance": float(n_pairs),
+        "evidence": f"{n_pairs}/{n_checked} (fund, rolling window) series start with a point the fund's NAV history does not cover ({n_funds} funds): {by_window}",
+        "violating_isins": tuple(sorted(violations["isin"].unique())),
+        "root_cause_candidate": "Partial-window points left in fund_metric_timeseries (FND-0443: the prune must receive the windows the coverage rule rejects), or a writer that skips the rule",
+    }
+
+
+def _run_timeseries_coverage(run: "AuditRun", conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> None:
+    """TIMESERIES_WINDOW_COVERAGE on the stored rolling `return_ann` series. Applied only while ROLLING_UNCOVERED_PRUNE_ENABLED is ON: until then the leftovers are the known
+    state (FND-0443) and a hard finding would only repeat it."""
+    import shared.config as _cfg
+    if not getattr(_cfg, "ROLLING_UNCOVERED_PRUNE_ENABLED", False):
+        run.skip("TIMESERIES_WINDOW_COVERAGE", KIND_NOT_APPLICABLE, "TIMESERIES_WINDOW_COVERAGE: ROLLING_UNCOVERED_PRUNE_ENABLED is OFF (FND-0443 cleanup not ordered yet)")
+        return
+    scope = list(isins) if isins else None
+    points = conn.execute(
+        "SELECT isin, window_label, MIN(date) FROM fund_metric_timeseries WHERE metric = 'return_ann' AND window_label = ANY(%s) "
+        "AND (%s::text[] IS NULL OR isin = ANY(%s::text[])) GROUP BY isin, window_label", (list(ROLLING_WINDOWS), scope, scope)).fetchall()
+    if not points:
+        run.skip("TIMESERIES_WINDOW_COVERAGE", KIND_NOT_APPLICABLE, "TIMESERIES_WINDOW_COVERAGE: no stored rolling time series")
+        return
+    first_nav = {r[0]: r[1] for r in conn.execute(
+        "SELECT isin, MIN(date) FROM fund_nav_monthly WHERE (%s::text[] IS NULL OR isin = ANY(%s::text[])) GROUP BY isin", (scope, scope)).fetchall()}
+    stored = pd.DataFrame([tuple(r) for r in points], columns=["isin", "window", "first_point"])
+    violations = wcov.timeseries_coverage_violations(first_nav, stored, ROLLING_WINDOWS, _cfg.ROLLING_WINDOW_COVERAGE_TOLERANCE_DAYS)
+    finding = _timeseries_coverage_finding(violations, len(stored))
+    if finding:
+        run.findings.append(finding)
+
+
 def _run_timeseries_integrity(
     run: "AuditRun", conn: "psycopg.Connection", isins: Sequence[str] | None = None,
 ) -> None:
@@ -1527,6 +1566,7 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
 
     _emit_snapshot_held_out_finding(run)
     _run_timeseries_integrity(run, conn, isins=isins)
+    _run_timeseries_coverage(run, conn, isins=isins)             # FND-0443 (a skip while ROLLING_UNCOVERED_PRUNE_ENABLED is OFF)
     _run_algorithm_version_uniformity(run, conn, isins=isins)
     _run_beta_orphan_check(run, long_df)
 
@@ -1771,6 +1811,7 @@ def run_canaries(run: AuditRun) -> dict:
         families.append(("row", [r for r in P2_INVARIANTS if r.bound_type == "HARD_INVARIANT"]))
         families.append(("dup", [None]))
         families.append(("cov", [None]))                 # FND-0427 ROLLING_COVERAGE
+        families.append(("tscov", [None]))               # FND-0443 TIMESERIES_WINDOW_COVERAGE
     else:
         families.append(("row", [r for r in COST_INVARIANTS if r.bound_type == "HARD_INVARIANT"]))
         families.append(("group", list(_CANARY_GROUP_RULES)))
@@ -1784,6 +1825,11 @@ def run_canaries(run: AuditRun) -> dict:
                 _nav, _stored, _windows = cn.rolling_coverage_fixture()
                 _v = wcov.rolling_coverage_violations(_nav, _stored, _windows, 35, 0.80, 6)
                 fired = _rolling_coverage_finding(_v, len(_stored)) is not None
+            elif family == "tscov":
+                rule_id = "TIMESERIES_WINDOW_COVERAGE"
+                _first, _points, _ts_windows = cn.timeseries_coverage_fixture()
+                _tv = wcov.timeseries_coverage_violations(_first, _points, _ts_windows, 35)
+                fired = _timeseries_coverage_finding(_tv, len(_points)) is not None
             else:
                 rule_id = rule.rule_id
                 scratch = AuditRun(domain=run.domain)

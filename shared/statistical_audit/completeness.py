@@ -57,6 +57,7 @@ CHECKS = {
     "ALGORITHM_VERSION_UNIFORMITY": True,  # BLOCK6 share of active funds on one CALC_VERSION (FND-0262, D4)
     "CANARY": True,                        # a hard detector did not fire on its known-bad fixture (FND-0393, plan D1): a FULL run that cannot prove its detectors alive is INCOMPLETE
     "ROLLING_COVERAGE": False,             # FND-0427: stored rolling_Ny scalars vs the NAV window they need; only meaningful with ROLLING_WINDOW_COVERAGE_ENABLED ON
+    "TIMESERIES_WINDOW_COVERAGE": False,   # FND-0443: stored rolling time-series points older than the NAV supports; only with ROLLING_UNCOVERED_PRUNE_ENABLED ON
     "ALERT_RECONCILIATION": False,        # suppression of findings the alert engine already raised: optional by design
     "PEER_SEGMENT": False,                 # peer segments below MIN_PEERS
     "OUTLIER": False,                      # an outlier method without enough values

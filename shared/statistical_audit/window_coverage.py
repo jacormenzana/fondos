@@ -21,6 +21,7 @@ import pandas as pd
 from shared.nav_continuity import reason_for_dates
 
 COLUMNS = ["isin", "horizon", "first_nav", "last_nav", "reason"]
+TS_COLUMNS = ["isin", "window", "first_nav", "first_point", "reason"]
 
 
 def rolling_coverage_violations(nav_dates: pd.DataFrame, stored: pd.DataFrame, windows: dict, tolerance_days: int, min_coverage: float, max_gap_run: int) -> pd.DataFrame:
@@ -50,3 +51,24 @@ def rolling_coverage_violations(nav_dates: pd.DataFrame, stored: pd.DataFrame, w
         if reason:
             out.append((isin, horizon, first, end, reason))
     return pd.DataFrame(out, columns=COLUMNS)
+
+
+def timeseries_coverage_violations(first_nav: dict, stored_first: pd.DataFrame, windows: dict, tolerance_days: int) -> pd.DataFrame:
+    """TIMESERIES_WINDOW_COVERAGE (FND-0443): the (isin, window) pairs of fund_metric_timeseries whose EARLIEST stored point is older than the fund's NAV history supports.
+
+    The span condition of FND-0427 (first NAV <= point - months + tolerance) is strictest on the earliest point, so one (isin, window, first_point) row per pair decides it
+    without reading the whole table; continuity inside the window is not judged here. `first_nav` = {isin: date of its first monthly NAV}; `stored_first` has columns
+    isin, window, first_point; a window not in `windows` is ignored; a fund with no NAV is a violation."""
+    out = []
+    if stored_first is None or stored_first.empty:
+        return pd.DataFrame(columns=TS_COLUMNS)
+    for isin, window, first_point in stored_first[["isin", "window", "first_point"]].itertuples(index=False):
+        months = windows.get(window)
+        if months is None:
+            continue
+        point, first = pd.Timestamp(first_point), first_nav.get(isin)
+        if first is None:
+            out.append((isin, window, pd.NaT, point, "no NAV rows behind a stored point"))
+        elif pd.Timestamp(first) > point - pd.DateOffset(months=int(months)) + pd.Timedelta(days=int(tolerance_days)):
+            out.append((isin, window, pd.Timestamp(first), point, f"history from {pd.Timestamp(first).date()} does not reach back {months} months from {point.date()}"))
+    return pd.DataFrame(out, columns=TS_COLUMNS)

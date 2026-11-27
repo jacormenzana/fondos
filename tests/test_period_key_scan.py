@@ -101,6 +101,9 @@ _PERIOD_KEY_EXEMPT: dict[str, str] = {
     "shared/statistical_audit/window_coverage.py::rolling_coverage_violations":
         "DESIGN: FND-0427. The audit judges a stored rolling_Ny window against the NAV with the writer's own definition (first NAV <= end - N months + tolerance; rows inside "
         "`date > end - N months`) on the month-end labelled NAV of the audit's input; it cuts no series and aligns none. (review 2027-04-21)",
+    "shared/statistical_audit/window_coverage.py::timeseries_coverage_violations":
+        "DESIGN: FND-0443. The span test of FND-0427 on the earliest stored time-series point of a fund and window (first NAV <= point - N months + tolerance); it compares one "
+        "date with another per pair, cuts no series and aligns none. (review 2027-04-21)",
     "proyecto2/src/calculations/momentum.py::compute_momentum":
         "DESIGN: FND-0302. The fund's window comes from returns.trailing_window, the same function as the peers' rolling return_ann; "
         "the DateOffset here only tests that the history spans N years, over month-end labelled data. (review 2027-04-21)",
