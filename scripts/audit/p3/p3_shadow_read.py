@@ -1,7 +1,7 @@
 # scripts/audit/p3/p3_shadow_read.py
 # -*- coding: utf-8 -*-
 r"""
-P3-7: reader of the forward shadow of the AC arm, exactly as Amendment 1 of doc/decisiones/PREREG_P3_7.md (section 13) defines it. READ-ONLY on the database (SELECT only); the only thing it writes is the
+P3-7: reader of the forward shadow of the AC arm, exactly as Amendments 1 and 2 of doc/decisiones/PREREG_P3_7.md (sections 13 and 14) define it. READ-ONLY on the database (SELECT only); the only thing it writes is the
 frozen fee snapshot of a review, in a new folder.
 
     py -X utf8 scripts\audit\p3\p3_shadow_read.py                      integrity fields of the rows of P3_FEE_PENALTY_SHADOW (the default, and the only mode before the first review)
@@ -11,8 +11,12 @@ frozen fee snapshot of a review, in a new folder.
 Series, all rebuilt from stored rows: L = the live arm (`off` of each AC row = consecutive DRAFTs), AC = `chain` of the AC rows, B = `chain` of the band-only hysteresis rows (P3_HYSTERESIS_SHADOW).
 One row per calendar month (the LAST row of the month); a month COUNTS only when the previous calendar month has a row (the first row after a gap, and the first row ever, have no predecessor in the
 series and are excluded from the chain statistics). Turnover = one-way turnover RECOMPUTED from the stored weights of two consecutive counted rows (never the stored `traded_notional`). Cost = entry fee x
-what is bought + exit fee x what is sold, fund by fund, with the stated `fund_master` fees of a hash-verified frozen snapshot; a fee that is unknown takes the median of the known ones of the funds held and
-is counted. Cost drag a year = 12 x the mean monthly cost (a fraction of capital), in pp.
+what is bought + exit fee x what is sold, fund by fund, with the `fund_master` fees of a hash-verified frozen snapshot. Fill of an unknown fee (section 14, item 2), per fund and side, the same for L, AC and B:
+the exact fee, else the declared ceiling, else the p90 of the exact fees of that side among the funds of the same Fund_Nature in the snapshot (all natures when the nature has none). An optimistic variant (a fund
+with no figure costs 0) is reported next to the verdict and never gates. Cost drag a year = 12 x the mean monthly cost (a fraction of capital), in pp.
+
+Coverage (section 14, item 3): at least FEE_COVERAGE_MIN of AC's bought notional in the window (positive weight changes between consecutive counted rows) must be in funds with an exact fee or a ceiling on BOTH
+sides; below it R6 is NOT INFORMATIVE and carried to the next review. The same share is reported for L and B, and the exit coverage of sold notional for all three.
 
 Readiness (R6): the rows span at least 6 calendar months and the last 6 calendar months have at most 1 gap (more postpones the review by a month). The statistics use the counted months of that window,
 common to the three series when B has rows. Reading choices this script makes where the amendment is silent are printed with the report ("reading").
@@ -35,7 +39,11 @@ from proyecto3.src import hysteresis_shadow as hs  # noqa: E402
 from proyecto3.src import pit_p37_snapshot as SNAP  # noqa: E402
 
 AC_STEP, AC_STEP_ERROR, B_STEP = fp.STEP, fp.STEP_ERROR, hs.STEP
-FEE_COLUMNS = SNAP.FEE_COLUMNS
+FEE_COLUMNS = SNAP.FEE_COLUMNS                                     # the two exact fees, ratios (0.05 = 5 %)
+CEILING_COLUMNS = ["Entry_Fee_Pct_Max", "Exit_Fee_Pct_Max"]         # the declared ceilings, whole percent (5.0 = 5 %)
+SNAPSHOT_COLUMNS = [*FEE_COLUMNS, *CEILING_COLUMNS, "Fund_Nature"]
+FEE_COVERAGE_MIN = 0.95                                             # fee_coverage_min (PREREG_P3_7 section 14, owner 2026-11-26)
+FILL_QUANTILE = 0.90
 FEES_FILE = "fees.parquet"
 REVIEW_MONTHS = 6                       # R6: the window of the first review (PREREG_P3_7 section 13)
 MAX_GAPS = 1                            # more gaps than this in the window postpones the review
@@ -125,7 +133,7 @@ def integrity_view(row: dict) -> dict:
             "calc_versions": row.get("calc_versions") or {}, "n_candidates": row.get("n_candidates"), "n_fee_unknown": row.get("n_fee_unknown")}
 
 
-def render_integrity(rows: list, n_errors: int) -> str:
+def render_integrity(rows: list, n_errors: int, pool: "tuple | None" = None) -> str:
     by = last_per_month(rows)
     lines = [f"P3_FEE_PENALTY_SHADOW: {len(rows)} SHADOW row(s), {len(by)} calendar month(s), {n_errors} ERROR row(s)"]
     g = gaps(by)
@@ -135,7 +143,13 @@ def render_integrity(rows: list, n_errors: int) -> str:
         lines.append(f"- {m}  {v['status']}  scenario {v['scenario_id']}  band {v['band']}  H {v['l4_h_years']}  built {v['built_at']}")
         lines.append("    funds per sub-portfolio: " + "; ".join(f"{a} {v['funds_per_subportfolio'][a]}" for a in v["funds_per_subportfolio"]))
         lines.append("    weight sums: " + "; ".join(f"{a} {s:.4f}" for a, s in v["weight_sums"].items()))
-        lines.append(f"    calc_versions {json.dumps(v['calc_versions'], sort_keys=True)}  n_candidates {v['n_candidates']}  n_fee_unknown {v['n_fee_unknown']}")
+        lines.append(f"    calc_versions {json.dumps(v['calc_versions'], sort_keys=True)}  n_candidates {v['n_candidates']}  n_fee_unknown {v['n_fee_unknown']} "
+                     "(funds of the whole scored frame with an unknown one-off fee, not of the candidates)")
+    if pool is None or not pool[0]:
+        lines.append("candidate pool: not read")
+    else:
+        n, covered = pool
+        lines.append(f"candidate pool: {n} eligible funds today, {100 * covered / n:.1f} % with a point value or a ceiling on both fees (not AC's selection)")
     lines.append("comparison fields are withheld until the first review (PREREG_P3_7 section 13); run with --review when the window exists")
     return "\n".join(lines)
 
@@ -147,10 +161,46 @@ def one_way_turnover(new_rows: list, prev_rows: list) -> float:
     return hs.one_way_turnover(hs.weights_of(new_rows), hs.weights_of(prev_rows))
 
 
-def default_fees(fees: pd.DataFrame, held: set) -> "tuple[float, float]":
-    """The price of an unknown fee: the median of the known entry / exit fees of the funds held in the rows used (the convention of the cost check)."""
-    f = fees.reindex(sorted(held))
-    return float(f["Entry_Fee_Pct"].dropna().median()), float(f["Exit_Fee_Pct"].dropna().median())
+def _side(fees: pd.DataFrame, exact_col: str, ceiling_col: str, optimistic: bool) -> "tuple[pd.Series, float]":
+    """(fee of every fund of the snapshot, fee of a fund absent from it) for one side, as ratios."""
+    exact = pd.to_numeric(fees[exact_col], errors="coerce")
+    out = exact.fillna(pd.to_numeric(fees[ceiling_col], errors="coerce") / 100.0)
+    if optimistic:
+        return out.fillna(0.0), 0.0
+    known = exact.dropna()
+    overall = float(known.quantile(FILL_QUANTILE)) if len(known) else float("nan")
+    by_nature = exact.groupby(fees["Fund_Nature"]).quantile(FILL_QUANTILE).dropna()
+    return out.fillna(fees["Fund_Nature"].map(by_nature)).fillna(overall), overall
+
+
+def filled_fees(fees: pd.DataFrame, optimistic: bool = False) -> "tuple[pd.Series, pd.Series, float, float]":
+    """(entry, exit, entry of an absent fund, exit of an absent fund): exact -> declared ceiling -> p90 of the exact fees of the nature (else of all);
+    `optimistic`: exact -> ceiling -> 0. The p90 is taken over the whole frozen snapshot, never over the funds held (PREREG_P3_7 section 14, item 2)."""
+    entry, de = _side(fees, FEE_COLUMNS[0], CEILING_COLUMNS[0], optimistic)
+    exit_, dx = _side(fees, FEE_COLUMNS[1], CEILING_COLUMNS[1], optimistic)
+    return entry, exit_, de, dx
+
+
+def known_both_sides(fees: pd.DataFrame) -> set:
+    """The funds with an exact fee or a declared ceiling on BOTH sides."""
+    ok = (fees[FEE_COLUMNS[0]].notna() | fees[CEILING_COLUMNS[0]].notna()) & (fees[FEE_COLUMNS[1]].notna() | fees[CEILING_COLUMNS[1]].notna())
+    return set(fees.index[ok.to_numpy()])
+
+
+def _coverage(weights_by_month: dict, months: list, known: set, known_exit: set) -> dict:
+    """Share of the bought notional in funds known on both sides, and share of the sold notional with a known exit, over the counted months. No notional = full coverage."""
+    bought = bought_ok = sold = sold_ok = 0.0
+    for m in months:
+        new, prev = hs.weights_of(weights_by_month[m]), hs.weights_of(weights_by_month[_month(_ordinal(m) - 1)])
+        for isin in set(new) | set(prev):
+            d = new.get(isin, 0.0) - prev.get(isin, 0.0)
+            if d > _EPS:
+                bought += d
+                bought_ok += d if isin in known else 0.0
+            elif d < -_EPS:
+                sold -= d
+                sold_ok -= d if isin in known_exit else 0.0
+    return {"bought": bought_ok / bought if bought else 1.0, "sold_exit": sold_ok / sold if sold else 1.0, "bought_notional": bought, "sold_notional": sold}
 
 
 def pair_cost(new_rows: list, prev_rows: list, entry: pd.Series, exit_: pd.Series, default_entry: float, default_exit: float) -> "tuple[float, float]":
@@ -187,21 +237,28 @@ def unknown_fee_weight_share(rows: list, fees: pd.DataFrame) -> float:
 # --------------------------------------------------------------------------------------------------------------------------------------------------
 def freeze_fees(folder, fees: pd.DataFrame) -> dict:
     """Freeze the stated fees once (parquet + SHA-256 manifest). Refuses a folder that exists."""
-    return SNAP.freeze_frames(folder, {FEES_FILE: fees[FEE_COLUMNS]})
+    return SNAP.freeze_frames(folder, {FEES_FILE: fees[SNAPSHOT_COLUMNS]})
 
 
 def load_fees(folder) -> "tuple[pd.DataFrame, str]":
     """(fees, snapshot id) after verifying the file against its manifest (SnapshotMismatch on any difference)."""
     frames = SNAP.load_frames(folder)
     manifest = json.loads((Path(folder) / SNAP.MANIFEST).read_text(encoding="utf-8"))
+    missing = [c for c in SNAPSHOT_COLUMNS if c not in frames[FEES_FILE].columns]
+    if missing:
+        raise SNAP.SnapshotMismatch(f"{folder}: the fee snapshot lacks {missing} (frozen before Amendment 2): freeze a new one")
     return frames[FEES_FILE], manifest["snapshot_id"]
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------
 # R6
 # --------------------------------------------------------------------------------------------------------------------------------------------------
-def evaluate_r6(stats: dict) -> dict:
-    """The three deterministic cost rules, each PASS / FAIL / NOT INFORMATIVE, inclusive at the threshold, never a blend. `stats` = {L, AC, B|None}: {turnover, cost_pp}."""
+def evaluate_r6(stats: dict, ac_bought_coverage: "float | None" = None) -> dict:
+    """The three deterministic cost rules, each PASS / FAIL / NOT INFORMATIVE, inclusive at the threshold, never a blend. `stats` = {L, AC, B|None}: {turnover, cost_pp}.
+    `ac_bought_coverage` below FEE_COVERAGE_MIN makes the whole review NOT INFORMATIVE, never a PASS (None = not assessed, for the pure rules)."""
+    if ac_bought_coverage is not None and ac_bought_coverage < FEE_COVERAGE_MIN - _EPS:
+        return {"rule1": "NOT INFORMATIVE", "rule2": "NOT INFORMATIVE", "rule3": "NOT INFORMATIVE",
+                "verdict": f"NOT INFORMATIVE: only {ac_bought_coverage:.1%} of what AC buys has a fee or a ceiling on both sides (needs {FEE_COVERAGE_MIN:.0%}); R6 is carried to the next review"}
     L, AC, B = stats["L"], stats["AC"], stats.get("B")
     r1 = "NOT INFORMATIVE" if not L["turnover"] else ("PASS" if (L["turnover"] - AC["turnover"]) / L["turnover"] >= TURNOVER_REDUCTION_MIN - _EPS else "FAIL")
     r2 = "PASS" if L["cost_pp"] - AC["cost_pp"] >= COST_DRAG_REDUCTION_MIN_PP - _EPS else "FAIL"
@@ -221,14 +278,13 @@ def _series_rows(by_month: dict, arm: str) -> dict:
 
 
 def _arm_stats(weights_by_month: dict, months: list, entry, exit_, de, dx) -> dict:
-    tos, costs, unks = [], [], []
+    tos, costs = [], []
     for m in months:
         prev = _month(_ordinal(m) - 1)
         tos.append(one_way_turnover(weights_by_month[m], weights_by_month[prev]))
-        c, u = pair_cost(weights_by_month[m], weights_by_month[prev], entry, exit_, de, dx)
+        c, _unknown = pair_cost(weights_by_month[m], weights_by_month[prev], entry, exit_, de, dx)
         costs.append(c)
-        unks.append(u)
-    return {"turnover": float(np.mean(tos)), "cost_pp": float(12 * 100 * np.mean(costs)), "unknown_fee_traded_share": float(np.mean(unks))}
+    return {"turnover": float(np.mean(tos)), "cost_pp": float(12 * 100 * np.mean(costs))}
 
 
 def review_r6(ac_rows: list, b_rows: list, fees: pd.DataFrame) -> dict:
@@ -246,13 +302,18 @@ def review_r6(ac_rows: list, b_rows: list, fees: pd.DataFrame) -> dict:
     series = {"L": _series_rows(ac_by, "L"), "AC": _series_rows(ac_by, "AC")}
     if b_by:
         series["B"] = _series_rows(b_by, "B")
-    held = {r["isin"] for s in series.values() for m in months for key in (m, _month(_ordinal(m) - 1)) for r in s[key]}
-    de, dx = default_fees(fees, held)
-    entry, exit_ = fees["Entry_Fee_Pct"], fees["Exit_Fee_Pct"]
-    stats = {k: _arm_stats(v, months, entry, exit_, de, dx) for k, v in series.items()}
+    primary, optimistic = filled_fees(fees), filled_fees(fees, optimistic=True)
+    stats = {k: _arm_stats(v, months, *primary) for k, v in series.items()}
+    stats_opt = {k: _arm_stats(v, months, *optimistic) for k, v in series.items()}
     stats.setdefault("B", None)
+    stats_opt.setdefault("B", None)
+    known = known_both_sides(fees)
+    known_exit = set(fees.index[(fees[FEE_COLUMNS[1]].notna() | fees[CEILING_COLUMNS[1]].notna()).to_numpy()])
+    coverage = {k: _coverage(v, months, known, known_exit) for k, v in series.items()}
+    cov_ac = coverage["AC"]["bought"]
     last = months[-1]
-    return {"readiness": ready, "months": months, "stats": stats, "rules": evaluate_r6(stats), "default_fees": {"entry": de, "exit": dx},
+    return {"readiness": ready, "months": months, "stats": stats, "rules": evaluate_r6(stats, cov_ac), "stats_optimistic": stats_opt,
+            "rules_optimistic": evaluate_r6(stats_opt, cov_ac), "coverage": coverage, "default_fees": {"entry": primary[2], "exit": primary[3]},
             "ac_unknown_fee_weight_share": unknown_fee_weight_share(series["AC"][last], fees), "n_months": len(months)}
 
 
@@ -260,14 +321,19 @@ def render_review(res: dict, snapshot_id: str) -> str:
     s, r = res["stats"], res["rules"]
     lines = [f"R6 cost review: {res['n_months']} counted month(s) {res['months'][0]} .. {res['months'][-1]} (window {res['readiness']['window'][0]} .. {res['readiness']['window'][-1]}, "
              f"{res['readiness']['gaps_in_window']} gap(s)); fee snapshot {snapshot_id[:12]}",
-             f"reading: a month counts when the previous calendar month has a row; unknown fee priced at the median of the known ones (entry {res['default_fees']['entry']:.4f}, exit {res['default_fees']['exit']:.4f}); "
-             "cost drag a year = 12 x mean monthly cost"]
+             "reading: a month counts when the previous calendar month has a row; an unknown fee is filled with the declared ceiling, else the p90 of the nature "
+             f"(a fund absent from the snapshot: entry {res['default_fees']['entry']:.4f}, exit {res['default_fees']['exit']:.4f}); cost drag a year = 12 x mean monthly cost; no purchases = full coverage"]
     for k in ("L", "AC", "B"):
         if s.get(k):
-            lines.append(f"{k:>2}: one-way turnover {s[k]['turnover']:.1%} a month; cost drag {s[k]['cost_pp']:.2f} pp a year; traded notional with an unknown fee {s[k]['unknown_fee_traded_share']:.1%}")
+            c, o = res["coverage"][k], res["stats_optimistic"][k]
+            lines.append(f"{k:>2}: one-way turnover {s[k]['turnover']:.1%} a month; cost drag {s[k]['cost_pp']:.2f} pp a year (optimistic {o['cost_pp']:.2f}); "
+                         f"bought with a fee or ceiling on both sides {c['bought']:.1%}; sold with a known exit {c['sold_exit']:.1%}")
         else:
             lines.append(f"{k:>2}: no row of the band-only stream")
-    lines.append(f"AC weight in funds with an unknown fee (latest counted row): {res['ac_unknown_fee_weight_share']:.1%} (reported, not gating)")
+    lines.append(f"coverage condition: AC bought {res['coverage']['AC']['bought']:.1%} against {FEE_COVERAGE_MIN:.0%}")
+    lines.append(f"AC weight in funds without an exact fee (latest counted row): {res['ac_unknown_fee_weight_share']:.1%} (reported, not gating)")
+    ro = res["rules_optimistic"]
+    lines.append(f"optimistic variant (a fund with no figure costs 0; never gating): rule1 {ro['rule1']}, rule2 {ro['rule2']}, rule3 {ro['rule3']}")
     lines.append(f"rule1 AC turnover at least {TURNOVER_REDUCTION_MIN:.0%} below L: {r['rule1']}")
     lines.append(f"rule2 AC cost drag at least {COST_DRAG_REDUCTION_MIN_PP:.2f} pp below L: {r['rule2']}")
     lines.append(f"rule3 AC cost drag at least {AC_VS_BAND_SAVING_MIN_PP:.2f} pp below B: {r['rule3']}")
@@ -278,7 +344,7 @@ def render_review(res: dict, snapshot_id: str) -> str:
 # --------------------------------------------------------------------------------------------------------------------------------------------------
 # entry points
 # --------------------------------------------------------------------------------------------------------------------------------------------------
-def run(argv: list, *, rows_ac: list, rows_b: list, n_errors: int, fees: "pd.DataFrame | None" = None) -> "tuple[int, str]":
+def run(argv: list, *, rows_ac: list, rows_b: list, n_errors: int, fees: "pd.DataFrame | None" = None, pool: "tuple | None" = None) -> "tuple[int, str]":
     """The whole program on already-read rows: (exit code, text). 0 = shown, 3 = review refused (window not ready), 2 = a review needs the fees."""
     ap = argparse.ArgumentParser(prog="p3_shadow_read")
     ap.add_argument("--review", action="store_true", help="the R6 cost review (refused until the window exists)")
@@ -286,7 +352,7 @@ def run(argv: list, *, rows_ac: list, rows_b: list, n_errors: int, fees: "pd.Dat
     ap.add_argument("--out", default=None, help="write the review as JSON")
     args = ap.parse_args(argv)
     if not args.review:
-        return 0, render_integrity(rows_ac, n_errors)
+        return 0, render_integrity(rows_ac, n_errors, pool)
     ready = readiness(last_per_month(rows_ac))
     if not ready["ready"]:
         return 3, ready["reason"]
@@ -308,20 +374,25 @@ def run(argv: list, *, rows_ac: list, rows_b: list, n_errors: int, fees: "pd.Dat
 
 
 def _read_live(argv: list):
-    """(rows of the AC stream, rows of the band-only stream, ERROR row count, live fees or None). SELECT only."""
+    """(rows of the AC stream, rows of the band-only stream, ERROR row count, live fees or None, candidate-pool counts or None). SELECT only."""
     from shared.db import get_connection
     conn = get_connection()
     try:
         rows_ac = hs.read_rows(conn, ROWS_LIMIT, step=AC_STEP)
         rows_b = hs.read_rows(conn, ROWS_LIMIT, step=B_STEP) if "--review" in argv else []
         n_errors = int(conn.execute("SELECT COUNT(*) FROM ingestion_log WHERE step = %s", (AC_STEP_ERROR,)).fetchone()[0])
-        fees = None
+        fees = pool = None
         if "--review" in argv:
             snap = _arg_value(argv, "--snapshot")
             if not (snap and Path(snap).exists()):
-                rows = conn.execute("SELECT ISIN, Entry_Fee_Pct, Exit_Fee_Pct FROM fund_master").fetchall()
-                fees = pd.DataFrame([tuple(r) for r in rows], columns=["isin", *FEE_COLUMNS]).set_index("isin").apply(pd.to_numeric, errors="coerce")
-        return rows_ac, rows_b, n_errors, fees
+                rows = conn.execute("SELECT ISIN, Entry_Fee_Pct, Exit_Fee_Pct, Entry_Fee_Pct_Max, Exit_Fee_Pct_Max, Fund_Nature FROM fund_master").fetchall()
+                fees = pd.DataFrame([tuple(r) for r in rows], columns=["isin", *SNAPSHOT_COLUMNS]).set_index("isin")
+                fees[[*FEE_COLUMNS, *CEILING_COLUMNS]] = fees[[*FEE_COLUMNS, *CEILING_COLUMNS]].apply(pd.to_numeric, errors="coerce")
+        else:
+            pool = tuple(conn.execute(
+                "SELECT COUNT(*), COUNT(*) FILTER (WHERE (Entry_Fee_Pct IS NOT NULL OR Entry_Fee_Pct_Max IS NOT NULL) AND (Exit_Fee_Pct IS NOT NULL OR Exit_Fee_Pct_Max IS NOT NULL)) "
+                "FROM fund_master WHERE ISIN IN (SELECT DISTINCT isin FROM fund_scores WHERE eligible = 1 AND calculated_at = (SELECT MAX(calculated_at) FROM fund_scores))").fetchone())
+        return rows_ac, rows_b, n_errors, fees, pool
     finally:
         conn.close()
 
@@ -332,8 +403,8 @@ def _arg_value(argv: list, name: str):
 
 def main(argv: "list | None" = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    rows_ac, rows_b, n_errors, fees = _read_live(argv)
-    rc, text = run(argv, rows_ac=rows_ac, rows_b=rows_b, n_errors=n_errors, fees=fees)
+    rows_ac, rows_b, n_errors, fees, pool = _read_live(argv)
+    rc, text = run(argv, rows_ac=rows_ac, rows_b=rows_b, n_errors=n_errors, fees=fees, pool=pool)
     print(text)
     return rc
 

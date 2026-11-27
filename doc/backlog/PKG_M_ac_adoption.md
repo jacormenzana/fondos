@@ -25,7 +25,8 @@
 - The first live row (#1569488, 2026-11-22) was verified on integrity fields only (`HANDOFF_P3_AFTER_AC_SHADOW.md`).
 - The reader exists, built test-first (22 tests).
 - Its default mode prints only the whitelisted integrity fields. `--review` is refused (exit 3) until the rows span 6 calendar months with at most 1 gap.
-- It applies Amendment 1. It does NOT apply Amendment 2: it fills an unknown fee with the median of the known fees of the funds held (a reading the owner validated on 11-22, replaced on 11-26), and it has no coverage condition.
+- It applied Amendment 1 only: it filled an unknown fee with the median of the known fees of the funds held (a reading the owner validated on 11-22, replaced on 11-26) and had no coverage condition.
+- **DONE 2026-11-27 (`Refs: FND-0438`): changes (a) to (e) below are built** (31 tests; the two that pinned the old rule, the median fill and the two-column snapshot, were rewritten to the new one; the other 20 are unchanged apart from the snapshot columns). Integrity mode on live data: candidate pool 940 funds, 97.4 % with a fee or a ceiling on both sides. The review itself still waits for its window.
 
 **Change (test-first; the integrity-only output is unchanged, and no comparison, turnover or cost field of any stored row is printed while the change is built or tested):**
 - (a) Cost fill per fund and per side: exact fee → declared ceiling (`*_Fee_Pct_Max` / 100) → p90 of the exact fees of the same `Fund_Nature` in the frozen review snapshot (all natures when the nature has none). The same fill for L, B and AC. The frozen snapshot gains the two ceiling columns and `Fund_Nature`, with their hashes.

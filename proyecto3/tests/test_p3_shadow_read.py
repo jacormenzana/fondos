@@ -150,10 +150,36 @@ def test_unknown_fee_takes_the_default_and_is_counted():
     assert unk == pytest.approx(1.0)                                                                       # every traded unit touched an unknown fee (traded = 2.0, both sides unknown) -> share 1.0
 
 
-def test_default_fee_is_the_median_of_the_known_fees_of_the_funds_held():
-    fees = pd.DataFrame({"Entry_Fee_Pct": [0.01, 0.03, 0.05, np.nan], "Exit_Fee_Pct": [0.0, 0.0, 0.02, np.nan]}, index=["A", "B", "C", "D"])
-    de, dx = R.default_fees(fees, {"A", "B", "C", "D"})
-    assert de == pytest.approx(0.03) and dx == pytest.approx(0.0)
+def _fees(rows):
+    """{isin: (entry, exit, entry ceiling %, exit ceiling %, nature)} -> the frozen snapshot frame."""
+    return pd.DataFrame.from_dict(rows, orient="index", columns=["Entry_Fee_Pct", "Exit_Fee_Pct", "Entry_Fee_Pct_Max", "Exit_Fee_Pct_Max", "Fund_Nature"])
+
+
+NAN = np.nan
+FILL = _fees({"X1": (0.01, 0.0, NAN, NAN, "Mixtos"), "X2": (0.02, 0.0, 5.0, NAN, "Mixtos"), "X3": (0.03, 0.01, NAN, NAN, "Mixtos"),
+              "CEIL": (NAN, NAN, 4.0, 1.5, "Mixtos"), "NONE": (NAN, NAN, NAN, NAN, "Mixtos"), "LONE": (NAN, NAN, NAN, NAN, "Monetario"),
+              "Y1": (0.05, 0.02, NAN, NAN, "Renta Variable")})
+
+
+def test_the_fill_is_the_exact_fee_then_the_ceiling_then_the_p90_of_the_nature():
+    entry, exit_, de, dx = R.filled_fees(FILL)
+    assert entry["X2"] == pytest.approx(0.02)                                              # exact wins over its ceiling
+    assert entry["CEIL"] == pytest.approx(0.04) and exit_["CEIL"] == pytest.approx(0.015)   # ceiling is a whole percent
+    p90 = float(pd.Series([0.01, 0.02, 0.03]).quantile(0.9))                                # exact values of the nature only (not the ceilings)
+    assert entry["NONE"] == pytest.approx(p90)
+    overall = float(pd.Series([0.01, 0.02, 0.03, 0.05]).quantile(0.9))
+    assert entry["LONE"] == pytest.approx(overall) and de == pytest.approx(overall)          # a nature with no exact value, and a fund absent from the snapshot
+    assert exit_["NONE"] == pytest.approx(float(pd.Series([0.0, 0.0, 0.01]).quantile(0.9))) and dx > 0
+
+
+def test_the_optimistic_fill_costs_a_fund_with_no_figure_at_zero():
+    entry, exit_, de, dx = R.filled_fees(FILL, optimistic=True)
+    assert entry["CEIL"] == pytest.approx(0.04) and entry["NONE"] == 0.0 and exit_["LONE"] == 0.0 and (de, dx) == (0.0, 0.0)
+
+
+def test_known_on_both_sides_means_an_exact_fee_or_a_ceiling():
+    known = R.known_both_sides(FILL)
+    assert known == {"X1", "X2", "X3", "CEIL", "Y1"}                                        # LONE and NONE have no figure
 
 
 def test_unknown_fee_share_of_the_ac_weight():
@@ -197,7 +223,7 @@ def _ready_rows():
 
 def test_review_end_to_end_on_a_ready_window(tmp_path):
     ac_rows, b_rows = _ready_rows()
-    fees = pd.DataFrame({"Entry_Fee_Pct": [0.02, 0.02, 0.02, 0.02], "Exit_Fee_Pct": [0.01, 0.01, 0.01, 0.01]}, index=["A", "B", "C", "D"])
+    fees = _fees({i: (0.02, 0.01, np.nan, np.nan, "Mixtos") for i in "ABCD"})
     rc, text = R.run(["--review", "--snapshot", str(tmp_path / "snap")], rows_ac=ac_rows, rows_b=b_rows, n_errors=0, fees=fees)
     assert rc == 0 and "R6" in text and "rule1" in text.lower()
     assert "PASS" in text and "snapshot" in text.lower()
@@ -212,19 +238,21 @@ def test_review_end_to_end_on_a_ready_window(tmp_path):
 def test_review_uses_only_months_counted_for_all_three_series():
     ac_rows, b_rows = _ready_rows()
     b_rows = [r for r in b_rows if r["built_at"][:7] != "2027-04"]                                         # B misses a month: its counted set shrinks
-    fees = pd.DataFrame({"Entry_Fee_Pct": [0.02] * 4, "Exit_Fee_Pct": [0.01] * 4}, index=list("ABCD"))
+    fees = _fees({i: (0.02, 0.01, np.nan, np.nan, "Mixtos") for i in "ABCD"})
     res = R.review_r6(ac_rows, b_rows, fees)
     assert "2027-04" not in res["months"] and "2027-05" not in res["months"]                               # 2027-05 follows B's gap: excluded as well
 
 
 # ================================================================ (7) the frozen snapshot ===============================================================================
 def test_fee_snapshot_is_frozen_once_and_verified_on_load(tmp_path):
-    fees = pd.DataFrame({"Entry_Fee_Pct": [0.02, 0.03], "Exit_Fee_Pct": [0.0, 0.01]}, index=pd.Index(["A", "B"], name="isin"))
+    fees = pd.DataFrame({"Entry_Fee_Pct": [0.02, 0.03], "Exit_Fee_Pct": [0.0, 0.01], "Entry_Fee_Pct_Max": [5.0, np.nan], "Exit_Fee_Pct_Max": [np.nan, np.nan],
+                         "Fund_Nature": ["Mixtos", "Monetario"]}, index=pd.Index(["A", "B"], name="isin"))
     folder = tmp_path / "snap"
     manifest = R.freeze_fees(folder, fees)
     assert manifest["snapshot_id"] and (folder / "manifest.json").exists()
     back, sid = R.load_fees(folder)
-    assert sid == manifest["snapshot_id"] and list(back.columns) == ["Entry_Fee_Pct", "Exit_Fee_Pct"] and back.loc["B", "Entry_Fee_Pct"] == pytest.approx(0.03)
+    assert sid == manifest["snapshot_id"] and list(back.columns) == R.SNAPSHOT_COLUMNS and back.loc["B", "Entry_Fee_Pct"] == pytest.approx(0.03)
+    assert back.loc["A", "Entry_Fee_Pct_Max"] == pytest.approx(5.0) and back.loc["B", "Fund_Nature"] == "Monetario"
     with pytest.raises(FileExistsError):
         R.freeze_fees(folder, fees)                                                                         # a snapshot is written once
     f = folder / "fees.parquet"
@@ -246,3 +274,72 @@ def test_the_script_is_read_only():
 
 def test_streams_are_the_ones_the_shadow_writes():
     assert R.AC_STEP == fp.STEP and R.B_STEP == hs.STEP and R.AC_STEP_ERROR == fp.STEP_ERROR
+
+
+# ================================================================ Amendment 2 (PREREG_P3_7 section 14): fill, optimistic variant, coverage ===============================
+def _arm_rows(ac_isins, months=SIX[:7]):
+    """The live arm rotates A,B <-> C,D every month; AC rotates between the two given pairs; B = the live arm."""
+    l = lambda i: _w(("A", 0.5), ("B", 0.5)) if i % 2 == 0 else _w(("C", 0.5), ("D", 0.5))
+    ac = lambda i: _w(*[(x, 0.5) for x in ac_isins[i % 2]])
+    return _rows(months, l, ac), _rows(months, l, l)
+
+
+def test_the_same_fill_prices_every_series():
+    ac_rows, b_rows = _arm_rows((("A", "B"), ("C", "D")))                                    # all three series rotate identically
+    fees = _fees({i: (NAN, 0.01, 4.0, NAN, "Mixtos") for i in "ABCD"})                      # entry known only as a ceiling of 4 %
+    res = R.review_r6(ac_rows, b_rows, fees)
+    costs = [res["stats"][k]["cost_pp"] for k in ("L", "AC", "B")]
+    assert costs[0] == pytest.approx(12 * 100 * (1.0 * 0.04 + 1.0 * 0.01)) and costs == [pytest.approx(costs[0])] * 3
+
+
+def test_the_optimistic_variant_is_reported_and_never_gates():
+    ac_rows, b_rows = _arm_rows((("A", "B"), ("A", "B")))                                    # AC never trades
+    fees = _fees({**{i: (NAN, NAN, NAN, NAN, "Mixtos") for i in "ABCD"}, "Z": (0.05, 0.0, NAN, NAN, "Mixtos")})
+    res = R.review_r6(ac_rows, b_rows, fees)
+    assert res["stats"]["L"]["cost_pp"] > 0 and res["stats_optimistic"]["L"]["cost_pp"] == pytest.approx(0.0)
+    assert res["rules"]["rule2"] == "PASS" and res["rules_optimistic"]["rule2"] == "FAIL"    # the verdict follows the primary fill only
+    text = R.render_review(res, "s" * 64)
+    assert "optimistic" in text and f"verdict: {res['rules']['verdict']}" in text
+
+
+def test_coverage_is_measured_on_what_ac_buys_and_below_95_percent_r6_is_not_informative():
+    ac_rows, b_rows = _arm_rows((("A", "B"), ("C", "N")))                                    # AC buys N (no figure) every other month
+    fees = _fees({**{i: (0.02, 0.01, NAN, NAN, "Mixtos") for i in "ABCD"}, "N": (NAN, NAN, NAN, NAN, "Mixtos")})
+    res = R.review_r6(ac_rows, b_rows, fees)
+    assert res["coverage"]["AC"]["bought"] < 0.95
+    assert [res["rules"][k] for k in ("rule1", "rule2", "rule3")] == ["NOT INFORMATIVE"] * 3
+    assert "NOT INFORMATIVE" in res["rules"]["verdict"] and "next review" in res["rules"]["verdict"]
+    assert res["coverage"]["L"]["bought"] == pytest.approx(1.0) and res["coverage"]["B"]["sold_exit"] == pytest.approx(1.0)
+
+
+def test_the_coverage_threshold_is_inclusive():
+    out = R.evaluate_r6(_stats(0.322, 0.134, 4.61, 1.00, 2.23), ac_bought_coverage=0.95)
+    assert out["verdict"] == "AC cost-confirmed"
+    below = R.evaluate_r6(_stats(0.322, 0.134, 4.61, 1.00, 2.23), ac_bought_coverage=0.9499)
+    assert below["verdict"] != "AC cost-confirmed" and "PASS" not in (below["rule1"], below["rule2"], below["rule3"])
+    assert R.FEE_COVERAGE_MIN == 0.95
+
+
+def test_a_ceiling_counts_as_coverage_and_no_purchases_is_full_coverage():
+    ac_rows, b_rows = _arm_rows((("A", "B"), ("A", "B")))
+    fees = _fees({i: (NAN, NAN, 4.0, 1.0, "Mixtos") for i in "ABCD"})
+    res = R.review_r6(ac_rows, b_rows, fees)
+    assert res["coverage"]["L"]["bought"] == pytest.approx(1.0)                              # ceilings count
+    assert res["coverage"]["AC"]["bought"] == pytest.approx(1.0) and res["coverage"]["AC"]["bought_notional"] == 0.0
+
+
+def test_a_snapshot_without_the_ceiling_columns_is_refused(tmp_path):
+    from proyecto3.src import pit_p37_snapshot as SNAP
+    SNAP.freeze_frames(tmp_path / "old", {R.FEES_FILE: pd.DataFrame({"Entry_Fee_Pct": [0.01], "Exit_Fee_Pct": [0.0]}, index=["A"])})
+    with pytest.raises(SnapshotMismatch):
+        R.load_fees(tmp_path / "old")
+
+
+# ---- the integrity mode: relabelled count and the candidate pool's own coverage, still no comparison field ----
+def test_integrity_mode_names_the_frame_count_and_shows_the_candidate_pool_coverage():
+    rows = _rows(SIX[:2], lambda i: _w(("A", 1.0)), lambda i: _w(("A", 1.0)))
+    rc, text = R.run([], rows_ac=rows, rows_b=[], n_errors=0, pool=(942, 920))
+    assert rc == 0 and "whole scored frame" in text and "candidate pool" in text and "942" in text and "97.7 %" in text
+    for forbidden in ("turnover", "cost", "traded", "0.31337", "ZZINTRAP"):
+        assert forbidden not in text, forbidden
+    assert "candidate pool: not read" in R.run([], rows_ac=rows, rows_b=[], n_errors=0)[1]
