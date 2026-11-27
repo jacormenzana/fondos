@@ -166,14 +166,14 @@ def _selection_health(conn, scores, portfolio, reg) -> None:
 def _hysteresis_shadow(conn, builder, reg, scenario_id, portfolio) -> None:
     """FND-0158: the monthly hysteresis SHADOW, after the DRAFT is persisted. Fail-soft by construction: nothing here can change the DRAFT or the RC."""
     try:
-        from shared.config import P3_HYSTERESIS_SHADOW_ENABLED, ROTATION_COST_GATE_ENABLED
+        from shared.config import P3_HYSTERESIS_SHADOW_ENABLED, P3_SHADOW_COMPARISON_DISPLAY_ENABLED, ROTATION_COST_GATE_ENABLED
         from proyecto3.src import hysteresis_shadow as shadow
         from proyecto3.src.portfolio_builder import HYSTERESIS_BAND, estimate_rotation_cost
         ident = portfolio.macro_context.get("build_identity") or {}
         line = shadow.shadow_after_build(
             conn, builder, reg, scenario_id, portfolio, enabled=P3_HYSTERESIS_SHADOW_ENABLED, band=HYSTERESIS_BAND,
             cost_fn=lambda out, into: estimate_rotation_cost(conn, out, into), identity=dict(ident),
-            rotation_gate_enabled=ROTATION_COST_GATE_ENABLED)
+            rotation_gate_enabled=ROTATION_COST_GATE_ENABLED, show_comparisons=P3_SHADOW_COMPARISON_DISPLAY_ENABLED)
         if line:
             print()
             print(line)
@@ -185,7 +185,7 @@ def _fee_penalty_shadow(conn, builder, reg, scenario_id, portfolio) -> None:
     """P3-7: the monthly forward SHADOW of the AC arm (band + one-off fee penalty), after the DRAFT is persisted and after the hysteresis shadow. Fail-soft by construction: nothing here can change the
     DRAFT or the RC, and nothing is persisted but one ingestion_log row (the penalty scores are recomputed in memory)."""
     try:
-        from shared.config import P3_FEE_PENALTY_SHADOW_ENABLED, P3_FEE_PENALTY_SHADOW_H_YEARS, ROTATION_COST_GATE_ENABLED
+        from shared.config import P3_FEE_PENALTY_SHADOW_ENABLED, P3_FEE_PENALTY_SHADOW_H_YEARS, P3_SHADOW_COMPARISON_DISPLAY_ENABLED, ROTATION_COST_GATE_ENABLED
         from proyecto3.src import fee_penalty_shadow as penalty
         from proyecto3.src import fund_scorer
         from proyecto3.src import ranking_levers as RL
@@ -196,7 +196,8 @@ def _fee_penalty_shadow(conn, builder, reg, scenario_id, portfolio) -> None:
             rescore=lambda: penalty.rescore_candidates(
                 conn, reg.regime, P3_FEE_PENALTY_SHADOW_H_YEARS, load_metrics=fund_scorer.load_fund_metrics_for_scoring,
                 score_from_df=fund_scorer.score_funds_from_df, base_levers=RL.LeverConfig.from_config(), count_unknown_fees=RL.l4_penalty),
-            cost_fn=lambda out, into: estimate_rotation_cost(conn, out, into), identity=dict(ident), rotation_gate_enabled=ROTATION_COST_GATE_ENABLED)
+            cost_fn=lambda out, into: estimate_rotation_cost(conn, out, into), identity=dict(ident), rotation_gate_enabled=ROTATION_COST_GATE_ENABLED,
+            show_comparisons=P3_SHADOW_COMPARISON_DISPLAY_ENABLED)
         if line:
             print()
             print(line)

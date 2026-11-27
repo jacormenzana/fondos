@@ -153,16 +153,29 @@ def _mean(xs: list) -> float | None:
     return (sum(xs) / len(xs)) if xs else None
 
 
-def summary_line(rows: list) -> str:
-    """ONE line for the build output / cycle report: months accumulated, mean one-way turnover OFF (live) / ON (one-step), mean ON cost drag, mean
-    number of funds the hysteresis kept. `rows` = parsed rows, oldest first."""
+def counts_text(rows: list) -> str:
+    """'N month(s), M row(s)' of parsed shadow rows (a month is the row's built_at month; a row without one counts as its own month)."""
+    months = {str(r.get("built_at") or i)[:7] if r.get("built_at") else f"?{i}" for i, r in enumerate(rows)}
+    return f"{len(months)} month(s), {len(rows)} row(s)"
+
+
+WITHHELD = "comparison fields withheld until the first review"
+
+
+def summary_line(rows: list, show_comparisons: bool = False) -> str:
+    """ONE line for the build output / cycle report. By default ONLY the month and row counts: no turnover, cost or selection value is displayed before
+    the first review (pre-registration; owner order 2026-11-27). `show_comparisons` (shared.config.P3_SHADOW_COMPARISON_DISPLAY_ENABLED, switched on at
+    the review) adds mean one-way turnover OFF (live) / ON (one-step), mean ON cost drag and mean funds kept. `rows` = parsed rows, oldest first."""
     if not rows:
         return "hysteresis shadow: 0 months accumulated"
+    head = f"hysteresis shadow (band {rows[-1]['band']:.2f}, switch OFF): {counts_text(rows)}"
+    if not show_comparisons:
+        return f"{head}; {WITHHELD}"
     off_t = _mean([r["off"]["one_way_turnover"] for r in rows])
     on_t = _mean([r["one_step"]["one_way_turnover"] for r in rows])
     drag = _mean([r["one_step"]["cost_drag"] for r in rows])
     kept = _mean([float(len(r["one_step"]["diff_vs_off"]["kept_by_hysteresis"])) for r in rows])
-    return (f"hysteresis shadow (band {rows[-1]['band']:.2f}, switch OFF): {len(rows)} month(s); mean one-way turnover OFF {off_t:.1%} / ON {on_t:.1%}; "
+    return (f"{head}; mean one-way turnover OFF {off_t:.1%} / ON {on_t:.1%}; "
             f"mean ON cost drag {drag:.2%}; mean funds kept by hysteresis {kept:.1f}")
 
 
@@ -252,7 +265,7 @@ def run_shadow(conn, builder, regime_result, scenario_id: str, live_portfolio, *
 
 
 def shadow_after_build(conn, builder, regime_result, scenario_id: str, live_portfolio, *, enabled: bool, band: float, cost_fn=None, identity=None,
-                       rotation_gate_enabled: bool = False, calc_versions: dict | None = None) -> str | None:
+                       rotation_gate_enabled: bool = False, calc_versions: dict | None = None, show_comparisons: bool = False) -> str | None:
     """The fail-soft hook: NEVER raises. Returns the line to print (or None when the switch is OFF). Every failure is one P3_HYSTERESIS_SHADOW_ERROR row
     (and, if even that cannot be written, a printed warning): the build's return code and its DRAFT are never touched."""
     if not enabled:
@@ -261,7 +274,7 @@ def shadow_after_build(conn, builder, regime_result, scenario_id: str, live_port
         row = run_shadow(conn, builder, regime_result, scenario_id, live_portfolio, band=band, cost_fn=cost_fn, identity=identity,
                          rotation_gate_enabled=rotation_gate_enabled, calc_versions=calc_versions)
         _write(conn, STEP, STATUS, json.dumps(row, separators=(",", ":"), default=str))
-        return summary_line(read_rows(conn))
+        return summary_line(read_rows(conn), show_comparisons=show_comparisons)
     except Exception as exc:                                                 # noqa: BLE001 -- the shadow measures, it never refuses
         reason = f"{type(exc).__name__}: {str(exc)[:300]}"
         try:

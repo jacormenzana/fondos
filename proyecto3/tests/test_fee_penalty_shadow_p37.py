@@ -235,7 +235,7 @@ def test_a_successful_run_appends_exactly_one_row_with_both_streams_and_the_pena
     assert row["off"]["one_way_turnover"] == 0.5 and row["one_step"]["one_way_turnover"] == 0.0
     assert [r["isin"] for r in row["one_step"]["diff_vs_off"]["kept_by_hysteresis"]] == ["B"]
     assert row["chain_base_scenario"] == "prod" and row["build_identity"] == {"git_commit": "abc", "git_clean": True, "config_hash": "h"}
-    assert "1 month(s)" in line and "OFF 50.0% / AC 0.0%" in line
+    assert "1 month(s), 1 row(s)" in line and "withheld until the first review" in line and "%" not in line      # no comparison value (2026-11-27)
 
 
 def test_both_arms_are_built_in_memory_from_the_penalty_candidates():
@@ -345,7 +345,12 @@ def test_the_hook_runs_after_the_draft_is_persisted_in_real_runs_only_and_is_fai
 def test_the_summary_line_of_no_rows_and_of_many():
     assert fp.summary_line([]) == "fee-penalty shadow: 0 months accumulated"
     conn, _b, _l = _run()
-    assert fp.summary_line(fp.read_rows(conn)).startswith("fee-penalty shadow (AC: band 0.10 + penalty H 0.58 y, live arm OFF): 1 month(s)")
+    hidden = fp.summary_line(fp.read_rows(conn))
+    assert hidden.startswith("fee-penalty shadow (AC: band 0.10 + penalty H 0.58 y, live arm OFF): 1 month(s), 1 row(s)")
+    for field in ("turnover", "cost drag", "unknown fee", "%"):                   # PREREG_P3_7 section 13: not displayed before the first review
+        assert field not in hidden, field
+    shown = fp.summary_line(fp.read_rows(conn), show_comparisons=True)
+    assert "OFF 50.0% / AC 0.0%" in shown and "cost drag" in shown
 
 
 # ---- invariant 7: the builder seam -------------------------------------------------------------------------------------------------------------------------

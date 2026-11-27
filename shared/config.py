@@ -266,6 +266,9 @@ P3_HYSTERESIS_SHADOW_ENABLED: bool = True
 # evidence). H is the preregistered 0.58 years (7 months), deliberately not P3_L4_H_YEARS (the OFF live lever). Ships ON like the hysteresis shadow: it only appends a log row. Rollback = False.
 P3_FEE_PENALTY_SHADOW_ENABLED: bool = True
 P3_FEE_PENALTY_SHADOW_H_YEARS: float = 0.58
+# Owner order 2026-11-27 (pre-registration integrity, PREREG_P3_7 section 13 / Amendment 5 of PREREG_FND-0193): the build output of BOTH forward shadows shows only month and row
+# counts. Turnover, cost and selection-difference values are not displayed before the first review. The stored rows are unchanged. Switch ON at the first review (about 2027-05).
+P3_SHADOW_COMPARISON_DISPLAY_ENABLED: bool = False
 # FND-0436 / Package L Track 1 (plan rev. 3.1, owner decision 2026-11-21): fee-aware choice among the classes of ONE family. `fund_scorer.deduplicate_by_family` keeps the class with the best
 # `score_final`; that score already carries the recurring charge (the NAV is net of it) but ignores the one-off entry and exit fees. With the switch ON, within a (family, sub-portfolio) the class
 # with the lowest Entry_Fee_Pct + Exit_Fee_Pct replaces the best one only if: both are eligible, its score_final is at least the best's minus the tolerance below, its Ongoing_Charge is not above the

@@ -150,7 +150,7 @@ def test_a_successful_run_appends_exactly_one_row_with_both_streams():
     assert [r["isin"] for r in row["one_step"]["diff_vs_off"]["kept_by_hysteresis"]] == ["B"]
     assert row["build_identity"] == {"git_commit": "abc", "git_clean": True, "config_hash": "h"}      # recorded as given, never compared
     assert row["chain_base_scenario"] == "prod"                  # the first month starts from PRODUCTION
-    assert "1 month(s)" in line and "OFF 50.0% / ON 0.0%" in line
+    assert "1 month(s), 1 row(s)" in line and "withheld until the first review" in line and "%" not in line      # no comparison value (2026-11-27)
 
 
 def test_the_chain_starts_from_the_previous_rows_on_portfolio():
@@ -238,7 +238,19 @@ def test_the_hook_runs_after_the_draft_is_persisted_and_is_fail_soft():
 def test_the_summary_line_of_no_rows_and_of_many():
     assert hs.summary_line([]) == "hysteresis shadow: 0 months accumulated"
     conn, _b, _l = _run()
-    assert hs.summary_line(hs.read_rows(conn)).startswith("hysteresis shadow (band 0.10, switch OFF): 1 month(s)")
+    assert hs.summary_line(hs.read_rows(conn)).startswith("hysteresis shadow (band 0.10, switch OFF): 1 month(s), 1 row(s)")
+    hidden = hs.summary_line(hs.read_rows(conn))
+    for field in ("turnover", "cost drag", "kept", "%"):                          # PREREG: not displayed before the first review
+        assert field not in hidden, field
+    shown = hs.summary_line(hs.read_rows(conn), show_comparisons=True)
+    assert "OFF 50.0% / ON 0.0%" in shown and "cost drag" in shown
+
+
+def test_the_build_passes_the_display_switch_and_it_ships_off():
+    import shared.config as cfg
+    assert cfg.P3_SHADOW_COMPARISON_DISPLAY_ENABLED is False
+    src = (Path(__file__).resolve().parents[2] / "scripts" / "launch" / "p3_build_portfolio.py").read_text(encoding="utf-8")
+    assert src.count("show_comparisons=P3_SHADOW_COMPARISON_DISPLAY_ENABLED") == 2          # both shadows
 
 
 def test_every_statement_of_the_module_is_a_literal_with_placeholders():

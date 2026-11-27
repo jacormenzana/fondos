@@ -73,16 +73,20 @@ def build_row(*, base_row: dict, h_years: float, info: dict) -> dict:
     return row
 
 
-def summary_line(rows: list) -> str:
-    """ONE line for the build output: months accumulated, mean one-way turnover of the live arm and of AC (one-step), mean AC cost drag, mean funds whose fee was unknown. `rows` = parsed rows, oldest first."""
+def summary_line(rows: list, show_comparisons: bool = False) -> str:
+    """ONE line for the build output. By default ONLY the month and row counts: PREREG_P3_7 section 13 says turnover, cost and selection-difference fields are not
+    displayed before the first review (owner order 2026-11-27). `show_comparisons` (shared.config.P3_SHADOW_COMPARISON_DISPLAY_ENABLED, switched on at the review)
+    adds mean one-way turnover of the live arm and of AC (one-step), mean AC cost drag and mean funds whose fee was unknown. `rows` = parsed rows, oldest first."""
     if not rows:
         return "fee-penalty shadow: 0 months accumulated"
+    head = f"fee-penalty shadow ({ARM}: band {rows[-1]['band']:.2f} + penalty H {rows[-1]['l4_h_years']:.2f} y, live arm OFF): {hs.counts_text(rows)}"
+    if not show_comparisons:
+        return f"{head}; {hs.WITHHELD}"
     off_t = hs._mean([r["off"]["one_way_turnover"] for r in rows])
     ac_t = hs._mean([r["one_step"]["one_way_turnover"] for r in rows])
     drag = hs._mean([r["one_step"]["cost_drag"] for r in rows])
     unk = hs._mean([float(r["n_fee_unknown"]) if r.get("n_fee_unknown") is not None else None for r in rows])
-    last = rows[-1]
-    return (f"fee-penalty shadow ({ARM}: band {last['band']:.2f} + penalty H {last['l4_h_years']:.2f} y, live arm OFF): {len(rows)} month(s); mean one-way turnover OFF {off_t:.1%} / {ARM} {ac_t:.1%}; "
+    return (f"{head}; mean one-way turnover OFF {off_t:.1%} / {ARM} {ac_t:.1%}; "
             f"mean {ARM} cost drag {drag:.2%}" + (f"; mean funds with an unknown fee {unk:.1f}" if unk is not None else ""))
 
 
@@ -151,7 +155,7 @@ def run_shadow(conn, builder, regime_result, scenario_id: str, live_portfolio, *
 
 
 def shadow_after_build(conn, builder, regime_result, scenario_id: str, live_portfolio, *, enabled: bool, band: float, h_years: float, rescore, cost_fn=None, identity=None,
-                       rotation_gate_enabled: bool = False, calc_versions: dict | None = None) -> str | None:
+                       rotation_gate_enabled: bool = False, calc_versions: dict | None = None, show_comparisons: bool = False) -> str | None:
     """The fail-soft hook: NEVER raises. Returns the line to print (or None when the switch is OFF). Every failure is one P3_FEE_PENALTY_SHADOW_ERROR row (and, if even that cannot be
     written, a printed warning): the build's return code and its DRAFT are never touched."""
     if not enabled:
@@ -160,7 +164,7 @@ def shadow_after_build(conn, builder, regime_result, scenario_id: str, live_port
         row = run_shadow(conn, builder, regime_result, scenario_id, live_portfolio, band=band, h_years=h_years, rescore=rescore, cost_fn=cost_fn, identity=identity,
                          rotation_gate_enabled=rotation_gate_enabled, calc_versions=calc_versions)
         hs._write(conn, STEP, hs.STATUS, json.dumps(row, separators=(",", ":"), default=str))
-        return summary_line(read_rows(conn))
+        return summary_line(read_rows(conn), show_comparisons=show_comparisons)
     except Exception as exc:                                                 # noqa: BLE001 -- the shadow measures, it never refuses
         reason = f"{type(exc).__name__}: {str(exc)[:300]}"
         try:

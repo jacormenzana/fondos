@@ -69,6 +69,9 @@ Any amendment must be committed before the first review of the AC shadow, while 
 1. DONE: the read-only fee-coverage check above; the owner set the threshold (95 %) and the fill rule on 2026-11-26.
 2. DONE: Amendment 2 (section 14 of PREREG_P3_7), committed before the first review (`bc69c7d`).
 
+## Contamination record (2026-11-27, R9)
+Until 2026-11-27 every P3 build wrote into its log a summary of both forward shadows with mean turnover and AC / ON mean cost drag, which section 13 of `PREREG_P3_7.md` says are not displayed before the first review. The builds that wrote shadow rows (2026-11-22 and 2026-11-27) therefore hold those values in their logs. The assistant did not open them; whether the owner saw them is not recorded. Fixed on the owner's order of 2026-11-27: the build shows month and row counts only (`P3_SHADOW_COMPARISON_DISPLAY_ENABLED` ships OFF until the review); the stored rows are unchanged and no rule or value of the pre-registration changes.
+
 ## Checks run after Amendment 2 (2026-11-26, read-only, outputs in the session scratchpad only; no rule changes)
 - **Condition (c), 100 bp half:** from the stored series of the P3-7 build, AC nets 2.47 % a year against the baseline's 0.74 %. PASS. The 25 bp figures reproduce the adoption table exactly (3.71 % against 3.69 %).
 - **PIT weight rebuild** of L, A1 and AC:
