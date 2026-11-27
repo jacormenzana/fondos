@@ -13,6 +13,12 @@ Rule 2 does not rest on fund_family_id, the key that split the EUR and USD class
 (shared/config.py DUPLICATE_FUND_*) from the read-only calibration of 2026-11-26 over the live universe (last 36 months): the ABN pair has EUR-view
 correlation 0.998 and a mean absolute monthly difference of 0.18 pp, inside correlation >= 0.995 and difference <= 0.20 pp.
 
+Volatility floor (DUPLICATE_FUND_MIN_VOL, 2026-11-27): a view where either series moves less than the floor a year cannot identify a sub-fund (two
+different money-market or floating-rate funds of one manager match), so rule 2 does not use it. Rule 1 is unaffected.
+
+The same rule serves the portfolio BUILDER (twins_of), the fallback for the split family key (FND-0444): the shared selection function skips a candidate
+whose twin is already chosen.
+
 The top of the module is pure (R-7); the loaders import the database helpers inside their functions.
 """
 from __future__ import annotations
@@ -46,12 +52,21 @@ def similarity(x: dict, y: dict) -> "tuple[float | None, float | None, int]":
     return sab / math.sqrt(saa * sbb), mad, n
 
 
+def annual_vol(values: list) -> float:
+    """Annualised standard deviation of monthly returns (0.0 for fewer than 2 values)."""
+    n = len(values)
+    if n < 2:
+        return 0.0
+    mean = sum(values) / n
+    return math.sqrt(sum((v - mean) ** 2 for v in values) / (n - 1)) * math.sqrt(12)
+
+
 def _manager_key(name) -> "str | None":
     key = " ".join(str(name).split()).upper() if name is not None else ""
     return key or None
 
 
-def duplicate_pairs(holdings: list, returns: dict, *, min_corr: float, max_mad: float, min_months: int) -> list:
+def duplicate_pairs(holdings: list, returns: dict, *, min_corr: float, max_mad: float, min_months: int, min_vol: float = 0.0) -> list:
     """[(isin_a, isin_b, reason)] of the pairs of `holdings` that are one fund, isin_a < isin_b, sorted. `holdings` = [{isin, family, manager}];
     `returns` = {view: {isin: {month: return}}} for the views in VIEWS (a missing view or fund is simply not compared)."""
     by_isin = {h["isin"]: h for h in holdings}
@@ -70,11 +85,30 @@ def duplicate_pairs(holdings: list, returns: dict, *, min_corr: float, max_mad: 
                 series = returns.get(view) or {}
                 if a not in series or b not in series:
                     continue
+                common = [m for m in series[a] if m in series[b]]
+                if min_vol > 0 and min(annual_vol([series[a][m] for m in common]), annual_vol([series[b][m] for m in common])) < min_vol:
+                    continue                                     # too flat to identify a sub-fund
                 corr, mad, n = similarity(series[a], series[b])
                 if n >= min_months and corr is not None and corr >= min_corr and mad <= max_mad:
                     out.append((a, b, f"returns {view}: corr {corr:.4f}, mean |diff| {mad * 100:.3f} pp over {n} months, same manager"))
                     break
     return out
+
+
+def twins_from_pairs(pairs: list) -> dict:
+    """{isin: frozenset of its twins} from duplicate_pairs output. Symmetric and NOT transitive: only the pairs the rule found."""
+    out: dict = {}
+    for a, b, _why in pairs:
+        out.setdefault(a, set()).add(b)
+        out.setdefault(b, set()).add(a)
+    return {k: frozenset(v) for k, v in out.items()}
+
+
+def _pairs(holdings: list, returns: dict) -> list:
+    """duplicate_pairs with the parameters of shared/config.py (one definition for the gate and the builder)."""
+    from shared import config as cfg
+    return duplicate_pairs(holdings, returns, min_corr=cfg.DUPLICATE_FUND_MIN_CORR, max_mad=cfg.DUPLICATE_FUND_MAX_MAD,
+                           min_months=cfg.DUPLICATE_FUND_MIN_MONTHS, min_vol=cfg.DUPLICATE_FUND_MIN_VOL)
 
 
 def monthly_returns(rows) -> dict:
@@ -126,8 +160,25 @@ def check_scenario(conn, isins) -> "tuple[list | None, str | None]":
     try:
         holdings = load_holdings(conn, isins)
         returns = load_returns(conn, isins, cfg.DUPLICATE_FUND_WINDOW_MONTHS)
-        return duplicate_pairs(holdings, returns, min_corr=cfg.DUPLICATE_FUND_MIN_CORR, max_mad=cfg.DUPLICATE_FUND_MAX_MAD,
-                               min_months=cfg.DUPLICATE_FUND_MIN_MONTHS), None
+        return _pairs(holdings, returns), None
     except Exception as exc:                                     # noqa: BLE001 -- the gate fails closed on unreadable inputs
         conn.rollback()
         return None, f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
+
+
+def twins_of(conn, isins) -> dict:
+    """{isin: frozenset(twins)} among `isins`, for the builder. Returns are read only for managers with two or more of them (rule 2 needs one manager).
+    RAISES when an input cannot be read: a build must not silently select without the rule."""
+    isins = sorted(set(isins))
+    if len(isins) < 2:
+        return {}
+    from shared import config as cfg
+    holdings = load_holdings(conn, isins)
+    count: dict = {}
+    for h in holdings:
+        key = _manager_key(h["manager"])
+        if key is not None:
+            count[key] = count.get(key, 0) + 1
+    shared_mgr = sorted(h["isin"] for h in holdings if count.get(_manager_key(h["manager"]), 0) > 1)
+    returns = load_returns(conn, shared_mgr, cfg.DUPLICATE_FUND_WINDOW_MONTHS) if shared_mgr else {}
+    return twins_from_pairs(_pairs(holdings, returns))

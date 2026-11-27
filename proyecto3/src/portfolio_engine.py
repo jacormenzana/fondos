@@ -237,6 +237,7 @@ def select_candidates(
     exclude_families: set | None = None,
     mgr_global: dict | None = None,
     incumbent_isins: frozenset | None = None,
+    twins: dict | None = None,
 ) -> pd.DataFrame:
     """
     Selecciona los mejores fondos de UNA sub-cartera aplicando las
@@ -248,6 +249,9 @@ def select_candidates(
     referencia entre llamadas sucesivas (una por sub-cartera) para que la
     exclusion sea GLOBAL entre sub-carteras, replicando exactamente el
     comportamiento de PortfolioBuilder.build() previo a la Fase 4.
+
+    `twins` (FND-0444 fallback, proyecto3/src/duplicate_holdings.py): {isin: frozenset of share classes of the same sub-fund that the family key split};
+    a candidate whose twin is already chosen (in any sub-portfolio: `exclude_isins`) is skipped. None or {} = the selection as before (the PIT passes none).
 
     Fase 4: extraido de portfolio_builder.py::_select_funds_for_subportfolio,
     que ahora es un adaptador fino que carga los candidatos desde fund_scores
@@ -286,6 +290,8 @@ def select_candidates(
     for _, row in df.iterrows():
         if row["isin"] in exclude_isins:
             continue
+        if twins and not exclude_isins.isdisjoint(twins.get(row["isin"], ())):
+            continue
 
         nature = row["fund_nature"]
         mgr    = row["management_company"] or "Desconocida"
@@ -322,6 +328,7 @@ def select_within_exposure(
     exclude_families: set | None = None,
     mgr_global: dict | None = None,
     incumbent_isins: frozenset | None = None,
+    twins: dict | None = None,
 ) -> pd.DataFrame:
     """select_candidates + el limite de exposicion (constraints.max_exposed_weight sobre la columna booleana `fx_exposed`).
 
@@ -337,7 +344,7 @@ def select_within_exposure(
     budget = constraints.max_exposed_weight
     if budget is None or candidates.empty or "fx_exposed" not in candidates.columns:
         return select_candidates(candidates, constraints, exclude_isins=exclude_isins, exclude_families=exclude_families,
-                                 mgr_global=mgr_global, incumbent_isins=incumbent_isins)
+                                 mgr_global=mgr_global, incumbent_isins=incumbent_isins, twins=twins)
 
     exclude_isins    = exclude_isins if exclude_isins is not None else set()
     exclude_families = exclude_families if exclude_families is not None else set()
@@ -347,7 +354,7 @@ def select_within_exposure(
     while True:
         trial = select_candidates(
             pool, constraints, exclude_isins=set(exclude_isins), exclude_families=set(exclude_families),
-            mgr_global=dict(mgr_global), incumbent_isins=incumbent_isins)
+            mgr_global=dict(mgr_global), incumbent_isins=incumbent_isins, twins=twins)
         if trial.empty:
             break
         exposed = trial["fx_exposed"].astype(bool)
@@ -361,7 +368,7 @@ def select_within_exposure(
 
     # Commit: the same deterministic selection, now over the final pool, on the real shared state.
     return select_candidates(pool, constraints, exclude_isins=exclude_isins, exclude_families=exclude_families,
-                             mgr_global=mgr_global, incumbent_isins=incumbent_isins)
+                             mgr_global=mgr_global, incumbent_isins=incumbent_isins, twins=twins)
 
 
 def assign_weights(

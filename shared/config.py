@@ -569,6 +569,14 @@ DUPLICATE_FUND_MIN_CORR: float = 0.995
 DUPLICATE_FUND_MAX_MAD: float = 0.002          # a monthly return difference, as a fraction (0.002 = 0.20 pp)
 DUPLICATE_FUND_MIN_MONTHS: int = 24
 DUPLICATE_FUND_WINDOW_MONTHS: int = 36
+# 2026-11-27: below this annualised volatility monthly returns cannot identify a sub-fund (two different money-market or floating-rate funds of one manager
+# match), so the returns rule does not judge such a view; same value as the SRRI class-1 boundary (DATA_SUSPECT_LOW_VOL_FLOOR). The family rule is unaffected.
+DUPLICATE_FUND_MIN_VOL: float = 0.005
+# FND-0444 fallback (owner order 2026-11-27): the family key splits share classes of one sub-fund and could not be repaired and validated before the first
+# counted R6 month, so the BUILDER applies the duplicate rule above itself: the shared selection function skips a candidate whose twin is already chosen. It
+# acts on every live build and on the forward shadows (they share the builder); the PIT backtest dedupes by family only. Unreadable inputs fail the build.
+# Rollback = False (the selection dedupes by fund_family_id only, as before). Retire when FND-0444 repairs the key.
+P3_BUILDER_DUPLICATE_FUND_ENABLED: bool = True
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
 # cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.
 AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30

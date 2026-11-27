@@ -72,6 +72,12 @@ Any amendment must be committed before the first review of the AC shadow, while 
 ## Contamination record (2026-11-27, R9)
 Until 2026-11-27 every P3 build wrote into its log a summary of both forward shadows with mean turnover and AC / ON mean cost drag, which section 13 of `PREREG_P3_7.md` says are not displayed before the first review. The builds that wrote shadow rows (2026-11-22 and 2026-11-27) therefore hold those values in their logs. The assistant did not open them; whether the owner saw them is not recorded. Fixed on the owner's order of 2026-11-27: the build shows month and row counts only (`P3_SHADOW_COMPARISON_DISPLAY_ENABLED` ships OFF until the review); the stored rows are unchanged and no rule or value of the pre-registration changes.
 
+## Selection construction changed before the first counted month (2026-11-27)
+- **Owner order:** repair the split family key (FND-0444) before the 2026-12-01 build so that the R6 series starts cleanly; apply the duplicate rule in the builder only if the repair cannot be validated in time.
+- **Census (read-only):** 478 split pairs (117 groups, 399 funds; 177 pairs with both funds eligible), five causes; 294 pairs have no official name at all, which a change of the key cannot catch. A key change also needs a live P1 pass and the family builder, renumbers families and can move fund natures. It was not validatable in time, so the **fallback** was taken: `P3_BUILDER_DUPLICATE_FUND_ENABLED`.
+- **Effect on this study:** L, B and AC are built by the same builder, so all three carry the rule equally. The PIT results (section 12 of `PREREG_P3_7.md`) were computed without it. No rule, parameter or value of the pre-registration changes. A volatility floor (`DUPLICATE_FUND_MIN_VOL` 0.5 %) was added to the duplicate rule: below it, two different money-market funds of one manager matched.
+- FND-0444 stays open for the root cause; the fallback is retired when it closes.
+
 ## Checks run after Amendment 2 (2026-11-26, read-only, outputs in the session scratchpad only; no rule changes)
 - **Condition (c), 100 bp half:** from the stored series of the P3-7 build, AC nets 2.47 % a year against the baseline's 0.74 %. PASS. The 25 bp figures reproduce the adoption table exactly (3.71 % against 3.69 %).
 - **PIT weight rebuild** of L, A1 and AC:

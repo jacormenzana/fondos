@@ -170,6 +170,7 @@ def _select_funds_for_subportfolio(
     mgr_global: dict | None = None,
     incumbent_isins: frozenset | None = None,
     candidates: "pd.DataFrame | None" = None,
+    twins: "dict | None" = None,
 ) -> pd.DataFrame:
     """
     Selecciona los mejores fondos para una sub-cartera aplicando
@@ -240,6 +241,7 @@ def _select_funds_for_subportfolio(
         exclude_families=exclude_names,   # reutilizamos el param para familias
         mgr_global=mgr_global,
         incumbent_isins=incumbent_isins,
+        twins=twins,
     )
     selected.attrs["pool"] = pool         # for the build-time cash diagnostic (build())
     return selected
@@ -530,8 +532,28 @@ def rotation_plan(
     return operations
 
 
+def _duplicate_twins(conn, score_version: str, regime: str, weights: dict, candidates, previous) -> dict:
+    """FND-0444 fallback (owner order 2026-11-27): {isin: share classes of the same sub-fund} over everything this build may select (the candidate frame, or the
+    current candidates of every sub-portfolio, plus the previous holdings), by the rule of the promotion gate (proyecto3/src/duplicate_holdings.py). {} when
+    P3_BUILDER_DUPLICATE_FUND_ENABLED is OFF. An unreadable input raises: the build fails instead of selecting without the rule."""
+    from shared import config as cfg
+    if not cfg.P3_BUILDER_DUPLICATE_FUND_ENABLED:
+        return {}
+    from proyecto3.src import duplicate_holdings
+    ids: set = set()
+    if candidates is not None:
+        ids.update(candidates["isin"])
+    else:
+        # Every ISIN ever eligible under this regime: a superset of today's candidates (twins are only consulted for candidates and holdings), read with ONE cheap query.
+        # Not load_current_candidates: its correlated query over the score history takes about a minute per call on the live table.
+        ids.update(r[0] for r in conn.execute("SELECT DISTINCT isin FROM fund_scores WHERE score_version = %s AND regime = %s AND eligible = 1", (score_version, regime)).fetchall())
+    if previous is not None:
+        ids.update(f["isin"] for sp in previous.sub_portfolios for f in sp.funds)
+    return duplicate_holdings.twins_of(conn, ids)
+
+
 def _reinstatement_blocker(tentative: "Portfolio", sp: "SubPortfolioAllocation", slot: dict, inc_isin: str,
-                           inc: dict, fx_flags: "dict | None") -> "str | None":
+                           inc: dict, fx_flags: "dict | None", twins: "dict | None" = None) -> "str | None":
     """Why the incumbent cannot take the entrant's slot, or None when it can (E-11, FND-0431). The same rules the selection enforces: the ISIN
     and the family appear once in the whole portfolio, at most MAX_FUNDS_PER_MGR per manager (global across sub-portfolios), at most
     MAX_SAME_NATURE per nature inside the sub-portfolio, and the non-EUR exposed weight of the sub-portfolio stays within
@@ -542,6 +564,8 @@ def _reinstatement_blocker(tentative: "Portfolio", sp: "SubPortfolioAllocation",
     fam = _family_key(inc.get("fund_family_id"), inc.get("fund_name"))
     if fam and any(_family_key(f.get("fund_family_id"), f.get("fund_name")) == fam for f in others):
         return "la familia ya esta en la cartera"
+    if twins and any(f["isin"] in twins.get(inc_isin, ()) for f in others):
+        return "otra clase del mismo fondo ya esta en la cartera"
     mgr = inc.get("gestora") or "Desconocida"
     if sum(1 for f in others if (f.get("gestora") or "Desconocida") == mgr) + 1 > MAX_FUNDS_PER_MGR:
         return f"tope de {MAX_FUNDS_PER_MGR} fondos por gestora"
@@ -562,6 +586,7 @@ def _apply_rotation_gate(
     tentative: "Portfolio",
     previous: "Portfolio",
     score_version: str,
+    twins: "dict | None" = None,
 ) -> tuple["Portfolio", list[dict]]:
     """
     Revierte al titular las rotaciones que rotation_plan() no recomienda (coste > beneficio), sustituyendo el
@@ -596,7 +621,7 @@ def _apply_rotation_gate(
         elif isin_out not in attrs:
             blocker = "el titular no tiene ficha en fund_master"
         else:
-            blocker = _reinstatement_blocker(tentative, sp, sp.funds[slot_idx], isin_out, attrs[isin_out], fx_flags)
+            blocker = _reinstatement_blocker(tentative, sp, sp.funds[slot_idx], isin_out, attrs[isin_out], fx_flags, twins)
         if blocker:
             op["recomendar"], op["revertida"] = True, False
             op["razon"] = f"{op['razon']} | reversion refused: {blocker}"
@@ -738,6 +763,9 @@ class PortfolioBuilder:
         regime  = regime_result.regime
         weights = regime_result.weights  # {Defensiva: X, Equilibrada: Y, Dinamica: Z}
 
+        # FND-0444 fallback: share classes of one sub-fund that the family key split (computed once over everything this build may select)
+        twins = _duplicate_twins(self.conn, score_version, regime, weights, candidates, previous_portfolio)
+
         sub_portfolios = []
         isins_used    = set()
         families_used = set()   # antes: names_used (3-token) -- ahora: fund_family_id o fallback
@@ -762,7 +790,8 @@ class PortfolioBuilder:
                 exclude_names=families_used,
                 mgr_global=mgr_used,
                 incumbent_isins=incumbent_isins,
-                candidates=candidates)
+                candidates=candidates,
+                twins=twins)
 
             if selected.empty:
                 print(f"  AVISO: Sin fondos elegibles para {sub_name}")
@@ -836,7 +865,7 @@ class PortfolioBuilder:
         # previa disponible (explicita o auto-cargada arriba via 2c).
         if ROTATION_COST_GATE_ENABLED and previous_portfolio is not None:
             portfolio, rotation_plan_result = _apply_rotation_gate(
-                self.conn, portfolio, previous_portfolio, score_version)
+                self.conn, portfolio, previous_portfolio, score_version, twins=twins)
             portfolio.macro_context["rotation_plan"] = rotation_plan_result
 
         # Liquidez estructural DECLARADA (la puerta de promocion exige pesos + liquidez declarada = 1 y la acota)
