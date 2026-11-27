@@ -817,6 +817,15 @@ DATA_SUSPECT_ENABLED: bool = True
 # (definitive NO GO): replayed on the live store it moves 44 in-universe funds out of Corto Plazo and lowers the simulated portfolio Sharpe 0.686 -> 0.552 (scripts/audit/p3/nature_move_impact.py). Turn it ON only with a
 # mitigation for the selection engine; the code path is otherwise inert. A kill switch in the registry sense: it is read at call time by classify_utils.
 RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED: bool = False
+# FND-0459 (2026-11-28): derive_credit_quality also reads the high-yield name token written without a space ('highyield'). OFF by owner order: the selection freeze holds until
+# the R6 verdict is recorded on FND-0438. Replayed read-only on the live store it moves 2 Renta Fija Flexible funds from Mixed to High Yield (1 active, not held on 2026-11-27), which brings
+# that fund under the Defensiva high-yield exclusion of P3. Read at call time by classify_utils; it takes effect at the next P1 pass after it is turned ON. Rollback = False.
+CREDIT_QUALITY_HIGHYIELD_TOKEN_ENABLED: bool = False
+# FND-0458 (2026-11-28): detect_kid_format (proyecto1/core/cost_format_router.py) also counts the English UCITS cost signals 'ongoing charges' and 'one-off charges'. OFF by owner order
+# (selection freeze until the R6 verdict on FND-0438). Replayed read-only on the stored texts: 70 documents UNKNOWN -> UCITS_KIID (68 of the 71 active OK funds of the ticket), no other
+# format changes and no PRIIPs KID flips. It reaches the stored cost attributes only through the cost recompute (scripts/launch/p1_cost_recompute.py) or a re-download, not a plain P1
+# pass, and those attributes are P3 cost inputs. Rollback = False.
+KID_FORMAT_EN_UCITS_COST_SIGNALS_ENABLED: bool = False
 DATA_SUSPECT_MIN_DEV: float = 50.0
 # MIN_FLAGGED_METRICS 8 -> 4 -> 2 (owner orders 2026-11-08, WS3 recalibration). The 8 came from raw alarm counts; measured on the live panel with ADEQUATE samples only, the most any fund had was 5, so 8 never fired.
 # The 4 was set while stale regime rows were still stored; after the FND-0401 cleanup (applied 2026-11-08) the live panel has 2 funds with an adequate extreme metric: ES0116848013 with 2 and IE00B3L10570 with 1, so 4 would be dead code.

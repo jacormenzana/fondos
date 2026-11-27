@@ -78,6 +78,24 @@ _UCITS_SIGNALS: list = [
     r'.{0,200}comisi[óo]n\s+de\s+gesti[óo]n',
 ]
 
+# FND-0458: the English counterparts of the single-phrase ES cost signal 'gastos corrientes'. Without them an English UCITS KIID matched only
+# 'key investor information' (1 signal, 2 needed) and was left UNKNOWN. Read only while KID_FORMAT_EN_UCITS_COST_SIGNALS_ENABLED is True
+# (shared/config.py; OFF until the R6 verdict). Replayed on the stored texts 2026-11-28: 70 UNKNOWN -> UCITS_KIID, no other change, no PRIIPs KID flipped.
+_UCITS_SIGNALS_EN_COST: list = [
+    r'ongoing\s*charges?',
+    r'one-?off\s*charges',
+]
+
+
+def _en_cost_signals_on() -> bool:
+    """FND-0458 switch `KID_FORMAT_EN_UCITS_COST_SIGNALS_ENABLED` (shared/config.py, default False). Read at call time; a config that cannot be imported = OFF."""
+    try:
+        from shared import config as _cfg
+    except ImportError:
+        return False
+    return bool(getattr(_cfg, "KID_FORMAT_EN_UCITS_COST_SIGNALS_ENABLED", False))
+
+
 # Señales de escenarios Cat.3 PRIIPs (refuerzan clasificación PRIIPs)
 _CAT3_SIGNALS: list = [
     r'escenarios? de rentabilidad',
@@ -103,9 +121,12 @@ def _count_priips_signals(text: str) -> int:
     return sum(1 for p in _PRIIPS_SIGNALS if re.search(p, text, re.I | re.S))
 
 
-def _count_ucits_signals(text: str) -> int:
-    """Cuenta cuántas señales UCITS fuertes aparecen en el texto."""
-    return sum(1 for p in _UCITS_SIGNALS if re.search(p, text, re.I | re.S))
+def _count_ucits_signals(text: str, en_cost_signals: Optional[bool] = None) -> int:
+    """Cuenta cuántas señales UCITS fuertes aparecen en el texto (más las de coste EN de FND-0458 mientras su interruptor esté ON).
+    Pura cuando `en_cost_signals` se pasa."""
+    on = _en_cost_signals_on() if en_cost_signals is None else en_cost_signals
+    patterns = _UCITS_SIGNALS + _UCITS_SIGNALS_EN_COST if on else _UCITS_SIGNALS
+    return sum(1 for p in patterns if re.search(p, text, re.I | re.S))
 
 
 def _count_cat3_signals(text: str) -> int:
@@ -117,7 +138,7 @@ def _count_cat3_signals(text: str) -> int:
 # API pública
 # ======================================================================
 
-def detect_kid_format(text: str) -> str:
+def detect_kid_format(text: str, en_cost_signals: Optional[bool] = None) -> str:
     """
     Clasifica el formato del KID a partir del texto extraído.
 
@@ -141,7 +162,7 @@ def detect_kid_format(text: str) -> str:
         return 'UNKNOWN'
 
     priips_count = _count_priips_signals(text)
-    ucits_count  = _count_ucits_signals(text)
+    ucits_count  = _count_ucits_signals(text, en_cost_signals)   # FND-0458: `en_cost_signals` None = the config switch
     cat3_count   = _count_cat3_signals(text)
 
     # UCITS tiene prioridad (señales muy específicas)

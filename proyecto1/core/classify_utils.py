@@ -7669,7 +7669,25 @@ def derive_duration_profile(nature, name_l):
     return "Not Applicable"
 
 
-def derive_credit_quality(nature, name_l):
+# High-yield name tokens of derive_credit_quality (one list for both RF branches, P#11). BL-B6-HY (2026-07-13) broadened the set: "h.y." (JPM GLOB.H.Y.BOND
+# FUND A), "hi.yie"/"hig.yie" (OCR-punctuated abbreviations), "high yie" (truncations in the master Excel), "hy bond"/"hy bnd".
+CREDIT_HY_NAME_TOKENS: list = ["high yield", "high-yield", " hy ", "h.y.", "hi.yie", "hig.yie", "high yie", "hy bond", "hy bnd", "alto rendimiento"]
+# FND-0459: the token written without a space; read only while CREDIT_QUALITY_HIGHYIELD_TOKEN_ENABLED is True (OFF until the R6 verdict).
+CREDIT_HY_NAME_TOKENS_COMPACT: list = ["highyield"]
+
+
+def _credit_hy_compact_token_on() -> bool:
+    """FND-0459 switch `CREDIT_QUALITY_HIGHYIELD_TOKEN_ENABLED` (shared/config.py, default False: selection freeze until the R6 verdict). Read at call time; absent config = OFF."""
+    return bool(getattr(_cfg_catalog, "CREDIT_QUALITY_HIGHYIELD_TOKEN_ENABLED", False)) if _cfg_catalog is not None else False
+
+
+def _credit_hy_name_tokens(enabled: Optional[bool] = None) -> list:
+    """CREDIT_HY_NAME_TOKENS, plus the FND-0459 compact token only while its switch is ON. Pure when `enabled` is given."""
+    on = _credit_hy_compact_token_on() if enabled is None else enabled
+    return CREDIT_HY_NAME_TOKENS + CREDIT_HY_NAME_TOKENS_COMPACT if on else CREDIT_HY_NAME_TOKENS
+
+
+def derive_credit_quality(nature, name_l, hy_compact_token: Optional[bool] = None):
     """Calidad crediticia (baseline institucional por rating medio de cartera):
     IG = media ≥ BBB-/Baa3 · HY = media ≤ BB+/Ba1 ·
     Mixed = mandato cruza el umbral (crossover/flexible, sin sleeve ≥ ~80%).
@@ -7678,21 +7696,13 @@ def derive_credit_quality(nature, name_l):
         return "Not Applicable"
     if nature == "Monetario":
         return "Investment Grade"          # MMF: alta calidad por regulación
+    hy_tokens = _credit_hy_name_tokens(hy_compact_token)   # one list for both branches (see CREDIT_HY_NAME_TOKENS)
     if nature == "Renta Fija Corto Plazo":
-        # BL-B6-HY (2026-07-13): broadened HY name-token set.
-        # Added "h.y." (JPM GLOB.H.Y.BOND FUND A), "hi.yie"/"hig.yie" (AXA WF
-        # GLOB.HIG.YIE.BO., AXA WF US HIGH YIE.BOND. — OCR punctuated abbrevs),
-        # "high yie" (partial match on "high yield" truncations in master Excel),
-        # "hy bond"/"hy bnd" (common HY bond abbreviations).
-        if any(k in name_l for k in ["high yield", "high-yield", " hy ",
-                                      "h.y.", "hi.yie", "hig.yie", "high yie",
-                                      "hy bond", "hy bnd", "alto rendimiento"]):
+        if any(k in name_l for k in hy_tokens):
             return "High Yield"
         return "Investment Grade"          # crédito corto predominante IG
     if nature == "Renta Fija Flexible":
-        if any(k in name_l for k in ["high yield", "high-yield", " hy ",
-                                      "h.y.", "hi.yie", "hig.yie", "high yie",
-                                      "hy bond", "hy bnd", "alto rendimiento"]):
+        if any(k in name_l for k in hy_tokens):
             return "High Yield"
         if any(k in name_l for k in ["crossover", "flexible", "strategic",
                                      "unconstrained", "total return", "opportunistic",
