@@ -43,10 +43,10 @@ def test_the_rejected_windows_flow_from_the_computation_to_the_pruner():
     assert given.get("uncovered_windows") and taken.get("uncovered_windows") == given["uncovered_windows"]
 
 
-def test_with_the_switch_off_nothing_extra_is_pruned():
-    """FND-0443: ROLLING_UNCOVERED_PRUNE_ENABLED ships OFF; the rejected windows are emptied before the prune unless the owner switched it on."""
+def test_the_rejected_windows_reach_the_pruner_only_with_the_switch():
+    """FND-0443: with ROLLING_UNCOVERED_PRUNE_ENABLED False (the rollback) the rejected windows are emptied before the prune. ON since 2026-11-27 (owner order)."""
     import re
     text = SRC.read_text(encoding="utf-8")
     assert re.search(r"if not shared_config\.ROLLING_UNCOVERED_PRUNE_ENABLED:[^\n]*\n\s+_uncovered\.clear\(\)\n\s+ts_pruned = _prune_timeseries\(", text)
     config = (SRC.parents[3] / "shared" / "config.py").read_text(encoding="utf-8")
-    assert "\nROLLING_UNCOVERED_PRUNE_ENABLED: bool = False" in config and '"ROLLING_UNCOVERED_PRUNE_ENABLED")' in config
+    assert "\nROLLING_UNCOVERED_PRUNE_ENABLED: bool = True" in config and '"ROLLING_UNCOVERED_PRUNE_ENABLED")' in config

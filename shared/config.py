@@ -842,9 +842,10 @@ ROLLING_WINDOW_COVERAGE_ENABLED: bool = True      # ON with CALC_VERSION 2026111
 ROLLING_WINDOW_COVERAGE_TOLERANCE_DAYS: int = 35
 # FND-0443: a window the coverage rule rejects ENTIRELY produces no row, so the rolling prune (FND-0301) never reached it and its older partial-window points
 # stayed in gold.fund_metric_timeseries (the WINDOW_FISHER_IDENTITY failure of the audit, 904 funds on 2026-11-27). ON = the pruner receives the rejected
-# windows and deletes their old rows. Ships OFF: switching it ON DELETES live rows on the next P2 run (the bundle flag recomputes the rolling family), so it is
-# the owner's order, after the export of the rows. Rollback = False stops further deletions; deleted rows come back only from the export.
-ROLLING_UNCOVERED_PRUNE_ENABLED: bool = False
+# windows and deletes their old rows. ON since 2026-11-27 (owner order): the next P2 run recomputes the rolling family (the bundle flag) and DELETES the leftovers;
+# census that day: 446,655 rows in 1,148 funds, exported to out/audit/fnd0443_export_20261127/rows_to_delete.parquet. The audit rule TIMESERIES_WINDOW_COVERAGE
+# runs while this is ON. Rollback = False stops further deletions; deleted rows come back only from the export.
+ROLLING_UNCOVERED_PRUNE_ENABLED: bool = True
 
 # FND-0426 (selection-quality package I): the `ytd` horizon documented in SCHEMA_REFERENCE had no producer. `returns.ytd_return` is the cumulative (never annualized)
 # nominal and real return since the last NAV on or before the prior Dec 31, which must lie within YTD_BASE_MAX_STALENESS_BDAYS business days of it (else no row); a fund
