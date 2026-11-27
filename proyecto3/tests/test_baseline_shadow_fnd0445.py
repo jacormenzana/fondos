@@ -4,7 +4,7 @@ Arm L = the live scorer with the levers of L (L4 off) and the builder at band 0,
 Invariants pinned: (1) the live DRAFT is never touched and only `ingestion_log` rows are written; (2) the arm gets NO incumbents, even with the live hysteresis switch ON, and the L4 penalty is
 off even with the live lever ON; (3) the chain reads its own previous row; the first one starts from the last DRAFT before adoption (the `off` of the latest AC row of an earlier build);
 (4) while the live arm IS L, the baseline must equal the live DRAFT exactly and a mismatch writes one ERROR row; ties are ordered as the live query ordered them; after adoption nothing is compared;
-(5) every row records the live flags of its build; (6) a failure leaves the build whole and writes one ERROR row; (7) the switch ships OFF.
+(5) every row records the live flags of its build; (6) a failure leaves the build whole and writes one ERROR row; (7) the switch is ON since 2026-11-27 (owner order, identity check).
 No database (R-7): the glue takes the builder, the connection and the scoring functions as arguments."""
 import ast
 import json
@@ -132,10 +132,10 @@ def _ids(portfolio):
 
 
 # ---- the arm ------------------------------------------------------------------------------------------------------------------------------------------------------
-def test_the_constants_and_the_switch_ships_off():
+def test_the_constants_and_the_switch_is_on_for_the_identity_check():
     from shared import config as cfg
     assert bl.ARM == "L" and bl.STEP == "P3_BASELINE_SHADOW" and bl.STEP_ERROR == "P3_BASELINE_SHADOW_ERROR"
-    assert cfg.P3_BASELINE_SHADOW_ENABLED is False
+    assert cfg.P3_BASELINE_SHADOW_ENABLED is True
 
 
 def test_the_arm_switches_the_penalty_off_and_keeps_the_other_levers():

@@ -75,6 +75,7 @@ DD_TOLERANCE = 0.01                     # max_dd_tolerance
 DD_CAP = 0.15                           # mandate_dd_cap
 DD_INFORMATIVE_MIN = 0.03               # the drawdown guard counts only if L's own drawdown reaches it
 PIT_TURNOVER = {"L": 32.2, "AC": 13.4, "B": 14.8}      # one-way, % a month (PREREG_P3_7 section 13)
+AC_H_YEARS = 0.58                                     # the preregistered H of the fee penalty (= shared.config.P3_FEE_PENALTY_SHADOW_H_YEARS)
 
 
 class NotReady(RuntimeError):
@@ -134,6 +135,21 @@ def readiness(by_month: dict, n: int = REVIEW_MONTHS, max_gaps: int = MAX_GAPS) 
         return {"ready": False, "span": span, "gaps_in_window": len(missing), "window": window,
                 "reason": f"NOT READY: {len(missing)} gap(s) in the last {n} months ({', '.join(missing)}); the review is postponed by a month"}
     return {"ready": True, "span": span, "gaps_in_window": len(missing), "window": window, "reason": "ready"}
+
+
+def mixed_builds(one: dict, other: dict, months) -> list:
+    """The months of `months` whose two rows ({month: row} of two streams) name different builds: one shadow failed on a later rebuild, so the streams are compared across builds. Reported, never
+    gating; a row without a scenario_id says nothing."""
+    out = []
+    for m in sorted(set(months)):
+        a, b = (one.get(m) or {}).get("scenario_id"), (other.get(m) or {}).get("scenario_id")
+        if a and b and a != b:
+            out.append(m)
+    return out
+
+
+def _mixed_line(months: list) -> str:
+    return f"rows of one month come from different builds in {', '.join(months)} (reported, not gating)"
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------
@@ -335,7 +351,8 @@ def review_r6(ac_rows: list, b_rows: list, fees: pd.DataFrame) -> dict:
     coverage = {k: _coverage(v, months, known, known_exit) for k, v in series.items()}
     cov_ac = coverage["AC"]["bought"]
     last = months[-1]
-    return {"readiness": ready, "months": months, "stats": stats, "rules": evaluate_r6(stats, cov_ac), "stats_optimistic": stats_opt,
+    used = {*months, *(_month(_ordinal(m) - 1) for m in months)}
+    return {"mixed_builds": mixed_builds(ac_by, b_by, used), "readiness": ready, "months": months, "stats": stats, "rules": evaluate_r6(stats, cov_ac), "stats_optimistic": stats_opt,
             "rules_optimistic": evaluate_r6(stats_opt, cov_ac), "coverage": coverage, "default_fees": {"entry": primary[2], "exit": primary[3]},
             "ac_unknown_fee_weight_share": unknown_fee_weight_share(series["AC"][last], fees), "n_months": len(months)}
 
@@ -353,6 +370,8 @@ def render_review(res: dict, snapshot_id: str) -> str:
                          f"bought with a fee or ceiling on both sides {c['bought']:.1%}; sold with a known exit {c['sold_exit']:.1%}")
         else:
             lines.append(f"{k:>2}: no row of the band-only stream")
+    if res["mixed_builds"]:
+        lines.append("AC and band-only " + _mixed_line(res["mixed_builds"]))
     lines.append(f"coverage condition: AC bought {res['coverage']['AC']['bought']:.1%} against {FEE_COVERAGE_MIN:.0%}")
     lines.append(f"AC weight in funds without an exact fee (latest counted row): {res['ac_unknown_fee_weight_share']:.1%} (reported, not gating)")
     ro = res["rules_optimistic"]
@@ -368,11 +387,16 @@ def render_review(res: dict, snapshot_id: str) -> str:
 # after adoption (FND-0445)
 # --------------------------------------------------------------------------------------------------------------------------------------------------
 def _arm_of(flags: dict) -> "str | None":
-    """'L' (nothing adopted), 'AC' (band + penalty), 'B' (band alone) or None for a combination the preregistration does not name."""
+    """'L' (nothing adopted), 'AC' (band + penalty at the preregistered H), 'B' (band alone) or None for a combination the preregistration does not name."""
     band, penalty = bool(flags.get("PORTFOLIO_HYSTERESIS_ENABLED")), bool(flags.get("P3_L4_FEE_PENALTY_ENABLED"))
     if not band and not penalty:
         return "L"
-    return ("AC" if penalty else "B") if band else None
+    if not band:
+        return None
+    if not penalty:
+        return "B"
+    h = flags.get("P3_L4_H_YEARS")
+    return "AC" if h is not None and abs(float(h) - AC_H_YEARS) <= _EPS else None
 
 
 def adoption(base_by: dict) -> "tuple[str, str] | None":
@@ -381,7 +405,7 @@ def adoption(base_by: dict) -> "tuple[str, str] | None":
         arm = _arm_of(base_by[m].get("live_flags") or {})
         if arm != "L":
             if arm is None:
-                raise NotReady(f"NOT READY: the build of {m} ran the fee penalty without the band, which is not a candidate of the preregistration")
+                raise NotReady(f"NOT READY: the build of {m} ran a combination that is not a candidate of the preregistration (the fee penalty without the band, or at an H other than {AC_H_YEARS})")
             return m, arm
     return None
 
@@ -407,14 +431,21 @@ def spliced_series(ac_by: dict, base_by: dict, adopted_month: str, b_by: "dict |
 
 
 def monthly_returns(nav: pd.DataFrame, today: str) -> pd.DataFrame:
-    """Month-end NAV panel -> {return month 'YYYY-MM': ISIN returns}, closed months only (strictly before the month of `today`). A missing NAV is never filled."""
+    """Month-end NAV panel -> {return month 'YYYY-MM': ISIN returns}, closed months only (strictly before the month of `today`). A missing NAV is never filled.
+    A fund's LATEST observed month is provisional and is not read: its row is replaced by every load until a later month exists, and a NAV a few days before month end already carries the month-end label."""
     ends = RL.month_end_rows(nav)
     if ends.empty:
         return pd.DataFrame()
+    ends = ends.astype(float)
+    month = ends.index.to_period("M")
+    for isin in ends.columns:
+        seen = nav[isin].last_valid_index()
+        if seen is not None:
+            ends.loc[month >= seen.to_period("M"), isin] = np.nan
     grid = pd.date_range(ends.index.min(), ends.index.max(), freq="ME")
     out = ends.reindex(grid).pct_change(fill_method=None).iloc[1:]
     out.index = out.index.strftime("%Y-%m")
-    return out[out.index < str(today)[:7]]
+    return out[out.index < str(today)[:7]].dropna(how="all")
 
 
 def portfolio_return(rows: list, returns: pd.Series) -> "tuple[float, float]":
@@ -444,6 +475,8 @@ def observations(arm: dict, low: dict, returns: pd.DataFrame, fees: pd.DataFrame
         prev, nxt = _month(_ordinal(m) - 1), _month(_ordinal(m) + 1)
         transition = m == adopted_month
         rec = {"month": m, "transition": transition}
+        if any(np.isnan(portfolio_return(series[m], returns.loc[nxt])[0]) for series in (arm, low)):
+            continue                                              # nothing held has a return that month: no observation, never a NaN in the means
         for key, series, before in (("arm", arm, low[prev] if transition else arm[prev]), ("l", low, low[prev])):
             gross, missing = portfolio_return(series[m], returns.loc[nxt])
             cost, _unknown = pair_cost(series[m], before, entry, exit_, de, dx)
@@ -544,8 +577,11 @@ def review_after_adoption(ac_rows: list, b_rows: list, base_rows: list, returns:
     if returns is None or fees is None:
         return {"arm": arm, "adopted_month": adopted_month}
     primary = observations(arm_series, low, returns, fees, adopted_month=adopted_month)
+    ac_used = {m: r for m, r in ac_by.items() if m < adopted_month}
+    other = last_per_month(b_rows) if arm == "B" else base_by
+    mixed = mixed_builds(ac_used, other, ac_used)
     optimistic = observations(arm_series, low, returns, fees, optimistic=True, adopted_month=adopted_month)
-    return {"arm": arm, "adopted_month": adopted_month, "changed_month": changed, "months": months, "n_post": n_post, "gaps": gaps({m: 1 for m in arm_series}),
+    return {"mixed_builds": mixed, "arm": arm, "adopted_month": adopted_month, "changed_month": changed, "months": months, "n_post": n_post, "gaps": gaps({m: 1 for m in arm_series}),
             "max_no_return": max(max(o["arm_no_return"], o["l_no_return"]) for o in primary), "checks": _checks(primary, adopted_month, arm),
             "checks_optimistic": _checks(optimistic, adopted_month, arm)}
 
@@ -565,6 +601,8 @@ def render_after_adoption(res: dict, snapshot_id: str) -> str:
              f"DRAFT and stays out of the turnover ratio; a fund without a return is renormalised away (at most {res['max_no_return']:.1%} of the invested weight in a month)"]
     if res["changed_month"]:
         lines.append(f"the build of {res['changed_month']} ran another arm: the months from it on are not read")
+    if res["mixed_builds"]:
+        lines.append("before the adoption, " + _mixed_line(res["mixed_builds"]))
     r12 = c["R12"]
     lines.append(f"R12 (alarm only): {r12['state']}" + (f" [{', '.join(r12['causes'])}]" if r12["causes"] else "")
                  + (f"; return gap {r12['return_gap_pp']:+.2f} pp a year" if "return_gap_pp" in r12 else ""))

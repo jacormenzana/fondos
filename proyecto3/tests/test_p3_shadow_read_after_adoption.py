@@ -246,3 +246,50 @@ def test_months_after_a_revert_are_not_read(tmp_path):
     base += [_base_row(m, i, flags=L_FLAGS, adopted=False) for i, m in enumerate(MONTHS[:34]) if i >= 30]
     res = R.review_after_adoption(ac, [], base, _returns(35), _fees())
     assert res["changed_month"] == MONTHS[30] and res["months"][-1] < MONTHS[30]
+
+
+# ---- three edge cases (audit of 2026-11-27) -----------------------------------------------------------------------------------------------------------------------
+def test_a_penalty_at_another_h_is_not_the_preregistered_candidate():
+    from shared import config as cfg
+    assert R.AC_H_YEARS == cfg.P3_FEE_PENALTY_SHADOW_H_YEARS
+    _ac, base = _streams(20, adopt_at=6, flags={**AC_FLAGS, "P3_L4_H_YEARS": 3.0})          # both flags flipped, H left at the old value
+    with pytest.raises(R.NotReady, match="not a candidate"):
+        R.adoption(R.last_per_month(base))
+
+
+def test_rows_of_one_month_from_different_builds_are_reported_never_silent(tmp_path):
+    ac, base = _streams(30, adopt_at=6)
+    same = R.review_after_adoption(ac, [], base, _returns(31), _fees())
+    assert same["mixed_builds"] == []
+    base[2] = dict(base[2], scenario_id="another-build")                                     # the baseline row of 2027-03 comes from an older build than the AC row
+    res = R.review_after_adoption(ac, [], base, _returns(31), _fees())
+    assert res["mixed_builds"] == [MONTHS[2]] and res["checks"] == same["checks"]            # reported only: no verdict changes
+    text = R.render_after_adoption(res, "0" * 64)
+    assert "different builds" in text and MONTHS[2] in text
+    assert "different builds" not in R.render_after_adoption(same, "0" * 64)
+
+
+def test_the_review_reports_a_band_only_row_from_another_build():
+    ac = {m: {"scenario_id": f"s{m}"} for m in MONTHS[:4]}
+    b = {m: {"scenario_id": f"s{m}"} for m in MONTHS[:4]}
+    b[MONTHS[1]] = {"scenario_id": "older"}
+    b[MONTHS[3]] = {}                                                                        # a row without an id says nothing
+    assert R.mixed_builds(ac, b, MONTHS[:4]) == [MONTHS[1]]
+
+
+def test_a_funds_latest_observed_month_is_provisional_and_is_not_read():
+    # the panel is already on month-end labels: a NAV of 04-26 is labelled 04-30 and is replaced by a later load
+    idx = pd.to_datetime(["2027-01-31", "2027-02-28", "2027-03-31", "2027-04-30"])
+    nav = pd.DataFrame({"A": [100.0, 110.0, 121.0, 130.0]}, index=idx)
+    assert list(R.monthly_returns(nav, today="2027-05-10").index) == ["2027-02", "2027-03"]
+    later = pd.DataFrame({"A": [100.0, 110.0, 121.0, 130.0, 131.0]}, index=idx.append(pd.to_datetime(["2027-05-24"])))
+    assert list(R.monthly_returns(later, today="2027-06-02").index) == ["2027-02", "2027-03", "2027-04"]          # a later observation closes April
+
+
+def test_a_month_with_no_covered_fund_in_a_series_is_not_an_observation():
+    ac, base = _streams(8, adopt_at=6)
+    arm, low = R.spliced_series(R.last_per_month(ac), R.last_per_month(base), MONTHS[6])
+    ret = _returns(9)
+    ret.loc[MONTHS[3]] = np.nan                                                              # nothing held has a return that month
+    months = [o["month"] for o in R.observations(arm, low, ret, _fees())]
+    assert MONTHS[2] not in months and MONTHS[3] in months

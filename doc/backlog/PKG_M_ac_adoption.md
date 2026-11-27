@@ -65,7 +65,7 @@
 - The fill of section 1 applies to every cost.
 - A REVERT verdict is printed. The owner's order switches the flags OFF; the baseline shadow keeps running.
 
-**State (built 2026-11-27, FND-0445; switch OFF, no row written yet).**
+**State (built 2026-11-27, FND-0445; switch ON since the owner's order of 2026-11-27, the next real build writes the first row).**
 - Recorder `proyecto3/src/baseline_shadow.py`, hooked last in `p3_build_portfolio.py`. Reader: `p3_shadow_read.py --after-adoption`; the default view adds an integrity block once baseline rows exist.
 - Identity check: while the live arm is L, funds, weights and scores must equal the DRAFT. A mismatch keeps the `SHADOW` row (so the monthly schedule does not rebuild every day) and adds one `P3_BASELINE_SHADOW_ERROR` row.
 - Funds with equal scores are ordered as the live query ordered them (that order is arbitrary; 1 such tie touched a held fund on 2026-11-27).
@@ -74,7 +74,10 @@
   - R12 / R24 / R36 use the first 12 / 24 / 36 months of the spliced series (shadow months before adoption included);
   - in the adoption month the adopted arm trades from L's DRAFT; that trade is in the returns and out of the turnover ratio;
   - a fund without a month's return is renormalised away;
-  - months after a revert are not read.
+  - months after a revert are not read;
+  - the adopted arm is AC only at H = 0.58 (both flags with another H is not a candidate);
+  - a fund's latest observed month is provisional and not read; a month in which nothing held has a return is no observation;
+  - rows of one month from different builds are reported, never gating.
 
 **Order of adoption (one config commit, a full receipt BEFORE it is published, because it is a switch change):**
 - `PORTFOLIO_HYSTERESIS_ENABLED` = True;
