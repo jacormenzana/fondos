@@ -583,7 +583,9 @@ def review_after_adoption(ac_rows: list, b_rows: list, base_rows: list, returns:
     mixed = mixed_builds(ac_used, other, ac_used)
     optimistic = observations(arm_series, low, returns, fees, optimistic=True, adopted_month=adopted_month)
     return {"mixed_builds": mixed, "arm": arm, "adopted_month": adopted_month, "changed_month": changed, "months": months, "n_post": n_post, "gaps": gaps({m: 1 for m in arm_series}),
-            "max_no_return": max(max(o["arm_no_return"], o["l_no_return"]) for o in primary), "checks": _checks(primary, adopted_month, arm),
+            "max_no_return": max(max(o["arm_no_return"], o["l_no_return"]) for o in primary),
+            "no_return_by_month": [(o["month"], o["arm_no_return"], o["l_no_return"]) for o in primary],      # reading 4, owner addition 2026-11-27
+            "checks": _checks(primary, adopted_month, arm),
             "checks_optimistic": _checks(optimistic, adopted_month, arm)}
 
 
@@ -594,12 +596,27 @@ def _line_check(name: str, c: dict) -> str:
             f"({c['dd_arm']:.1%} against L {c['dd_l']:.1%}); verdict {c['verdict']}" + (" (carried to the next review, not a pass)" if c["verdict"] == "NOT INFORMATIVE" else ""))
 
 
+NO_RETURN_MONTHS_PER_LINE = 6
+
+
+def no_return_lines(by_month: list, per_line: int = NO_RETURN_MONTHS_PER_LINE) -> list:
+    """Reading 4 (owner addition 2026-11-27, PKG_M section 2): the share of the invested weight renormalised away in EACH observation month, adopted arm / L,
+    `per_line` months a line. Descriptive, never gating. Pure."""
+    if not by_month:
+        return []
+    cells = [f"{m} {a:.1%} / {b:.1%}" for m, a, b in by_month]
+    out = ["weight without a return, renormalised away, per month (adopted arm / L; descriptive, not gating):"]
+    out += ["    " + "; ".join(cells[i:i + per_line]) for i in range(0, len(cells), per_line)]
+    return out
+
+
 def render_after_adoption(res: dict, snapshot_id: str) -> str:
     c, o = res["checks"], res["checks_optimistic"]
     lines = [f"after adoption: adopted arm {res['arm']} since {res['adopted_month']}; {len(res['months'])} month(s) {res['months'][0]} .. {res['months'][-1]}, {res['n_post']} post-adoption; "
              f"gap(s) {', '.join(res['gaps']) if res['gaps'] else 'none'}; fee snapshot {snapshot_id[:12]}",
              "reading: a row of month m earns month m+1 net of its own trades; R12 / R24 / R36 use the first 12 / 24 / 36 months of the series (one-sided level 0.05); the adoption month trades from L's "
              f"DRAFT and stays out of the turnover ratio; a fund without a return is renormalised away (at most {res['max_no_return']:.1%} of the invested weight in a month)"]
+    lines += no_return_lines(res.get("no_return_by_month") or [])
     if res["changed_month"]:
         lines.append(f"the build of {res['changed_month']} ran another arm: the months from it on are not read")
     if res["mixed_builds"]:

@@ -204,6 +204,31 @@ def test_the_report_after_adoption_states_each_rule(tmp_path):
     assert (tmp_path / "snap").exists()
 
 
+def test_reading_4_the_weight_renormalised_away_is_printed_for_each_month():
+    # owner addition 2026-11-27 (PKG_M section 2, reading 4): descriptive, per month, adopted arm / L
+    lines = R.no_return_lines([("2027-01", 0.0, 0.0), ("2027-02", 0.25, 0.0)] + [(f"2027-{m:02d}", 0.0, 0.1) for m in range(3, 10)], per_line=6)
+    assert lines[0].startswith("weight without a return") and "not gating" in lines[0]
+    assert len(lines) == 3 and lines[1].count(";") == 5 and "2027-02 25.0% / 0.0%" in lines[1] and "2027-09 0.0% / 10.0%" in lines[2]
+    assert R.no_return_lines([]) == []
+
+
+def test_the_report_after_adoption_prints_the_renormalised_weight_of_every_month(tmp_path):
+    ac, base = _streams(30, adopt_at=6)
+    ret = _returns(31)
+    ret.loc[MONTHS[10], "B"] = np.nan                                           # one month where the adopted arm's fund B has no return
+    res = R.review_after_adoption(ac, [], base, ret, _fees())
+    by = {m: (a, b) for m, a, b in res["no_return_by_month"]}
+    assert set(by) <= set(res["months"]) and len(by) >= R.REVERT_WINDOW         # one entry per observation month, every observation month a real one
+    assert by[MONTHS[9]] == (pytest.approx(0.5), pytest.approx(0.0))           # the row of month 9 earns month 10: half of the arm (B) has no return
+    text = R.render_after_adoption(res, "0" * 64)
+    assert "renormalised away, per month" in text and f"{MONTHS[9]} 50.0% / 0.0%" in text
+
+
+def test_the_refused_review_prints_no_renormalised_weight(tmp_path):
+    _rc, text = _run(17, adopt_at=6, tmp=tmp_path)
+    assert "renormalised away, per month" not in text
+
+
 def test_a_return_gap_gives_a_revert_verdict(tmp_path):
     rc, text = _run(30, adopt_at=6, ret=_returns(31, B=-0.02, C=0.01, D=0.01), tmp=tmp_path)
     assert rc == 0 and "verdict: REVERT" in text and "owner" in text
