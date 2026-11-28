@@ -57,10 +57,10 @@ def test_asset_maturity_wording_does_not_override_the_dealing_sentence():
     assert detect(text) == "Daily"
 
 
-def test_the_switch_ships_off_and_selects_the_detector(monkeypatch):
+def test_the_switch_is_on_and_selects_the_detector(monkeypatch):
     from shared import config as cfg
-    assert cfg.KIID_DEALING_FREQUENCY_ENABLED is False
+    assert cfg.KIID_DEALING_FREQUENCY_ENABLED is True              # owner order 2026-11-28
     text = "Las órdenes de reembolso se liquidan en 5 días hábiles. Puede comprar y vender acciones cualquier día hábil."
-    assert kiid_parser._liquidity_profile(text) == "T5"            # OFF: the stored behaviour is unchanged
-    monkeypatch.setattr(cfg, "KIID_DEALING_FREQUENCY_ENABLED", True)
     assert kiid_parser._liquidity_profile(text) == "Daily"
+    monkeypatch.setattr(cfg, "KIID_DEALING_FREQUENCY_ENABLED", False)
+    assert kiid_parser._liquidity_profile(text) == "T5"            # rollback: the legacy settlement code
