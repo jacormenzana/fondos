@@ -25,6 +25,14 @@ Next step: **check the 2026-11-28 09:00 build** (section 2, item 1). Plan and ru
 
 Commits of the session (all with a PASS receipt unless said): `77a735d` FND-0457 KIID published date (parser + COALESCE); `1027ca7` FND-0461 P2-01 check, FND-0462 items 2-3; `ba83977` readings confirmed (docs); `075775c` FND-0458 / 0459 behind switches OFF; `76a6f7d` FND-0456 behind switches OFF; `d867ff7` reader reading 4 line; `48c2e6a` FND-0400 test cascade (**Closes**, receipt running at the time of writing); `d97258c` ranking page (docs).
 
+## 1b. Morning of 2026-11-28 (checked; supersedes items 1, 2 and the first part of 5 below)
+- **November build done:** the owner's cycle of 08:09 built DRAFT `..._b20261128082745`; first `P3_BASELINE_SHADOW` row, `identity MATCH`, 0 ERROR rows. The 09:00 task ended RC 105 (the cycle lock was held), so there is no `P3_MONTHLY_DRAFT` record; `p3_monthly_draft.py status` says November is captured. Production unchanged.
+- **Published:** `48c2e6a`, `d97258c` and `26b3d63` are on `origin/master` (full receipt of `26b3d63`: 8,420 passed).
+- **FND-0457 (live):** `KIID_Published_Date` stored on 2,438 of 2,943 active funds (548 before); log 3007.
+- **FND-0461 (live):** the P2 run logged `[P2-01] ISIN match OK: 3746/3753` (7 `STALE_FROZEN` excluded on purpose, 0 without `fund_master`).
+- **Closures ordered by the owner for today:** FND-0443, 0445, 0451, 0452, 0453, 0457, 0461, by `close_release.py` from the owner's console. The autopilot stays in SHADOW until 2026-12-03 after 20:37. This commit is the delivery record of FND-0443 (code up to `3188c8f`) and FND-0461 (`1027ca7`), whose earlier commits carry only `Refs:`.
+- **FND-0425:** owner sign-off recorded; stays IN_PROGRESS, because no closure route fits a documents-only delivery (log on the ticket).
+
 ## 2. Open work, in order
 1. **2026-11-28 after 09:00, the November rebuild** (FND-0445): `python scripts/audit/p3/p3_shadow_read.py` (default view) must show a first `P3_BASELINE_SHADOW` row, `identity MATCH`, 0 ERROR rows; the `P3_MONTHLY_DRAFT` record in `ingestion_log` must be OK, with the post-draft audit and the draft report present. If the task did not run (PC off or not logged in), say so and stop.
 2. **Check that `48c2e6a` and `d97258c` were published** (`git fetch` then `origin/master`): the range waits for the full receipt of the `Closes:` commit; the receipt tool queued `d97258c` behind it.
