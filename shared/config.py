@@ -826,6 +826,11 @@ CREDIT_QUALITY_HIGHYIELD_TOKEN_ENABLED: bool = False
 # format changes and no PRIIPs KID flips. It reaches the stored cost attributes only through the cost recompute (scripts/launch/p1_cost_recompute.py) or a re-download, not a plain P1
 # pass, and those attributes are P3 cost inputs. Rollback = False.
 KID_FORMAT_EN_UCITS_COST_SIGNALS_ENABLED: bool = False
+# FND-0462 (1) (2026-11-28): Liquidity_Profile is filled with the DEALING FREQUENCY read from the KIID (Daily / Weekly / Bi-Weekly / Monthly) instead of the legacy
+# settlement code (T0..T10+). Replayed read-only on the 2,943 active texts: the 201 'T5' funds read Daily, 4 funds Weekly, the rest Daily or not stated; where nothing is
+# stated the stored value stays (COALESCE). Neither P2 nor P3 reads the column. OFF until the owner orders the live pass. Read at call time by kiid_parser. Rollback = False
+# (values already written stay until a re-run).
+KIID_DEALING_FREQUENCY_ENABLED: bool = False
 # FND-0456 (2026-11-28), two switches, both OFF by owner order until the R6 verdict on FND-0438:
 # - P1_DQ_SIGNAL_DETAIL_ROWS_ENABLED: P1 writes the two quality signals it now loses as fund_data_quality_issues rows: a low-confidence nature
 #   (today only an ingestion_log row) and the SRRI LOW_CONFLICT base level (today a WARN flag with no detail row). It moves Data_Quality_Flag

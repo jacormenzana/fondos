@@ -809,7 +809,7 @@ deriva. Las adiciones de atributos futuros deben estar fundamentadas en uno de e
 
 | Atributo | Marco | Referencia |
 |----------|-------|-----------|
-| `Liquidity_Profile` | Directiva UCITS + ESMA Liquidity Guidelines (ESMA/2020/1444) | `Daily` = reembolso UCITS estándar; `Weekly`/`Bi-Weekly` = UCITS menos líquido; `Monthly` = cerrado/ilíquido |
+| `Liquidity_Profile` | Directiva UCITS + ESMA Liquidity Guidelines (ESMA/2020/1444) | `Daily` = reembolso UCITS estándar; `Weekly`/`Bi-Weekly` = UCITS menos líquido; `Monthly` = cerrado/ilíquido. Frecuencia de contratación leída del KIID (`KIID_DEALING_FREQUENCY_ENABLED`, FND-0462); nunca el plazo de liquidación T+n |
 | `Distribution_Frequency` | Prospecto del fondo + reglas de divulgación ESMA | Acumulativo (retenido) vs distribución (pagado) |
 | `Replication_Method` | ESMA ETF Guidelines (ESMA/2012/832) | `Physical` = compra todos los constituyentes del índice; `Sampling` = mantiene subconjunto; `Synthetic` = usa swaps; `Not Applicable` = no-índice |
 

@@ -1063,7 +1063,7 @@ def parse_kiid_generic(
     # -------------------------------------------------
     # PASO 10h — Liquidity_Profile
     # -------------------------------------------------
-    liq = _detect_liquidity_profile(kiid_text)
+    liq = _liquidity_profile(kiid_text)
     if liq:
         result["Liquidity_Profile"] = liq
         result["Inference_Trace"] = _append_trace(
@@ -4340,6 +4340,64 @@ def _detect_liquidity_profile(text: str) -> Optional[str]:
         return "T10+"
 
     return None
+
+
+# FND-0462 (1): the column Liquidity_Profile is the DEALING FREQUENCY of the units (Daily / Weekly / Bi-Weekly / Monthly), while the detector above measures
+# settlement days. This one reads the frequency from a sentence about dealing in the units; read only while KIID_DEALING_FREQUENCY_ENABLED is True.
+_DEALING_ANCHOR = re.compile(
+    r"reembols|rembols|rescat|suscri|\bredeem|redemption|subscri|\bdealing\b|buy\s+(?:and|or)\s+sell|"
+    r"(?:comprar|vender|compra|venta)\s+(?:y|o)\s+(?:vender|comprar|venta|compra)|(?:sus|las|los)\s+(?:participaciones|acciones)",
+    re.IGNORECASE)
+# sentences whose frequency words are about something else: payouts, performance, costs, indices, scenarios, bonds
+_DEALING_OTHER_SUBJECT = re.compile(
+    r"dividend|distribu|rentabilidad|performance|comisi[oó]n|\bfee|charge|coste|cost\b|benchmark|[ií]ndice de referencia|escenario|scenario|"
+    r"\bbonos?\b|\bbonds?\b|inflaci|cup[oó]n|coupon", re.IGNORECASE)
+_DEALING_FREQUENCIES = {
+    "Daily": re.compile(
+        r"a\s+diario|diariamente|con\s+periodicidad\s+diaria|de\s+forma\s+diaria|(?:cada|todos\s+los|cualquier)\s+d[ií]as?\b(?!\s+(?:de\s+la\s+semana|del\s+mes))|"
+        r"\bdaily\b|(?:each|every|any)\s+(?:\w+\s+){0,2}?(?:business|dealing|valuation|working|bank(?:ing)?)\s+day|"
+        r"(?:on\s+)?any\s+day\s+(?:which|that|on\s+which)|(?:frecuencia|periodicidad|negociaci[oó]n)\s+diaria", re.IGNORECASE),
+    "Weekly": re.compile(
+        r"semanalmente|con\s+periodicidad\s+semanal|cada\s+semana|una\s+vez\s+(?:a\s+la|por)\s+semana|\bweekly\b|once\s+a\s+week|(?:each|every)\s+week\b",
+        re.IGNORECASE),
+    "Bi-Weekly": re.compile(r"quincenal|dos\s+veces\s+(?:al|por)\s+mes|fortnight|bi-?weekly|twice\s+a\s+month", re.IGNORECASE),
+    "Monthly": re.compile(
+        r"mensualmente|con\s+periodicidad\s+mensual|cada\s+mes\b|una\s+vez\s+(?:al|por)\s+mes|\bmonthly\b|once\s+a\s+month|(?:each|every)\s+month\b",
+        re.IGNORECASE),
+}
+_DEALING_SENTENCE_SPLIT = re.compile(r"(?<=[.;•])\s+(?=[A-ZÁÉÍÓÚ¿•])")
+_DEALING_SENTENCE_MAX = 600
+# "N business days" after a request is a settlement delay; a month-end date offered on top of the regular frequency is not a second frequency
+_DEALING_SETTLEMENT = re.compile(r"\d+\s*(?:business|working|bank)\s+days?|\d+\s*d[ií]as?\s+h[aá]biles", re.IGNORECASE)
+_DEALING_EXTRA_DATE = re.compile(
+    r"[uú]ltimo\s+d[ií]a\s+(?:\w+\s+)?(?:de\s+cada|del)\s+mes|last\s+(?:\w+\s+){0,2}?day\s+of\s+(?:each|every|the)\s+month", re.IGNORECASE)
+
+
+def _detect_dealing_frequency(text: str) -> Optional[str]:
+    """'Daily' | 'Weekly' | 'Bi-Weekly' | 'Monthly' when the dealing sentences state exactly one frequency; None when they state none or disagree."""
+    if not text:
+        return None
+    found = set()
+    for sentence in _DEALING_SENTENCE_SPLIT.split(" ".join(text.split())):
+        if len(sentence) > _DEALING_SENTENCE_MAX or not _DEALING_ANCHOR.search(sentence) or _DEALING_OTHER_SUBJECT.search(sentence):
+            continue
+        cleaned = _DEALING_EXTRA_DATE.sub(" ", _DEALING_SETTLEMENT.sub(" ", sentence))
+        found.update(k for k, rx in _DEALING_FREQUENCIES.items() if rx.search(cleaned))
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def _dealing_frequency_on() -> bool:
+    """FND-0462 switch `KIID_DEALING_FREQUENCY_ENABLED` (shared/config.py, default False). Read at call time; a config that cannot be imported = OFF."""
+    try:
+        from shared import config as _cfg
+    except ImportError:
+        return False
+    return bool(getattr(_cfg, "KIID_DEALING_FREQUENCY_ENABLED", False))
+
+
+def _liquidity_profile(text: str) -> Optional[str]:
+    """The value stored in Liquidity_Profile: the dealing frequency when the switch is ON, else the legacy settlement code."""
+    return _detect_dealing_frequency(text) if _dealing_frequency_on() else _detect_liquidity_profile(text)
 
 
 # =================================================
