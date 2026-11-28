@@ -32,6 +32,8 @@ Commits of the session (all with a PASS receipt unless said): `77a735d` FND-0457
 - **FND-0461 (live):** the P2 run logged `[P2-01] ISIN match OK: 3746/3753` (7 `STALE_FROZEN` excluded on purpose, 0 without `fund_master`).
 - **Closures ordered by the owner for today:** FND-0443, 0445, 0451, 0452, 0453, 0457, 0461, by `close_release.py` from the owner's console. The autopilot stays in SHADOW until 2026-12-03 after 20:37. This commit is the delivery record of FND-0443 (code up to `3188c8f`) and FND-0461 (`1027ca7`), whose earlier commits carry only `Refs:`.
 - **FND-0425:** owner sign-off recorded; stays IN_PROGRESS, because no closure route fits a documents-only delivery (log on the ticket).
+- **Later the same morning:** the seven closures above were applied (`R2026.11-CLOSE-1128`); FND-0433 closed after them.
+- **FND-0427:** signed off by the owner on today's evidence (window checks clear, POST audit `PASS_WITH_WARNINGS`, 99.5 % of metric rows on CALC_VERSION 20261116, DRAFT against PRODUCTION 1 out / 1 in, one-way 3.5 %). Its code is delivered up to `2da6c32`, which carries only `Refs:`; this commit records that delivery. The class-split leftover is FND-0444 (blocked on FND-0438).
 
 ## 2. Open work, in order
 1. **2026-11-28 after 09:00, the November rebuild** (FND-0445): `python scripts/audit/p3/p3_shadow_read.py` (default view) must show a first `P3_BASELINE_SHADOW` row, `identity MATCH`, 0 ERROR rows; the `P3_MONTHLY_DRAFT` record in `ingestion_log` must be OK, with the post-draft audit and the draft report present. If the task did not run (PC off or not logged in), say so and stop.
