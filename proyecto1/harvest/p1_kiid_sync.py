@@ -236,6 +236,29 @@ def _reactivate_returned(conn, kiid_isins) -> int:
     ).rowcount
 
 
+def _reopen_returned_periods(conn, target: dict, today: str) -> int:
+    """
+    Open a new lifecycle period for every ISIN of the latest harvest whose latest period is 'retired' (FND-0414):
+    the fund came back, so its history gets a new row and the retired one is kept. Independent of KIID_Status and of
+    whether a PDF had to be downloaded, so a period left stale by an earlier run is repaired too. Idempotent.
+
+    target: {isin: href} of the latest harvest's KIID rows.
+    """
+    if not target:
+        return 0
+    rows = conn.execute("""
+        SELECT l.isin
+        FROM (SELECT DISTINCT ON (isin) isin, status
+              FROM kiid_lifecycle WHERE isin = ANY(%s)
+              ORDER BY isin, start_date DESC) l
+        WHERE l.status = 'retired'
+          AND NOT EXISTS (SELECT 1 FROM kiid_lifecycle o WHERE o.isin = l.isin AND o.end_date IS NULL)
+    """, (sorted(target),)).fetchall()
+    for r in rows:
+        _lifecycle_activate(conn, r[0], target[r[0]], today)
+    return len(rows)
+
+
 # ---------------------------------------------------------------------------
 # PHASE 4 — KIID Delta
 # ---------------------------------------------------------------------------
@@ -431,6 +454,9 @@ def cmd_sync(args, conn=None) -> None:
     reactivated = _reactivate_returned(conn, target.keys())
     if reactivated:
         log.info("Reactivated %d RETIRED fund(s) whose KIID row is back in the catalogue", reactivated)
+    reopened = _reopen_returned_periods(conn, target, today)
+    if reopened:
+        log.info("Opened a new lifecycle period for %d returned fund(s)", reopened)
 
     conn.commit()
     if own_conn:

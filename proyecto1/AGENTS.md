@@ -43,7 +43,7 @@ Each block exposes `classify_fund(name, kiid_text, ...)` and `get_universe_isins
 | `FORCE_REFRESH` | Re-download on next cycle |
 | `WRONG_DOC` | PDF mismatch; fund excluded from all blocks |
 | `NOT_FOUND` | URL unreachable |
-| `RETIRED` | KIID row left the Deutsche Bank catalogue; set by `p1_kiid_sync --retire-orphans` together with `In_Current_Universe=0`; reversed by `--sync` (→ `FORCE_REFRESH`) if the row returns |
+| `RETIRED` | KIID row left the Deutsche Bank catalogue; set by `p1_kiid_sync --retire-orphans` together with `In_Current_Universe=0`; reversed by `--sync` (→ `FORCE_REFRESH`, plus a new `commercializing` period in `kiid_lifecycle`, FND-0414) if the row returns |
 
 HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.  
 `scripts/launch/mark_stale.py` marks max 50 funds/cycle as FORCE_REFRESH (age > 180 days).

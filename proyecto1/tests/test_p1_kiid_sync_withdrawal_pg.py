@@ -126,3 +126,41 @@ def test_cmd_retire_orphans_marks_funds_without_local_pdf(
     assert scopes == {"PARTIAL1": "PARTIAL", "FULL1": "FULL"}
     assert conn.execute("SELECT COUNT(*) FROM fund_master WHERE in_current_universe = 0").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM fund_kiid_metadata WHERE kiid_status = 'RETIRED'").fetchone()[0] == 2
+
+
+# FND-0414: a fund whose KIID row comes back must get a new lifecycle period, not keep the retired one as its latest.
+
+def _periods(conn, isin):
+    return [(str(r[0]), r[1], r[2]) for r in conn.execute(
+        "SELECT start_date, status, href FROM kiid_lifecycle WHERE isin = %s ORDER BY start_date", (isin,)).fetchall()]
+
+
+def test_reopen_returned_periods_opens_a_new_period_only_for_returned_funds(pg_conn):
+    _make_schema(pg_conn)
+    _mark_withdrawn(pg_conn, "PARTIAL1", "PARTIAL", "2026-10-03", None)    # comes back below
+    _mark_withdrawn(pg_conn, "FULL1", "FULL", "2026-10-03", None)          # still absent from the catalogue
+    _lifecycle_activate(pg_conn, "OKKIID1", "https://x/old", "2026-01-01")  # already active: untouched
+    target = {"PARTIAL1": "https://x/back", "OKKIID1": "https://x/1"}
+    assert _pks._reopen_returned_periods(pg_conn, target, "2026-11-01") == 1
+    assert _periods(pg_conn, "PARTIAL1")[-1] == ("2026-11-01", "commercializing", "https://x/back")
+    assert [p[1] for p in _periods(pg_conn, "PARTIAL1")] == ["retired", "commercializing"]
+    assert [p[1] for p in _periods(pg_conn, "FULL1")] == ["retired"]
+    assert _periods(pg_conn, "OKKIID1") == [("2026-01-01", "commercializing", "https://x/old")]
+    assert _pks._reopen_returned_periods(pg_conn, target, "2026-11-02") == 0      # idempotent
+    assert _pks._reopen_returned_periods(pg_conn, {}, "2026-11-02") == 0
+
+
+def test_cmd_sync_reopens_a_returned_fund_even_with_nothing_to_download(
+    pg_session_conn, pg_conn_module_schema, tmp_path,
+):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_schema(conn)
+    _mark_withdrawn(conn, "OKKIID1", "PARTIAL", "2026-01-15", None)         # retired, yet in the latest harvest with a KIID row
+    kiid_dir = tmp_path / "kiid"
+    kiid_dir.mkdir()
+    (kiid_dir / "OKKIID1.pdf").write_bytes(b"%PDF-1.4")                    # present locally: nothing to download
+    args = type("A", (), {"limit": None})()
+    with patch.object(_pks, "KIID_DIR", kiid_dir), patch.object(_pks, "_HARVEST_DIR", tmp_path):
+        _pks.cmd_sync(args, conn=conn)
+    assert [p[1] for p in _periods(conn, "OKKIID1")] == ["retired", "commercializing"]
